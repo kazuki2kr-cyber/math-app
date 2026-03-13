@@ -14,9 +14,9 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // 簡易的な管理者バリデーション（kazuki2kr@gmail.com のみ機能利用可能）
+  // 簡易的な管理者バリデーション（kazuki2kr@gmail.com と ichikawa.kazuki@shibaurafzk.com のみ）
   // 先生のアカウントなど複数ある場合はFirestore側にロールを含めると堅牢
-  const isAdmin = user?.email === 'kazuki2kr@gmail.com';
+  const isAdmin = user?.email === 'kazuki2kr@gmail.com' || user?.email === 'ichikawa.kazuki@shibaurafzk.com';
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
