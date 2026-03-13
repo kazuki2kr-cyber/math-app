@@ -97,6 +97,26 @@ export default function AdminPage() {
     );
   }
 
+  const handleDownloadTemplate = () => {
+    // CSVテンプレートのヘッダーとサンプルデータ
+    const csvContent = 
+`unit_id,question_text,options,answer_index,explanation,image_url
+unit_01,1+1は？,"[""1"",""2"",""3"",""4""]",2,1足す1は2です。,
+unit_01,$x^2=4$ を解け,"[""x=2"",""x=-2"",""x=\\pm 2"",""解なし""]",3,平方根をとります。,
+unit_02,次の図形の面積を求めよ,"[""10"",""20"",""30"",""40""]",2,底辺×高さ÷2です。,https://example.com/image.png
+`;
+    
+    // Blobを作成してダウンロードリンクを発火
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'math_app_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <h2 className="text-2xl font-bold">管理者ダッシュボード</h2>
@@ -108,12 +128,18 @@ export default function AdminPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Input 
-            type="file" 
-            accept=".csv" 
-            onChange={handleFileUpload} 
-            disabled={loading}
-          />
+          <div className="flex flex-col sm:flex-row gap-4">
+            <Input 
+              type="file" 
+              accept=".csv" 
+              onChange={handleFileUpload} 
+              disabled={loading}
+              className="flex-1"
+            />
+            <Button variant="outline" onClick={handleDownloadTemplate} type="button">
+              テンプレートをダウンロード
+            </Button>
+          </div>
           {message && (
             <div className={`p-4 rounded-md ${message.includes('エラー') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
               {message}
