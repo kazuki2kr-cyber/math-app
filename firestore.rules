@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
       allow create, update: if request.auth != null && request.auth.uid == userId;
     }
     match /units/{unitId} {
@@ -17,6 +17,8 @@ service cloud.firestore {
       // 新規作成時は resource がまだ無いため request.resource で判定。既存更新時は request.auth.uid == request.resource.data.uid
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
       allow update: if request.auth != null && request.auth.uid == resource.data.uid && request.auth.uid == request.resource.data.uid;
+      // 管理者のみ削除可能
+      allow delete: if request.auth != null && (request.auth.token.email == 'kazuki2kr@gmail.com' || request.auth.token.email == 'ichikawa.kazuki@shibaurafzk.com');
     }
   }
 }

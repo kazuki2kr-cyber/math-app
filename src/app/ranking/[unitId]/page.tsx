@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ArrowLeft, Trophy, Medal, Clock } from 'lucide-react';
+import { calculateLevelAndProgress } from '@/lib/xp';
 
 interface ScoreEntry {
   uid: string;
@@ -15,11 +16,14 @@ interface ScoreEntry {
   maxScore: number;
   bestTime: number;
   updatedAt: string;
+  icon?: string;
+  level?: number;
 }
 
 export default function RankingPage() {
   const params = useParams();
-  const unitId = params.unitId as string;
+  // Decode the URL parameter explicitly
+  const unitId = decodeURIComponent(params.unitId as string);
   const router = useRouter();
   const { user } = useAuth();
   
@@ -34,7 +38,8 @@ export default function RankingPage() {
         // Fetch Unit info
         const unitSnap = await getDoc(doc(db, 'units', unitId));
         if (unitSnap.exists()) {
-          setUnitTitle(unitSnap.data().title || unitId);
+          const rawTitle = unitSnap.data().title || unitId;
+          setUnitTitle(rawTitle.replace(/^単元\s*/, ''));
         }
 
         // Fetch top scores for this unit
@@ -59,27 +64,29 @@ export default function RankingPage() {
         });
 
         // Take top 10
-        const top10 = data.slice(0, 10);
+        const top10Data = data.slice(0, 10);
+        
+        const top10 = await Promise.all(top10Data.map(async scoreObj => {
+          const uDoc = await getDoc(doc(db, 'users', scoreObj.uid));
+          let icon = '📐';
+          let level = 1;
+          if (uDoc.exists()) {
+             const uData = uDoc.data();
+             icon = uData.icon || '📐';
+             level = calculateLevelAndProgress(uData.xp || 0).level;
+          }
+          return {
+            uid: scoreObj.uid,
+            name: scoreObj.userName || '名無し',
+            maxScore: scoreObj.maxScore,
+            bestTime: scoreObj.bestTime,
+            updatedAt: scoreObj.updatedAt,
+            icon,
+            level
+          };
+        }));
 
-        // Fetch user displayNames for those uids
-        const top10WithNames = await Promise.all(
-          top10.map(async (scoreObj) => {
-            const userSnap = await getDoc(doc(db, 'users', scoreObj.uid));
-            let name = '名無し';
-            if (userSnap.exists()) {
-              name = userSnap.data().displayName || '名無し';
-            }
-            return {
-              uid: scoreObj.uid,
-              name,
-              maxScore: scoreObj.maxScore,
-              bestTime: scoreObj.bestTime,
-              updatedAt: scoreObj.updatedAt,
-            };
-          })
-        );
-
-        setScores(top10WithNames);
+        setScores(top10);
       } catch (err) {
         console.error("Error fetching ranking:", err);
       } finally {
@@ -91,23 +98,23 @@ export default function RankingPage() {
   }, [unitId]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col p-4 md:p-8">
+    <div className="min-h-screen bg-[#F8FAEB] flex flex-col p-4 md:p-8">
       <div className="max-w-3xl mx-auto w-full space-y-6">
-        <Button variant="ghost" onClick={() => router.push('/')} className="mb-2">
+        <Button variant="ghost" onClick={() => router.push('/')} className="mb-2 text-muted-foreground hover:bg-white/50 hover:text-primary transition-colors">
           <ArrowLeft className="w-4 h-4 mr-2" />
           ダッシュボードへ戻る
         </Button>
         
         <div className="flex items-center space-x-3">
           <Trophy className="w-8 h-8 text-amber-500" />
-          <h2 className="text-3xl font-bold">ランキング: {unitTitle}</h2>
+          <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">ランキング: {unitTitle}</h2>
         </div>
 
-        <Card className="shadow-sm">
-          <CardHeader className="bg-white rounded-t-lg border-b">
-            <CardTitle className="text-lg flex justify-between">
-              <span>上位10名の記録</span>
-              <span className="text-sm text-muted-foreground font-normal">同点の場合はタイムが短い順</span>
+        <Card className="shadow-lg border-t-4 border-t-amber-400 overflow-hidden bg-white/95">
+          <CardHeader className="bg-white rounded-t-lg border-b px-6 py-5">
+            <CardTitle className="text-lg flex justify-between items-center text-gray-800">
+              <span className="font-bold flex items-center gap-2">上位10名の記録</span>
+              <span className="text-sm text-muted-foreground font-normal bg-gray-100 px-3 py-1 rounded-full">同点の場合はタイムが短い順</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -132,15 +139,23 @@ export default function RankingPage() {
                         isCurrentUser ? 'bg-primary/5 border-l-4 border-primary' : 'hover:bg-gray-50'
                       }`}
                     >
-                      <div className="flex items-center space-x-4">
-                        <div className="w-10 text-center font-bold text-xl flex justify-center">
-                          {rank === 1 ? <Medal className="text-yellow-500 w-8 h-8" /> :
-                           rank === 2 ? <Medal className="text-gray-400 w-7 h-7" /> :
-                           rank === 3 ? <Medal className="text-amber-700 w-7 h-7" /> :
+                      <div className="flex items-center space-x-3 sm:space-x-4">
+                        <div className="w-8 sm:w-10 text-center font-bold text-xl flex justify-center flex-shrink-0">
+                          {rank === 1 ? <Medal className="text-yellow-500 w-8 h-8 filter drop-shadow" /> :
+                           rank === 2 ? <Medal className="text-gray-400 w-7 h-7 filter drop-shadow" /> :
+                           rank === 3 ? <Medal className="text-amber-700 w-7 h-7 filter drop-shadow" /> :
                            <span className="text-muted-foreground">{rank}</span>}
                         </div>
-                        <div className="font-medium text-lg">
-                          {s.name} {isCurrentUser && <span className="ml-2 text-xs text-primary bg-primary/10 px-2 py-1 rounded-full">You</span>}
+                        <div className="text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:block text-center w-10">
+                          {s.icon}
+                        </div>
+                        <div>
+                          <p className="font-bold text-sm sm:text-lg text-gray-800 flex items-center min-w-0">
+                            <span className="text-xl sm:hidden mr-1.5">{s.icon}</span>
+                            <span className="truncate max-w-[120px] sm:max-w-[200px]">{s.name}</span>
+                            {isCurrentUser && <span className="ml-2 text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex-shrink-0">You</span>}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground font-mono font-semibold">Lv.{s.level || 1}</p>
                         </div>
                       </div>
                       

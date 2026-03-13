@@ -18,6 +18,9 @@ interface UserData {
   displayName: string;
   createdAt?: string;
   lastLoginAt?: string;
+  xp?: number;
+  icon?: string;
+  hasAgreedToTerms?: boolean;
 }
 
 interface AuthContextType {
@@ -25,6 +28,7 @@ interface AuthContextType {
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
+  agreeToTerms: () => Promise<void>;
   error: string | null;
 }
 
@@ -33,6 +37,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   loginWithGoogle: async () => {},
   logout: async () => {},
+  agreeToTerms: async () => {},
   error: null,
 });
 
@@ -74,18 +79,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             lastLoginAt: new Date().toISOString(),
           };
 
+          let finalUserData: any;
+
           if (!userSnap.exists()) {
             // Create new user profile
-            await setDoc(userRef, {
+            finalUserData = {
               ...userData,
               createdAt: new Date().toISOString(),
-            });
+              xp: 0,
+              icon: '📐',
+              hasAgreedToTerms: false
+            };
+            await setDoc(userRef, finalUserData);
           } else {
             // Update last login
+            finalUserData = {
+              ...userData,
+              ...userSnap.data()
+            };
+            if (finalUserData.xp === undefined) finalUserData.xp = 0;
+            if (finalUserData.icon === undefined) finalUserData.icon = '📐';
+            if (finalUserData.hasAgreedToTerms === undefined) finalUserData.hasAgreedToTerms = false;
             await setDoc(userRef, { lastLoginAt: userData.lastLoginAt }, { merge: true });
           }
 
-          setUser({ ...userData, ...userSnap.data() });
+          setUser(finalUserData as UserData);
           setError(null);
         } catch (err) {
           console.error("Firestore user fetch/create error:", err);
@@ -128,8 +146,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setLoading(false);
   };
 
+  const agreeToTerms = async () => {
+    if (user) {
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        await setDoc(userRef, { hasAgreedToTerms: true }, { merge: true });
+        setUser({ ...user, hasAgreedToTerms: true });
+      } catch (err) {
+        console.error("Failed to update agreement status", err);
+      }
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout, error }}>
+    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout, agreeToTerms, error }}>
       {children}
     </AuthContext.Provider>
   );

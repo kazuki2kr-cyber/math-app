@@ -1,14 +1,9 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Noto_Sans_JP } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const notoSansJP = Noto_Sans_JP({
+  variable: "--font-noto-sans-jp",
   subsets: ["latin"],
 });
 
@@ -16,8 +11,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 export const metadata: Metadata = {
-  title: "数学学習演習",
-  description: "中学1年生向け数学学習演習Webアプリケーション",
+  title: "SIT Math Sync | 芝浦工業大学附属中学高等学校",
+  description: "世界に学ぶ。世界に貢献する。芝浦工業大学附属中学高等学校の生徒向け数学演習アプリケーション。",
 };
 
 export default function RootLayout({
@@ -28,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${notoSansJP.variable} font-sans antialiased`}
       >
         <AuthProvider>
           <ProtectedRoute>

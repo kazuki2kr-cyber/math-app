@@ -26,7 +26,8 @@ interface Unit {
 
 export default function DrillPage() {
   const params = useParams();
-  const unitId = params.unitId as string;
+  // Next.jsのparamsはURLエンコードされている場合があるためデコードする（とくに日本語の場合）
+  const unitId = decodeURIComponent(params.unitId as string);
   const router = useRouter();
 
   const [unit, setUnit] = useState<Unit | null>(null);
@@ -50,7 +51,35 @@ export default function DrillPage() {
       try {
         const snap = await getDoc(doc(db, 'units', unitId));
         if (snap.exists()) {
-          setUnit(snap.data() as Unit);
+          const rawUnit = snap.data() as Unit;
+          
+          // 1. シャッフルして最大10問を抽出
+          let shuffledQuestions = [...rawUnit.questions].sort(() => 0.5 - Math.random());
+          if (shuffledQuestions.length > 10) {
+            shuffledQuestions = shuffledQuestions.slice(0, 10);
+          }
+          
+          // 2. 各問題の選択肢もシャッフルし、正解インデックスを更新する
+          const finalQuestions = shuffledQuestions.map((q) => {
+            // 元の正解テキストを保持
+            const correctOptionText = q.options[q.answer_index - 1]; // answer_indexは1-based
+            
+            // 選択肢をシャッフル
+            const optionsWithOriginalObjects = q.options.map(text => ({ text }));
+            const shuffledOptionsObjs = optionsWithOriginalObjects.sort(() => 0.5 - Math.random());
+            
+            const newOptions = shuffledOptionsObjs.map(obj => obj.text);
+            // 新しい正解インデックス（1-based）を探す
+            const newAnswerIndex = newOptions.indexOf(correctOptionText) + 1;
+            
+            return {
+              ...q,
+              options: newOptions,
+              answer_index: newAnswerIndex
+            };
+          });
+
+          setUnit({ ...rawUnit, questions: finalQuestions });
           setStartTime(Date.now());
         } else {
           setError('指定された単元が見つかりません。');
@@ -110,6 +139,32 @@ export default function DrillPage() {
       
       const finalScore = Math.floor((newCorrect.length / unit.questions.length) * 100);
 
+      // XP Calculation
+      let baseTotal = 0;
+      let comboTotal = 0;
+      let currentCombo = 0;
+
+      newAnswers.forEach(correct => {
+        if (correct) {
+          currentCombo++;
+          baseTotal += 10;
+          comboTotal += currentCombo; // +n bonus
+        } else {
+          currentCombo = 0;
+        }
+      });
+
+      const correctRatio = newCorrect.length / unit.questions.length;
+      let multiplier = 0;
+      if (correctRatio === 1) multiplier = 1.5;
+      else if (correctRatio >= 0.7) multiplier = 1.0;
+      else if (correctRatio >= 0.5) multiplier = 0.5;
+      else multiplier = 0;
+
+      const preMultiplierXp = baseTotal + comboTotal;
+      const finalXp = Math.floor(preMultiplierXp * multiplier);
+      const multiplierBonus = finalXp - preMultiplierXp; 
+
       // Save drill results to session storage so result page can pick it up
       const drillResult = {
         unitId,
@@ -119,6 +174,13 @@ export default function DrillPage() {
         time: finalTime,
         correctQuestions: newCorrect,
         wrongQuestions: newWrong,
+        xpDetails: {
+          base: baseTotal,
+          combo: comboTotal,
+          multiplier,
+          multiplierBonus,
+          finalXp
+        }
       };
 
       sessionStorage.setItem('drillResult', JSON.stringify(drillResult));
@@ -154,45 +216,46 @@ export default function DrillPage() {
   const progressPercent = ((currentIndex) / unit.questions.length) * 100;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col md:p-8 p-4">
-      <div className="max-w-3xl mx-auto w-full space-y-4">
+    <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">
+      <div className="max-w-3xl mx-auto w-full space-y-6">
         
         {/* Header */}
-        <div className="flex items-center justify-between mb-2">
-          <Button variant="ghost" size="sm" onClick={cancelDrill} className="text-muted-foreground hover:text-destructive">
-            <XCircle className="w-4 h-4 mr-1" /> 中断
+        <div className="flex items-center justify-between mb-4">
+          <Button variant="ghost" size="sm" onClick={cancelDrill} className="text-muted-foreground hover:text-destructive transition-colors">
+            <XCircle className="w-5 h-5 mr-1.5" strokeWidth={1.5} /> <span className="font-medium">中断する</span>
           </Button>
-          <div className="flex items-center text-primary font-mono text-lg bg-primary/10 px-3 py-1 rounded-full">
-            <Clock className="w-4 h-4 mr-2" />
+          <div className="flex items-center text-primary font-mono text-xl bg-primary/10 px-4 py-1.5 rounded-full border border-primary/20 shadow-inner">
+            <Clock className="w-5 h-5 mr-2" />
             {Math.floor(elapsed / 60).toString().padStart(2, '0')}:{(elapsed % 60).toString().padStart(2, '0')}
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
+        <div className="w-full bg-black/5 h-2.5 rounded-full overflow-hidden shadow-inner">
           <div 
-            className="bg-primary h-full transition-all duration-300 ease-out" 
+            className="bg-primary h-full transition-all duration-500 ease-out" 
             style={{ width: `${progressPercent}%` }}
           />
         </div>
 
         {/* Question Card */}
-        <Card className="shadow-sm border-t-4 border-t-primary">
-          <CardHeader>
-            <CardDescription className="font-semibold text-primary">
-              問題 {currentIndex + 1} / {unit.questions.length}
+        <Card className="shadow-2xl border-0 overflow-hidden bg-white/95 backdrop-blur-sm">
+          <div className="h-2 w-full bg-primary/80"></div>
+          <CardHeader className="px-8 pt-8 pb-4">
+            <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
+              Question {currentIndex + 1} <span className="opacity-50 mx-1">/</span> {unit.questions.length}
             </CardDescription>
-            <CardTitle className="text-xl leading-relaxed mt-2 pt-2">
+            <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
               <MathDisplay math={currentQ.question_text} />
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 pb-6">
+          <CardContent className="space-y-6 px-8 pb-8">
             {currentQ.image_url && (
-              <div className="mb-4 bg-muted/30 p-4 rounded-md flex justify-center">
-                <img src={currentQ.image_url} alt="Problem visual" className="max-h-64 object-contain rounded-sm" />
+              <div className="mb-6 bg-gray-50 p-6 rounded-xl flex justify-center border shadow-inner">
+                <img src={currentQ.image_url} alt="Problem visual" className="max-h-72 object-contain rounded-md shadow-sm mix-blend-multiply" />
               </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {currentQ.options.map((opt, i) => {
                 const isSelected = selectedOption === i;
                 return (
@@ -200,31 +263,35 @@ export default function DrillPage() {
                     key={i}
                     onClick={() => handleSelectOption(i)}
                     className={`
-                      w-full text-left p-4 rounded-lg border-2 transition-all 
+                      w-full text-left p-5 rounded-xl border-2 transition-all duration-200
                       ${isSelected 
-                        ? 'border-primary bg-primary/5 shadow-md scale-[1.01]' 
-                        : 'border-muted bg-white hover:border-primary/50 hover:bg-gray-50'
+                        ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20' 
+                        : 'border-gray-200 bg-white hover:border-primary/50 hover:bg-gray-50 hover:shadow-sm'
                       }
                     `}
                   >
-                    <span className="inline-block w-6 h-6 text-center leading-6 rounded-full bg-muted/50 text-muted-foreground text-sm mr-3">
-                      {i + 1}
-                    </span>
-                    <MathDisplay math={opt} />
+                    <div className="flex items-start">
+                      <span className={`flex-shrink-0 inline-block w-8 h-8 text-center leading-8 rounded-full text-sm font-bold mr-4 transition-colors ${isSelected ? 'bg-primary text-white' : 'bg-gray-100 text-gray-500'}`}>
+                        {i + 1}
+                      </span>
+                      <div className="pt-1 overflow-x-auto">
+                        <MathDisplay math={opt} />
+                      </div>
+                    </div>
                   </button>
                 );
               })}
             </div>
           </CardContent>
-          <CardFooter className="bg-gray-50 rounded-b-lg border-t p-4 flex justify-end">
+          <CardFooter className="bg-gray-50/80 border-t p-6 flex justify-end">
             <Button 
               size="lg" 
               disabled={selectedOption === null} 
               onClick={handleNext}
-              className="px-8 font-bold"
+              className="px-10 h-14 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
             >
               {currentIndex < unit.questions.length - 1 ? '次の問題へ' : '演習を完了する'}
-              <ArrowRight className="w-5 h-5 ml-2" />
+              <ArrowRight className="w-6 h-6 ml-3" />
             </Button>
           </CardFooter>
         </Card>
