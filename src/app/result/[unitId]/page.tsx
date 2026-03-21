@@ -281,6 +281,20 @@ ${wrongList || '（なし）'}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="bg-red-50/30 px-6 py-5">
+                      <div className="mb-6 space-y-3">
+                        <div className="flex items-start bg-white p-3 rounded-lg border border-red-100 shadow-sm">
+                          <span className="inline-block px-2 py-1 text-xs font-bold rounded bg-red-100 text-red-700 mr-3 mt-0.5 whitespace-nowrap">あなたの回答</span>
+                          <div className="text-gray-700 overflow-x-auto">
+                            {q.user_selected_index ? <MathDisplay math={q.options[q.user_selected_index - 1]} /> : '未回答'}
+                          </div>
+                        </div>
+                        <div className="flex items-start bg-white p-3 rounded-lg border border-green-100 shadow-sm">
+                          <span className="inline-block px-2 py-1 text-xs font-bold rounded bg-green-100 text-green-700 mr-3 mt-0.5 whitespace-nowrap">　正しい解答　</span>
+                          <div className="font-bold text-gray-900 overflow-x-auto">
+                            <MathDisplay math={q.options[q.answer_index - 1]} />
+                          </div>
+                        </div>
+                      </div>
                       <p className="font-bold text-destructive mb-2 flex items-center text-sm">
                         <span className="bg-destructive/10 px-2 py-0.5 rounded text-destructive mr-2">解説</span>
                       </p>

@@ -17,6 +17,7 @@ interface Question {
   answer_index: number;
   explanation: string;
   image_url: string | null;
+  user_selected_index?: number;
 }
 
 interface Unit {
@@ -126,7 +127,7 @@ export default function DrillPage() {
     if (isCorrect) {
       setCorrectQuestions(prev => [...prev, currentQ]);
     } else {
-      setWrongQuestions(prev => [...prev, currentQ]);
+      setWrongQuestions(prev => [...prev, { ...currentQ, user_selected_index: selectedOption + 1 }]);
     }
 
     if (currentIndex < unit.questions.length - 1) {
@@ -140,7 +141,7 @@ export default function DrillPage() {
       
       const newAnswers = [...answers, isCorrect];
       const newCorrect = isCorrect ? [...correctQuestions, currentQ] : correctQuestions;
-      const newWrong = !isCorrect ? [...wrongQuestions, currentQ] : wrongQuestions;
+      const newWrong = !isCorrect ? [...wrongQuestions, { ...currentQ, user_selected_index: selectedOption + 1 }] : wrongQuestions;
       
       const finalScore = Math.floor((newCorrect.length / unit.questions.length) * 100);
 
