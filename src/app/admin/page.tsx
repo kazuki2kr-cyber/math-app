@@ -177,9 +177,12 @@ export default function AdminPage() {
 
             let parsedOptions: string[] = [];
             try {
-              parsedOptions = JSON.parse(options);
+              const parsed = JSON.parse(options);
+              parsedOptions = Array.isArray(parsed) ? parsed.map(String) : [];
             } catch (e) {
-              parsedOptions = typeof options === 'string' ? options.split(',').map(s => s.trim()) : [];
+              parsedOptions = typeof options === 'string' && options.trim() !== '' 
+                ? options.split(',').map(s => s.trim()) 
+                : [];
             }
 
             unitsMap[unit_id].questions.push({
