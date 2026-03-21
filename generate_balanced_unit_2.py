@@ -12,17 +12,35 @@ def create_options_auto(correct_val, is_fraction=False, manual_dummies=None):
             if str(d) != str(correct_val):
                 dummies.add(str(d))
     
-    # Simple numeric logic for more dummies if needed
     attempt = 1
     while len(dummies) < 3:
         try:
             if is_fraction:
-                if "/" in correct_val:
-                    # Very simple fraction logic: flip sign or change numerator/denominator slightly
-                    if attempt == 1:
-                        cand = "-" + correct_val if not correct_val.startswith("-") else correct_val[1:]
+                # Handle LaTeX fraction \frac{n}{d}
+                if "\\frac" in correct_val:
+                    import re
+                    match = re.search(r"\\frac\{(-?\d+)\}\{(-?\d+)\}", correct_val)
+                    if match:
+                        n = int(match.group(1))
+                        d = int(match.group(2))
+                        
+                        # Generate varied candidates
+                        candidates = [
+                            f"\\frac{{{-n}}}{{{d}}}",       # Opposite sign
+                            f"\\frac{{{n}}}{{{-d}}}",      # Negative denominator
+                            f"\\frac{{{d}}}{{{n}}}" if n != 0 else None, # Reciprocal
+                            f"\\frac{{{n + random.randint(-3, 3)}}}{{{d}}}", # Slightly different numerator
+                            f"\\frac{{{n}}}{{{d + random.randint(1, 3)}}}"   # Slightly different denominator
+                        ]
+                        cand = random.choice([c for c in candidates if c])
                     else:
-                        cand = f"{random.randint(1,15)}/{random.randint(2,15)}"
+                        cand = correct_val + str(attempt) # Fallback for non-standard fractions
+                elif "/" in correct_val:
+                    # Simple n/d format
+                    parts = correct_val.split("/")
+                    n = int(parts[0])
+                    d = int(parts[1])
+                    cand = f"{n + random.randint(-3, 3)}/{d + random.randint(1, 3)}"
                 else:
                     cand = str(int(correct_val) + random.choice([-1, 1, 2]))
             else:
@@ -32,12 +50,12 @@ def create_options_auto(correct_val, is_fraction=False, manual_dummies=None):
                 else:
                     cand = str(round(num + random.choice([-0.1, 0.1, 0.2, -0.2]), 2))
             
-            if str(cand) != str(correct_val):
+            if str(cand) != str(correct_val) and cand not in dummies:
                 dummies.add(str(cand))
         except:
-            dummies.add(str(correct_val) + str(attempt))
+            dummies.add(str(correct_val) + "_" + str(attempt))
         attempt += 1
-        if attempt > 100: break # Safety
+        if attempt > 200: break
 
     dummy_list = list(dummies)[:3]
     opts = dummy_list + [str(correct_val)]
@@ -50,7 +68,7 @@ concepts = [
     ("負の数に負の数をかけると、積の符号はどうなりますか。", "正", ["負", "0", "変化しない"]),
     ("ある数を 0 でわるとどうなりますか。", "計算できない", ["0になる", "1になる", "元の数と同じ"]),
     ("逆数とは、その数とかけたときに何になる数ですか。", "1", ["0", "-1", "元の数"]),
-    ("-3/4 の逆数は何ですか。", "-4/3", ["3/4", "4/3", "-3/4"]),
+    ("\\( -\\frac{3}{4} \\) の逆数は何ですか。", "-\\frac{4}{3}", ["\\frac{3}{4}", "\\frac{4}{3}", "-\\frac{3}{4}"]),
     ("積の符号を決めるとき、負の数が奇数個あると符号はどうなりますか。", "負 (-)", ["正 (+)", "0", "決まらない"]),
     ("積の符号を決めるとき、負の数が偶数個あると符号はどうなりますか。", "正 (+)", ["負 (-)", "0", "決まらない"]),
     ("0 にどんな数をかけても、積はいくらになりますか。", "0", ["1", "その数自体", "計算できない"]),
@@ -94,27 +112,39 @@ for _ in range(10):
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
 # 4. 分数乗除 (15問)
-for _ in range(15):
+for i in range(15):
     n1, d1 = random.randint(-9, 9), random.randint(2, 9)
     if n1 == 0: n1 = 1
     n2, d2 = random.randint(-9, 9), random.randint(2, 9)
     if n2 == 0: n2 = 1
     
     if random.choice([True, False]): # multiplication
-        # simple display
         q = f"次の計算をしなさい。\n\\( (\\frac{{{n1}}}{{{d1}}}) \\times (\\frac{{{n2}}}{{{d2}}}) \\)"
-        # result logic (simplified for CSV generation)
         res_n = n1 * n2
         res_d = d1 * d2
-        ans_str = f"\\frac{{{res_n}}}{{{res_d}}}"
     else: # division
         q = f"次の計算をしなさい。\n\\( (\\frac{{{n1}}}{{{d1}}}) \\div (\\frac{{{n2}}}{{{d2}}}) \\)"
         res_n = n1 * d2
         res_d = d1 * n2
-        ans_str = f"\\frac{{{res_n}}}{{{res_d}}}"
 
-    opts, a_idx = create_options_auto(ans_str, is_fraction=True)
-    exp = f"分数の計算です。除法の場合は逆数をかけます。正解は \\( {ans_str} \\) です。"
+    # Simplify fraction for answer
+    from math import gcd
+    common = gcd(res_n, res_d)
+    final_n = res_n // common
+    final_d = res_d // common
+    if final_d < 0:
+        final_n = -final_n
+        final_d = -final_d
+    
+    if final_d == 1:
+        ans_str = str(final_n)
+        is_frac = False
+    else:
+        ans_str = f"\\frac{{{final_n}}}{{{final_d}}}"
+        is_frac = True
+
+    opts, a_idx = create_options_auto(ans_str, is_fraction=is_frac)
+    exp = f"分数の計算です。符号に注意し、最後は約分します。正解は \\( {ans_str} \\) です。"
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
 # Output to CSV
