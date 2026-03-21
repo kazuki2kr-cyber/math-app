@@ -53,7 +53,7 @@ export const MathDisplay: React.FC<MathDisplayProps> = ({
   }
 
   // Backup for pure math without delimiters (previous behavior)
-  if (parts.length === 0) {
+  if (parts.length === 1 && parts[0].type === 'text') {
     if (block) {
       return (
         <span className={cn('math-display text-lg text-foreground', className)}>
