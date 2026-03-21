@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Trash2, RefreshCw, FileText, Database, UserCheck, Shield, Zap, AlertTriangle, Save, X } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
+import { parseOptions } from '@/lib/utils';
 
 export default function AdminPage() {
   const { user } = useAuth();
@@ -175,20 +176,10 @@ export default function AdminPage() {
               unitsMap[unit_id] = { id: unit_id, title: `単元 ${unit_id}`, questions: [] };
             }
 
-            let parsedOptions: string[] = [];
-            try {
-              const parsed = JSON.parse(options);
-              parsedOptions = Array.isArray(parsed) ? parsed.map(String) : [];
-            } catch (e) {
-              parsedOptions = typeof options === 'string' && options.trim() !== '' 
-                ? options.split(',').map(s => s.trim()) 
-                : [];
-            }
-
             unitsMap[unit_id].questions.push({
               id: `q_${index}`,
               question_text: question_text || '',
-              options: parsedOptions,
+              options: parseOptions(options),
               answer_index: parseInt(answer_index) || 1,
               explanation: explanation || '',
               image_url: image_url || null,

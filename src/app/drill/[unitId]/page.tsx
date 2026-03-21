@@ -8,6 +8,7 @@ import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
 import { Clock, ArrowRight, XCircle } from 'lucide-react';
+import { parseOptions } from '@/lib/utils';
 
 interface Question {
   id: string;
@@ -52,6 +53,10 @@ export default function DrillPage() {
         const snap = await getDoc(doc(db, 'units', unitId));
         if (snap.exists()) {
           const rawUnit = snap.data() as Unit;
+          rawUnit.questions = rawUnit.questions.map(q => ({
+            ...q,
+            options: parseOptions(q.options)
+          }));
           
           // 1. シャッフルして最大10問を抽出
           let shuffledQuestions = [...rawUnit.questions].sort(() => 0.5 - Math.random());
