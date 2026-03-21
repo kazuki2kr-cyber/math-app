@@ -28,8 +28,8 @@ export const MathDisplay: React.FC<MathDisplayProps> = ({
 
   const parts: { type: 'text' | 'inline' | 'block'; content: string }[] = [];
   let lastIndex = 0;
-  // match $$ ... $$ first, then $ ... $
-  const regex = /\$\$(.*?)\$\$|\$(.*?)\$/g;
+  // match $$ ... $$, \[ ... \], $ ... $, \( ... \)
+  const regex = /\$\$(.*?)\$\$|\\\[([\s\S]*?)\\\]|\$(.*?)\$|\\\(([\s\S]*?)\\\)/g;
   let match;
 
   while ((match = regex.exec(math)) !== null) {
@@ -39,7 +39,11 @@ export const MathDisplay: React.FC<MathDisplayProps> = ({
     if (match[1] !== undefined) {
       parts.push({ type: 'block', content: match[1] });
     } else if (match[2] !== undefined) {
-      parts.push({ type: 'inline', content: match[2] });
+      parts.push({ type: 'block', content: match[2] });
+    } else if (match[3] !== undefined) {
+      parts.push({ type: 'inline', content: match[3] });
+    } else if (match[4] !== undefined) {
+      parts.push({ type: 'inline', content: match[4] });
     }
     lastIndex = regex.lastIndex;
   }
@@ -49,12 +53,27 @@ export const MathDisplay: React.FC<MathDisplayProps> = ({
   }
 
   // Backup for pure math without delimiters (previous behavior)
-  if (parts.length === 0 && block) {
-       return (
-         <span className={cn('math-display text-lg text-foreground', className)}>
-            <BlockMath math={math} errorColor={errorColor} renderError={renderError}/>
-         </span>
-       )
+  if (parts.length === 0) {
+    if (block) {
+      return (
+        <span className={cn('math-display text-lg text-foreground', className)}>
+           <BlockMath math={math} errorColor={errorColor} renderError={renderError}/>
+        </span>
+      );
+    } else {
+      // Fallback for inline pure math (often used in multiple-choice options)
+      // If it contains backslash but no Japanese text, it's highly likely pure math string
+      const hasJapanese = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(math);
+      const isLikelyMath = !hasJapanese && (math.includes('\\') || math.match(/^[0-9a-zA-Z\s\+\-\*\/\=\(\)\.\,\:\^\_]+$/));
+      
+      if (isLikelyMath) {
+        return (
+          <span className={cn('math-display text-lg text-foreground', className)}>
+             <InlineMath math={math} errorColor={errorColor} renderError={renderError}/>
+          </span>
+        );
+      }
+    }
   }
 
   return (
