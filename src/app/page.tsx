@@ -38,6 +38,7 @@ export default function Home() {
   const [overallRanking, setOverallRanking] = useState<OverallRank[]>([]);
   const [myRankInfo, setMyRankInfo] = useState<{ rank: number; data: OverallRank } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [wrongAnswers, setWrongAnswers] = useState<Record<string, number>>({});
   const [userData, setUserData] = useState<{ xp: number; icon: string; title: string; level: number; progress: number } | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -86,7 +87,18 @@ export default function Home() {
           });
         }
 
-        // 3. Fetch all scores globally to calculate overall ranking
+        // 3. Fetch wrong answers
+        const wrongSnap = await getDocs(collection(db, 'users', user.uid, 'wrong_answers'));
+        const newWrongAnswers: Record<string, number> = {};
+        wrongSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.wrongQuestionIds && data.wrongQuestionIds.length > 0) {
+             newWrongAnswers[docSnap.id] = data.wrongQuestionIds.length;
+          }
+        });
+        setWrongAnswers(newWrongAnswers);
+
+        // 4. Fetch all scores globally to calculate overall ranking
         const allScoresSnap = await getDocs(collection(db, 'scores'));
         const userTotals: Record<string, OverallRank> = {};
         
@@ -340,23 +352,35 @@ export default function Home() {
                             </div>
                           )}
                         </CardContent>
-                        <CardFooter className="flex gap-3 px-6 pb-6 pt-0">
-                          <Button 
-                            className="flex-1 shadow-md hover:shadow-lg transition-shadow bg-primary text-primary-foreground font-semibold" 
-                            onClick={() => startDrill(unit.id)}
-                            disabled={totalQ === 0}
-                          >
-                            <PlayCircle className="w-4 h-4 mr-2" />
-                            演習開始
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            onClick={() => gotoRanking(unit.id)}
-                            aria-label={`${displayTitle}のランキングを見る`}
-                            className="border-primary/20 text-primary hover:bg-primary/5 hover:text-primary transition-colors"
-                          >
-                            <Trophy className="w-4 h-4" />
-                          </Button>
+                        <CardFooter className="flex flex-col gap-2 px-6 pb-6 pt-0">
+                          <div className="flex gap-3 w-full">
+                            <Button 
+                              className="flex-1 shadow-md hover:shadow-lg transition-shadow bg-primary text-primary-foreground font-semibold" 
+                              onClick={() => startDrill(unit.id)}
+                              disabled={totalQ === 0}
+                            >
+                              <PlayCircle className="w-4 h-4 mr-2" />
+                              演習開始
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              onClick={() => gotoRanking(unit.id)}
+                              aria-label={`${displayTitle}のランキングを見る`}
+                              className="border-primary/20 text-primary hover:bg-primary/5 hover:text-primary transition-colors"
+                            >
+                              <Trophy className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          {wrongAnswers[unit.id] > 0 && (
+                            <Button
+                              variant="secondary"
+                              className="w-full shadow-sm hover:shadow-md transition-shadow bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200 text-xs font-bold"
+                              onClick={() => router.push(`/drill/${unit.id}?mode=wrong`)}
+                            >
+                              <PlayCircle className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                              間違えた問題のみ復習 ({wrongAnswers[unit.id]}問)
+                            </Button>
+                          )}
                         </CardFooter>
                       </Card>
                     );

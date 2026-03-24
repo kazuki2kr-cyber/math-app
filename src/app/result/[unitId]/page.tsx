@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, increment, writeBatch } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
@@ -124,8 +124,67 @@ export default function ResultPage() {
             confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
           }
         }
+
+        // 3. Save new analytical data (Attempts, Stats, Wrong Answers)
+        const batch = writeBatch(db);
+        
+        // 3-1: Add personal attempt history
+        const attemptsRef = doc(collection(db, 'users', user.uid, 'attempts'));
+        batch.set(attemptsRef, {
+          unitId,
+          unitTitle: parsed.unitTitle,
+          score: parsed.score,
+          time: parsed.time,
+          totalQuestions: parsed.totalQuestions,
+          date: new Date().toISOString(),
+          details: [
+            ...parsed.correctQuestions.map(q => ({ qId: q.id, isCorrect: true, timeTaken: null })),
+            ...parsed.wrongQuestions.map(q => ({ qId: q.id, isCorrect: false, userSelected: q.user_selected_index, timeTaken: null }))
+          ]
+        });
+
+        // 3-2: Update unit stats using increment
+        const statsRef = doc(db, 'units', unitId, 'stats', 'questions');
+        const statsUpdateData: any = {};
+        parsed.correctQuestions.forEach(q => {
+          statsUpdateData[`${q.id}.correct`] = increment(1);
+          statsUpdateData[`${q.id}.total`] = increment(1);
+        });
+        parsed.wrongQuestions.forEach(q => {
+          statsUpdateData[`${q.id}.total`] = increment(1);
+        });
+        batch.set(statsRef, statsUpdateData, { merge: true });
+
+        // 3-3: Update wrong answers list
+        const wrongDocRef = doc(db, 'users', user.uid, 'wrong_answers', unitId);
+        const wrongDocSnap = await getDoc(wrongDocRef);
+        let currentWrongs: string[] = [];
+        if (wrongDocSnap.exists()) {
+          currentWrongs = wrongDocSnap.data().wrongQuestionIds || [];
+        }
+        
+        // Remove those that were answered correctly this time
+        const newlyCorrectIds = parsed.correctQuestions.map(q => q.id);
+        currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
+        
+        // Add those that were answered wrongly this time
+        const newlyWrongIds = parsed.wrongQuestions.map(q => q.id);
+        newlyWrongIds.forEach(id => {
+          if (!currentWrongs.includes(id)) {
+            currentWrongs.push(id);
+          }
+        });
+        
+        batch.set(wrongDocRef, {
+          unitId,
+          wrongQuestionIds: currentWrongs,
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        await batch.commit();
+
       } catch (err) {
-        console.error('Failed to save score/xp:', err);
+        console.error('Failed to save score/xp/stats:', err);
       } finally {
         setSaving(false);
       }

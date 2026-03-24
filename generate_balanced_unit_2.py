@@ -5,6 +5,14 @@ import random
 unit_id = "2.正負の数の乗除"
 questions = []
 
+def fmt(x):
+    return f"({x})" if float(x) < 0 else str(x)
+
+def fmt_frac(n, d):
+    is_neg = n * d < 0
+    frac_str = f"-\\frac{{{abs(n)}}}{{{abs(d)}}}" if is_neg else f"\\frac{{{abs(n)}}}{{{abs(d)}}}"
+    return f"({frac_str})" if is_neg else frac_str
+
 def create_options_auto(correct_val, is_fraction=False, manual_dummies=None):
     dummies = set()
     if manual_dummies:
@@ -78,7 +86,7 @@ concepts = [
 
 for q_text, ans, ds in concepts:
     opts, a_idx = create_options_auto(ans, manual_dummies=ds)
-    exp = f"正解は {ans} です。"
+    exp = f"正解は \\( {ans} \\) です。"
     questions.append([unit_id, q_text, opts, a_idx, exp, ""])
 
 # 2. 整数乗除 (15問)
@@ -87,13 +95,13 @@ for _ in range(15):
     b = random.choice([x for x in range(-12, 13) if x != 0])
     if random.choice([True, False]): # 乗法
         ans = a * b
-        q = f"次の計算をしなさい。\n\\( ({a}) \\times ({b}) \\)"
-        exp = f"計算結果は {ans} です。"
+        q = f"次の計算をしなさい。\n\\( {fmt(a)} \\times {fmt(b)} \\)"
+        exp = f"計算結果は \\( {ans} \\) です。"
     else: # 除法
         ans = a
         multi = a * b
-        q = f"次の計算をしなさい。\n\\( ({multi}) \\div ({b}) \\)"
-        exp = f"計算結果は {ans} です。"
+        q = f"次の計算をしなさい。\n\\( {fmt(multi)} \\div {fmt(b)} \\)"
+        exp = f"計算結果は \\( {ans} \\) です。"
     opts, a_idx = create_options_auto(str(ans))
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
@@ -103,12 +111,12 @@ for _ in range(10):
     b = random.choice([0.2, 0.5, -0.2, -0.5, 2, -2])
     if random.choice([True, False]):
         ans = round(a * b, 2)
-        q = f"次の計算をしなさい。\n\\( ({a}) \\times ({b}) \\)"
+        q = f"次の計算をしなさい。\n\\( {fmt(a)} \\times {fmt(b)} \\)"
     else:
         ans = round(a / b, 2)
-        q = f"次の計算をしなさい。\n\\( ({a}) \\div ({b}) \\)"
+        q = f"次の計算をしなさい。\n\\( {fmt(a)} \\div {fmt(b)} \\)"
     opts, a_idx = create_options_auto(str(ans))
-    exp = f"小数の計算です。符号に注意して計算すると {ans} になります。"
+    exp = f"小数の計算です。符号に注意して計算すると \\( {ans} \\) になります。"
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
 # 4. 分数乗除 (15問)
@@ -119,11 +127,11 @@ for i in range(15):
     if n2 == 0: n2 = 1
     
     if random.choice([True, False]): # multiplication
-        q = f"次の計算をしなさい。\n\\( (\\frac{{{n1}}}{{{d1}}}) \\times (\\frac{{{n2}}}{{{d2}}}) \\)"
+        q = f"次の計算をしなさい。\n\\( {fmt_frac(n1, d1)} \\times {fmt_frac(n2, d2)} \\)"
         res_n = n1 * n2
         res_d = d1 * d2
     else: # division
-        q = f"次の計算をしなさい。\n\\( (\\frac{{{n1}}}{{{d1}}}) \\div (\\frac{{{n2}}}{{{d2}}}) \\)"
+        q = f"次の計算をしなさい。\n\\( {fmt_frac(n1, d1)} \\div {fmt_frac(n2, d2)} \\)"
         res_n = n1 * d2
         res_d = d1 * n2
 

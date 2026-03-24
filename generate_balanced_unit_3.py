@@ -6,6 +6,9 @@ import math
 unit_id = "3.正負の数の四則"
 questions = []
 
+def fmt(x):
+    return f"({x})" if float(x) < 0 else str(x)
+
 def create_options_auto(correct_val, is_fraction=False, manual_dummies=None):
     dummies = set()
     if manual_dummies:
@@ -92,12 +95,12 @@ for _ in range(15):
     c = random.randint(-8, 8)
     if random.choice([True, False]): # a + b * c
         ans = a + (b * c)
-        q = f"次の計算をしなさい。\\( {a} + ({b}) \\times ({c}) \\)"
-        exp = f"先にかけ算を計算します。\\( ({b}) \\times ({c}) = {b*c} \\) なので、\\( {a} + ({b*c}) = {ans} \\) です。"
+        q = f"次の計算をしなさい。\\( {a} + {fmt(b)} \\times {fmt(c)} \\)"
+        exp = f"先にかけ算を計算します。\\( {fmt(b)} \\times {fmt(c)} = {b*c} \\) なので、\\( {a} + {fmt(b*c)} = {ans} \\) です。"
     else: # (a + b) * c
         ans = (a + b) * c
-        q = f"次の計算をしなさい。\\( ({a} + ({b})) \\times ({c}) \\)"
-        exp = f"先に括弧の中を計算します。\\( {a} + ({b}) = {a+b} \\) なので、\\( {a+b} \\times ({c}) = {ans} \\) です。"
+        q = f"次の計算をしなさい。\\( ({a} + {fmt(b)}) \\times {fmt(c)} \\)"
+        exp = f"先に括弧の中を計算します。\\( {a} + {fmt(b)} = {a+b} \\) なので、\\( {fmt(a+b)} \\times {fmt(c)} = {ans} \\) です。"
     opts, a_idx = create_options_auto(str(ans))
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
@@ -107,14 +110,14 @@ for _ in range(15):
         a = round(random.uniform(-5, 5), 1)
         b = round(random.uniform(-2, 2), 1)
         ans = round(a * 2 + b, 1) # simple chain
-        q = f"次の計算をしなさい。\\( {a} \\times 2 + ({b}) \\)"
-        exp = f"計算結果は {ans} です。"
+        q = f"次の計算をしなさい。\\( {a} \\times 2 + {fmt(b)} \\)"
+        exp = f"計算結果は \\( {ans} \\) です。"
         opts, a_idx = create_options_auto(str(ans))
     else: # Fraction
         n, d = random.randint(1, 4), random.randint(2, 6)
         ans_str = f"\\frac{{{n}}}{{{d}}}"
         q = f"次の計算をしなさい。\\( \\frac{{{n*2}}}{{{d}}} \\times \\frac{{1}}{{2}} \\)"
-        exp = f"分数の計算です。正解は {ans_str} です。"
+        exp = f"分数の計算です。正解は \\( {ans_str} \\) です。"
         opts, a_idx = create_options_auto(ans_str, is_fraction=True)
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
@@ -129,7 +132,7 @@ for _ in range(15):
     item = random.choice(primes_data)
     v, ans = item
     q = f"\\( {v} \\) を素因数分解しなさい。"
-    exp = f"{v} を素数でわっていくと {ans} になります。"
+    exp = f"\\( {v} \\) を素数でわっていくと \\( {ans} \\) になります。"
     # Manual dummies for prime factorization to be realistic
     ds = [ans.replace("2", "3"), ans.replace("^2", "^3"), ans.replace("\\times", "+")]
     opts, a_idx = create_options_auto(ans, manual_dummies=ds)

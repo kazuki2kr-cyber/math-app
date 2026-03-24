@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { MathDisplay } from '@/components/MathDisplay';
@@ -31,6 +32,7 @@ export default function DrillPage() {
   // Next.jsのparamsはURLエンコードされている場合があるためデコードする（とくに日本語の場合）
   const unitId = decodeURIComponent(params.unitId as string);
   const router = useRouter();
+  const { user } = useAuth();
 
   const [unit, setUnit] = useState<Unit | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,8 +61,29 @@ export default function DrillPage() {
             options: parseOptions(q.options)
           }));
           
+          let filteredQuestions = [...rawUnit.questions];
+          const mode = new URLSearchParams(window.location.search).get('mode');
+          
+          if (mode === 'wrong' && user) {
+            const wrongDocRef = doc(db, 'users', user.uid, 'wrong_answers', unitId);
+            const wrongSnap = await getDoc(wrongDocRef);
+            if (wrongSnap.exists() && wrongSnap.data().wrongQuestionIds) {
+              const wrongIds = wrongSnap.data().wrongQuestionIds;
+              filteredQuestions = filteredQuestions.filter(q => wrongIds.includes(q.id));
+              if (filteredQuestions.length === 0) {
+                 setError('間違えた問題がありません。復習完了です！');
+                 setLoading(false);
+                 return;
+              }
+            } else {
+               setError('間違えた問題の履歴がありません。');
+               setLoading(false);
+               return;
+            }
+          }
+          
           // 1. シャッフルして最大10問を抽出
-          let shuffledQuestions = [...rawUnit.questions].sort(() => 0.5 - Math.random());
+          let shuffledQuestions = filteredQuestions.sort(() => 0.5 - Math.random());
           if (shuffledQuestions.length > 10) {
             shuffledQuestions = shuffledQuestions.slice(0, 10);
           }
@@ -96,8 +119,12 @@ export default function DrillPage() {
         setLoading(false);
       }
     }
-    fetchUnit();
-  }, [unitId]);
+    
+    // We only fetch when user is loaded (or user is null but we still want to try showing standard mode)
+    if (user !== undefined) {
+      fetchUnit();
+    }
+  }, [unitId, user]);
 
   useEffect(() => {
     // Start interval

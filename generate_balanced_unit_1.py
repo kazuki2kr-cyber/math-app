@@ -4,6 +4,12 @@ import random
 import math
 import re
 
+def fmt(x):
+    return f"({x})" if float(x) < 0 else str(x)
+
+def fmt_str(s):
+    return f"({s})" if s.startswith("-") else s
+
 def create_options_auto(correct_val, is_fraction=False, correct_idx=None, manual_dummies=None):
     if correct_idx is None:
         correct_idx = random.randint(0, 3)
@@ -184,9 +190,9 @@ for _ in range(10):
     b = random.randint(-20, 20)
     op = random.choice(["+", "-"])
     ans = a + b if op == "+" else a - b
-    q = f"次の計算をしなさい。\n\\( ({a}) {op} ({b}) \\)"
+    q = f"次の計算をしなさい。\n\\( {fmt(a)} {op} {fmt(b)} \\)"
     opts, a_idx = create_options_auto(str(ans))
-    exp = f"同符号・異符号の計算です。\\( ({a}) {op} ({b}) = {ans} \\) となります。"
+    exp = f"同符号・異符号の計算です。\\( {fmt(a)} {op} {fmt(b)} = {ans} \\) となります。"
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
 for _ in range(10):
@@ -194,9 +200,9 @@ for _ in range(10):
     b = round(random.uniform(-10.0, 10.0), 1)
     op = random.choice(["+", "-"])
     ans = round(a + b if op == "+" else a - b, 1)
-    q = f"次の計算をしなさい。\n\\( ({a}) {op} ({b}) \\)"
+    q = f"次の計算をしなさい。\n\\( {fmt(a)} {op} {fmt(b)} \\)"
     opts, a_idx = create_options_auto(str(ans))
-    exp = f"小数の正負の計算です。位をそろえて計算します。\\( ({a}) {op} ({b}) = {ans} \\) となります。"
+    exp = f"小数の正負の計算です。位をそろえて計算します。\\( {fmt(a)} {op} {fmt(b)} = {ans} \\) となります。"
     questions.append([unit_id, q, opts, a_idx, exp, ""])
 
 for _ in range(10):
@@ -224,7 +230,7 @@ for _ in range(10):
     s2 = f"\\frac{{{abs(n2)}}}{{{d}}}"
     if n2 < 0: s2 = "-" + s2
     
-    q = f"次の計算をしなさい。\n\\( ({s1}) {op} ({s2}) \\)"
+    q = f"次の計算をしなさい。\n\\( {fmt_str(s1)} {op} {fmt_str(s2)} \\)"
     opts, a_idx = create_options_auto(ans_str, is_fraction=True)
     exp = f"分母が同じなので分子同士を計算します。最後は約分できる場合は約分します。正解は \\( {ans_str} \\) です。"
     questions.append([unit_id, q, opts, a_idx, exp, ""])
