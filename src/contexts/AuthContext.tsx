@@ -21,11 +21,13 @@ interface UserData {
   xp?: number;
   icon?: string;
   hasAgreedToTerms?: boolean;
+  isAdmin?: boolean;
 }
 
 interface AuthContextType {
   user: UserData | null;
   loading: boolean;
+  isAdmin: boolean;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   agreeToTerms: () => Promise<void>;
@@ -35,6 +37,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  isAdmin: false,
   loginWithGoogle: async () => {},
   logout: async () => {},
   agreeToTerms: async () => {},
@@ -47,6 +50,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -103,7 +107,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             await setDoc(userRef, { lastLoginAt: userData.lastLoginAt }, { merge: true });
           }
 
-          setUser(finalUserData as UserData);
+          // Check admin custom claim
+          const tokenResult = await firebaseUser.getIdTokenResult(true); // Force refresh to be sure
+          const adminClaim = !!tokenResult.claims.admin;
+          setIsAdmin(adminClaim);
+
+          setUser({ ...finalUserData, isAdmin: adminClaim } as UserData);
           setError(null);
         } catch (err) {
           console.error("Firestore user fetch/create error:", err);
@@ -111,6 +120,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         }
       } else {
         setUser(null);
+        setIsAdmin(false);
       }
       setLoading(false);
     });
@@ -159,7 +169,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout, agreeToTerms, error }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin, loginWithGoogle, logout, agreeToTerms, error }}>
       {children}
     </AuthContext.Provider>
   );

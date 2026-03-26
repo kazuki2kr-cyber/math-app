@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, increment, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, writeBatch } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
@@ -75,13 +76,24 @@ export default function ResultPage() {
 
         if (newHighScore) {
           setIsHighScore(true);
+          // Fetch user's icon + level for ranking data
+          const userSnapForScore = await getDoc(doc(db, 'users', user.uid));
+          let scoreIcon = '📐';
+          let scoreLevel = 1;
+          if (userSnapForScore.exists()) {
+            const uData = userSnapForScore.data();
+            scoreIcon = uData.icon || '📐';
+            scoreLevel = calculateLevelAndProgress(uData.xp || 0).level;
+          }
           await setDoc(scoreRef, {
             uid: user.uid,
             userName: user.displayName || '名無し',
             unitId: unitId,
             maxScore: parsed.score,
             bestTime: parsed.time,
-            updatedAt: new Date().toISOString()
+            updatedAt: new Date().toISOString(),
+            icon: scoreIcon,
+            level: scoreLevel,
           }, { merge: true });
         }
 
@@ -143,17 +155,14 @@ export default function ResultPage() {
           ]
         });
 
-        // 3-2: Update unit stats using increment
-        const statsRef = doc(db, 'units', unitId, 'stats', 'questions');
-        const statsUpdateData: any = {};
-        parsed.correctQuestions.forEach(q => {
-          statsUpdateData[`${q.id}.correct`] = increment(1);
-          statsUpdateData[`${q.id}.total`] = increment(1);
-        });
-        parsed.wrongQuestions.forEach(q => {
-          statsUpdateData[`${q.id}.total`] = increment(1);
-        });
-        batch.set(statsRef, statsUpdateData, { merge: true });
+        // 3-2: Update unit stats via Cloud Function (secure server-side increment)
+        const functions = getFunctions(undefined, 'us-central1');
+        const updateStats = httpsCallable(functions, 'updateQuestionStats');
+        updateStats({
+          unitId,
+          correctQuestionIds: parsed.correctQuestions.map((q: any) => q.id),
+          wrongQuestionIds: parsed.wrongQuestions.map((q: any) => q.id),
+        }).catch((err: any) => console.error('Stats update failed:', err));
 
         // 3-3: Update wrong answers list
         const wrongDocRef = doc(db, 'users', user.uid, 'wrong_answers', unitId);

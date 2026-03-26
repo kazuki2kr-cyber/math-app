@@ -1,39 +1,65 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ── Helper: 管理者判定（Custom Claims ベース） ──
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ── /users/{userId} ──
+    // Read: 本人 + 管理者のみ（他の生徒の個人情報を保護）
+    // Write: 本人のみ
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
-      
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId);
+
+      // サブコレクション（attempts, wrong_answers 等）
       match /{document=**} {
-        allow read: if request.auth != null && (request.auth.uid == userId || request.auth.token.email == 'kazuki2kr@gmail.com' || request.auth.token.email == 'ichikawa.kazuki@shibaurafzk.com');
-        allow write: if request.auth != null && request.auth.uid == userId;
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId);
       }
     }
-    
-    // CollectionGroup query for attempts (Admin only)
+
+    // ── CollectionGroup query for attempts（管理者分析用） ──
     match /{path=**}/attempts/{docId} {
-      allow read: if request.auth != null && (request.auth.token.email == 'kazuki2kr@gmail.com' || request.auth.token.email == 'ichikawa.kazuki@shibaurafzk.com');
+      allow read: if isAdmin();
     }
+
+    // ── /units/{unitId} ──
+    // Read: 認証済みユーザー全員（ドリル実施に必要）
+    // Write: 管理者のみ
     match /units/{unitId} {
-      // 誰でも読み取り可能に（または auth != null に）
-      allow read: if true;
-      // 管理者のみ書き込み可能とするのが望ましいが、テストのためすべて許可または限定
-      allow write: if request.auth != null && (request.auth.token.email == 'kazuki2kr@gmail.com' || request.auth.token.email == 'ichikawa.kazuki@shibaurafzk.com');
-      
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+
+      // stats サブコレクション
+      // Read: 認証済みユーザー全員
+      // Write: 管理者のみ（Cloud Functions 経由で更新）
       match /stats/{statId} {
-        allow read: if true;
-        allow write: if request.auth != null;
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
       }
     }
+
+    // ── /scores/{scoreId} ──
+    // Read: 認証済みユーザー全員（ランキング表示に必要）
+    // Create: 本人のみ（uid チェック）
+    // Update: 本人のみ（uid チェック）
+    // Delete: 管理者のみ
     match /scores/{scoreId} {
-      // 自分のスコアは読み書き可能
-      allow read: if true; // ランキング用に全ユーザーが読み取れる必要がある
-      // 新規作成時は resource がまだ無いため request.resource で判定。既存更新時は request.auth.uid == request.resource.data.uid
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null && request.auth.uid == resource.data.uid && request.auth.uid == request.resource.data.uid;
-      // 管理者のみ削除可能
-      allow delete: if request.auth != null && (request.auth.token.email == 'kazuki2kr@gmail.com' || request.auth.token.email == 'ichikawa.kazuki@shibaurafzk.com');
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.uid;
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.uid && request.auth.uid == request.resource.data.uid;
+      allow delete: if isAdmin();
     }
   }
 }

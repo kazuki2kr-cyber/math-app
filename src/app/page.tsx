@@ -2,7 +2,7 @@
 
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
@@ -14,6 +14,8 @@ interface Unit {
   id: string;
   title: string;
   questions: any[];
+  category?: string;
+  subject?: string;
 }
 
 interface Score {
@@ -34,6 +36,9 @@ interface OverallRank {
 export default function Home() {
   const { user, logout, agreeToTerms } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState<string>('数学');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [overallRanking, setOverallRanking] = useState<OverallRank[]>([]);
   const [myRankInfo, setMyRankInfo] = useState<{ rank: number; data: OverallRank } | null>(null);
@@ -167,6 +172,11 @@ export default function Home() {
         }
 
         setUnits(unitsData);
+        
+        // Extract available categories
+        const categories = Array.from(new Set(unitsData.map(u => u.category || 'その他'))).sort();
+        setAvailableCategories(categories);
+
         setScores(newScores);
         setOverallRanking(top10Initial);
       } catch (err) {
@@ -209,7 +219,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col">
-      <header className="bg-white/80 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-10 transition-all shadow-sm">
+      <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center shadow-inner">
              {/* Small logo placeholder */}
@@ -220,6 +230,19 @@ export default function Home() {
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5">芝浦工業大学附属中学高等学校</p>
           </div>
         </div>
+        
+        <div className="hidden md:flex items-center absolute left-1/2 transform -translate-x-1/2">
+          <label className="text-sm font-bold text-gray-700 mr-2 flex items-center"><Database className="w-4 h-4 mr-1"/> 教科:</label>
+          <select 
+            value={selectedSubject} 
+            onChange={(e) => setSelectedSubject(e.target.value)}
+            className="text-sm border-2 border-primary/20 rounded-lg px-3 py-1.5 bg-white font-medium text-gray-800 shadow-sm outline-none focus:border-primary transition-all hover:bg-gray-50 cursor-pointer"
+          >
+            <option value="数学">数学</option>
+            <option value="英語" disabled>英語 (準備中)</option>
+          </select>
+        </div>
+
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium text-gray-700 hidden sm:inline-block bg-gray-100 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-muted-foreground font-normal ml-1">さん</span>
@@ -293,12 +316,26 @@ export default function Home() {
 
             {/* Units List (Left/Top) */}
             <div className="lg:col-span-2 space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
                 <div>
                   <h2 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
                     <PlayCircle className="w-6 h-6 text-primary" /> 単元一覧
                   </h2>
                   <p className="text-sm text-muted-foreground mt-1 ml-8">学習したい単元を選択して演習を始めましょう。</p>
+                </div>
+                
+                <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 ml-8 sm:ml-0 bg-gray-50 p-1.5 rounded-lg border">
+                  <span className="text-sm font-bold text-gray-600 px-2 whitespace-nowrap">分野:</span>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="flex-1 sm:w-48 text-sm border-none bg-white rounded-md px-3 py-1.5 font-medium text-gray-800 shadow-sm outline-none cursor-pointer"
+                  >
+                    <option value="all">すべて表示</option>
+                    {availableCategories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -315,7 +352,10 @@ export default function Home() {
                 </Card>
               ) : (
                 <div className="grid gap-6 sm:grid-cols-2">
-                  {units.map((unit) => {
+                  {units
+                    .filter(unit => selectedSubject === '数学' ? (unit.subject === 'math' || unit.subject === '数学' || !unit.subject) : unit.subject === selectedSubject)
+                    .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
+                    .map((unit) => {
                     const myScore = scores[unit.id];
                     const totalQ = unit.questions?.length || 0;
                     const hasPlayed = !!myScore;

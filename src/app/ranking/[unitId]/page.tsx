@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ArrowLeft, Trophy, Medal, Clock } from 'lucide-react';
-import { calculateLevelAndProgress } from '@/lib/xp';
 
 interface ScoreEntry {
   uid: string;
@@ -66,24 +65,15 @@ export default function RankingPage() {
         // Take top 10
         const top10Data = data.slice(0, 10);
         
-        const top10 = await Promise.all(top10Data.map(async scoreObj => {
-          const uDoc = await getDoc(doc(db, 'users', scoreObj.uid));
-          let icon = '📐';
-          let level = 1;
-          if (uDoc.exists()) {
-             const uData = uDoc.data();
-             icon = uData.icon || '📐';
-             level = calculateLevelAndProgress(uData.xp || 0).level;
-          }
-          return {
-            uid: scoreObj.uid,
-            name: scoreObj.userName || '名無し',
-            maxScore: scoreObj.maxScore,
-            bestTime: scoreObj.bestTime,
-            updatedAt: scoreObj.updatedAt,
-            icon,
-            level
-          };
+        // Use icon/level directly from scores documents (no users/ access needed)
+        const top10: ScoreEntry[] = top10Data.map(scoreObj => ({
+          uid: scoreObj.uid,
+          name: scoreObj.userName || '名無し',
+          maxScore: scoreObj.maxScore,
+          bestTime: scoreObj.bestTime,
+          updatedAt: scoreObj.updatedAt,
+          icon: scoreObj.icon || '📐',
+          level: scoreObj.level || 1,
         }));
 
         setScores(top10);
