@@ -22,6 +22,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles'>('import');
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]);
+  const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
   const [suspiciousFilter, setSuspiciousFilter] = useState<'red' | 'yellow' | 'all'>('red');
@@ -203,6 +204,11 @@ export default function AdminPage() {
         return timeB - timeA;
       });
       setScores(arr);
+
+      const suspiciousSnap = await getDocs(collection(db, 'suspicious_activities'));
+      const sArr: any[] = [];
+      suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
+      setSuspiciousActivities(sArr);
     } catch (e) {
       console.error(e);
       setMessage('得点の取得に失敗しました。');
@@ -770,127 +776,168 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
         </div>
       )}
 
-      {/* ========== TAB: SUSPICIOUS USERS ========== */}
+      {/* ========== TAB: SUSPICIOUS ========== */}
       {activeTab === 'suspicious' && (
         <div className="space-y-4 mt-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
-            <div>
-              <p className="text-sm text-gray-500">不正疑惑ユーザー検出</p>
-              <p className="text-xs text-gray-400">1問あたりの平均解答時間が異常に短いデータを検出します</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={suspiciousFilter}
-                onChange={(e) => setSuspiciousFilter(e.target.value as any)}
-                className="text-sm border rounded-md px-3 py-1.5 bg-white"
-              >
-                <option value="red">🚨 赤フラグのみ（≤3秒/問）</option>
-                <option value="yellow">⚠️ 黄+赤フラグ（≤5秒/問）</option>
-                <option value="all">全件表示</option>
-              </select>
-              <Button variant="outline" size="sm" onClick={fetchScores} disabled={loading}>
-                <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
-              </Button>
-            </div>
-          </div>
-
           {(() => {
+            // 1. クライアント側（解答時間）での検知
             const QUESTIONS_PER_DRILL = 10;
-            const analyzed = scores
+            const suspiciousScores = scores
               .filter(s => s.bestTime != null && s.bestTime > 0 && !s.ignoreFraud)
               .map(s => {
                 const avgPerQ = s.bestTime / QUESTIONS_PER_DRILL;
                 let flag: 'red' | 'yellow' | 'green' = 'green';
                 if (avgPerQ <= 3) flag = 'red';
                 else if (avgPerQ <= 5) flag = 'yellow';
-                return { ...s, avgPerQ, flag };
-              })
-              .sort((a, b) => a.avgPerQ - b.avgPerQ);
+                return { 
+                  ...s, 
+                  avgPerQ, 
+                  flag,
+                  isServer: false,
+                  updatedAtTime: s.updatedAt ? new Date(s.updatedAt).getTime() : 0
+                };
+              });
 
-            const filtered = suspiciousFilter === 'all'
-              ? analyzed
-              : suspiciousFilter === 'yellow'
-                ? analyzed.filter(s => s.flag === 'red' || s.flag === 'yellow')
-                : analyzed.filter(s => s.flag === 'red');
+            // 2. サーバー側（Cloud Functions）での検知
+            const serverSuspicious = suspiciousActivities.map(s => ({
+              docId: s.id,
+              uid: s.uid,
+              userName: s.userName || '不明なユーザー',
+              unitId: s.unitId,
+              reasons: s.reasons || [],
+              updatedAt: s.timestamp?.toDate ? s.timestamp.toDate().toISOString() : new Date().toISOString(),
+              updatedAtTime: s.timestamp?.toDate ? s.timestamp.toDate().getTime() : Date.now(),
+              isServer: true,
+              flag: 'red' as const, // サーバー検知は重要度高
+              avgPerQ: 0,
+              bestTime: 0,
+              maxScore: 0
+            }));
 
-            const redCount = analyzed.filter(s => s.flag === 'red').length;
-            const yellowCount = analyzed.filter(s => s.flag === 'yellow').length;
+            // 3. 統合
+            const allSuspicious = [
+              ...serverSuspicious, 
+              ...suspiciousScores.filter(s => s.flag !== 'green')
+            ].sort((a, b) => b.updatedAtTime - a.updatedAtTime);
+            
+            // フィルタリング
+            const filtered = allSuspicious.filter(item => {
+              if (suspiciousFilter === 'red') return item.flag === 'red';
+              if (suspiciousFilter === 'yellow') return item.flag === 'red' || item.flag === 'yellow';
+              return true;
+            });
+
+            const redCount = allSuspicious.filter(s => s.flag === 'red').length;
+            const yellowCount = allSuspicious.filter(s => s.flag === 'yellow').length;
 
             return (
               <>
-                <div className="flex gap-4 text-sm">
-                  <div className="flex items-center gap-1.5 bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200">
-                    <AlertTriangle className="w-4 h-4" /> 赤フラグ: {redCount}件
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
+                  <div className="flex gap-4">
+                    <div className="flex items-center gap-1.5 bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200 shadow-sm">
+                      <AlertTriangle className="w-4 h-4" /> 致命的: {redCount}件
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-yellow-50 text-yellow-700 px-3 py-1.5 rounded-lg border border-yellow-200 shadow-sm">
+                      <AlertTriangle className="w-4 h-4" /> 要注意: {yellowCount}件
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 bg-yellow-50 text-yellow-700 px-3 py-1.5 rounded-lg border border-yellow-200">
-                    <AlertTriangle className="w-4 h-4" /> 黄フラグ: {yellowCount}件
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={suspiciousFilter}
+                      onChange={(e) => setSuspiciousFilter(e.target.value as any)}
+                      className="text-sm border rounded-md px-3 py-1.5 bg-white shadow-sm font-medium"
+                    >
+                      <option value="red">🚨 致命的のみ (Server / ≤3s)</option>
+                      <option value="yellow">⚠️ 要注意以上 (≤5s)</option>
+                      <option value="all">全件表示</option>
+                    </select>
+                    <Button variant="outline" size="sm" onClick={fetchScores} disabled={loading} className="shadow-sm">
+                      <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> 更新
+                    </Button>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-md shadow overflow-x-auto">
+                <div className="bg-white rounded-xl shadow-md overflow-hidden border">
                   <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-gray-600 border-b">
                       <tr>
-                        <th className="px-4 py-3">判定</th>
-                        <th className="px-4 py-3">ユーザー名</th>
-                        <th className="px-4 py-3">単元</th>
-                        <th className="px-4 py-3">スコア</th>
-                        <th className="px-4 py-3">合計時間</th>
-                        <th className="px-4 py-3">1問あたり</th>
-                        <th className="px-4 py-3">日時</th>
-                        <th className="px-4 py-3 text-center">操作</th>
+                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">判定</th>
+                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">ユーザー / 単元</th>
+                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">詳細・検知理由</th>
+                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">日時</th>
+                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">操作</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y text-gray-600">
-                      {filtered.map(s => (
-                        <tr key={s.docId} className={`hover:bg-gray-50/50 ${s.flag === 'red' ? 'bg-red-50/40' : s.flag === 'yellow' ? 'bg-yellow-50/40' : ''}`}>
-                          <td className="px-4 py-3 text-center text-lg">
-                            {s.flag === 'red' ? '🚨' : s.flag === 'yellow' ? '⚠️' : '✅'}
-                          </td>
-                          <td className="px-4 py-3 font-medium">{s.userName || s.uid || '-'}</td>
-                          <td className="px-4 py-3 text-primary font-medium">{s.unitId}</td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex px-2 py-1 rounded-full text-xs font-bold ${(s.maxScore ?? 0) >= 80 ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>
-                              {s.maxScore ?? '-'}点
+                    <tbody className="divide-y text-gray-700">
+                      {filtered.map((s, idx) => (
+                        <tr key={`${s.docId}-${idx}`} className={`hover:bg-gray-50/50 transition-colors ${s.flag === 'red' ? 'bg-red-50/20' : ''}`}>
+                          <td className="px-4 py-4 text-center">
+                            <span className={`inline-block px-2 py-1 rounded text-[10px] font-black tracking-tighter uppercase shadow-sm ${s.isServer ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
+                              {s.isServer ? 'SERVER' : 'AUTO'}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-mono">{s.bestTime}秒</td>
-                          <td className="px-4 py-3">
-                            <span className={`font-bold font-mono ${
-                              s.flag === 'red' ? 'text-red-600' : s.flag === 'yellow' ? 'text-yellow-600' : 'text-gray-600'
-                            }`}>
-                              {s.avgPerQ.toFixed(1)}秒/問
-                            </span>
+                          <td className="px-4 py-4">
+                            <p className="font-bold text-gray-900 flex items-center gap-1.5">
+                              {s.userName}
+                              {s.flag === 'red' && <AlertTriangle className="w-3 h-3 text-red-500" />}
+                            </p>
+                            <p className="text-[10px] text-primary font-bold uppercase mt-0.5">{s.unitId}</p>
                           </td>
-                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                            {s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '-'}
+                          <td className="px-4 py-4">
+                            {s.isServer ? (
+                              <ul className="text-xs text-red-800 space-y-0.5 font-medium">
+                                {s.reasons.map((r: string, rIdx: number) => (
+                                  <li key={rIdx} className="flex items-start gap-1">
+                                    <span className="opacity-50">•</span> {r}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div className="flex items-center gap-4">
+                                <div>
+                                  <p className="text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">平均解答時間</p>
+                                  <p className={`font-mono font-bold text-base leading-none ${s.flag === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
+                                    {s.avgPerQ.toFixed(1)}s/問
+                                  </p>
+                                </div>
+                                <div className="border-l pl-3">
+                                  <p className="text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">実績</p>
+                                  <p className="text-xs font-mono">{s.bestTime}s / {s.maxScore}点</p>
+                                </div>
+                              </div>
+                            )}
                           </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2 justify-center">
+                          <td className="px-4 py-4 text-[10px] text-gray-400 font-mono whitespace-nowrap">
+                            {new Date(s.updatedAt).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex items-center gap-1.5 justify-center">
                               <Button 
                                 variant="outline" 
                                 size="sm" 
-                                className="text-green-600 hover:text-green-700 hover:bg-green-50 text-xs px-2 py-1 h-auto"
-                                onClick={() => handleIgnoreFraud(s.docId)}
+                                className="h-7 text-[10px] font-bold px-2"
+                                onClick={() => { setSelectedUnitForStats(s.unitId); setActiveTab('analytics'); }}
                               >
-                                <UserCheck className="w-3 h-3 mr-1" /> 問題なし
+                                分析
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm" 
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 h-auto"
-                                onClick={() => handleDeleteScore(s.docId)}
-                              >
-                                <Trash2 className="w-3 h-3 " /> 削除
-                              </Button>
+                              {!s.isServer && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="h-7 text-[10px] font-bold text-red-500 hover:bg-red-50 px-2"
+                                  onClick={() => handleDeleteScore(s.docId)}
+                                >
+                                  削除
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>
                       ))}
                       {filtered.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                            {suspiciousFilter === 'all' ? 'データがありません' : '該当する不正疑惑データはありません ✅'}
+                          <td colSpan={5} className="px-4 py-12 text-center text-gray-400 italic">
+                            {suspiciousFilter === 'all' ? '検知されたデータはありません' : '該当するフィルター条件のデータはありません ✅'}
                           </td>
                         </tr>
                       )}

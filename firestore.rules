@@ -61,5 +61,13 @@ service cloud.firestore {
       allow update: if isAuthenticated() && request.auth.uid == resource.data.uid && request.auth.uid == request.resource.data.uid;
       allow delete: if isAdmin();
     }
+
+    // ── /suspicious_activities/{docId} ──
+    // Read: 管理者のみ
+    // Write: 基本的に Cloud Functions (Admin SDK) からのみ。ルール上は拒否。
+    match /suspicious_activities/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; 
+    }
   }
 }

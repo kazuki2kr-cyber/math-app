@@ -65,6 +65,62 @@ export const updateQuestionStats = functions.region("us-central1").https.onCall(
     );
   }
 
+  const uid = context.auth.uid;
+  const now = admin.firestore.Timestamp.now();
+  const suspiciousReasons: string[] = [];
+
+  try {
+    // 1. 存在しないIDの検証
+    const unitDoc = await db.doc(`units/${unitId}`).get();
+    if (!unitDoc.exists) {
+      suspiciousReasons.push(`ユニットが存在しません: ${unitId}`);
+    } else {
+      const unitData = unitDoc.data();
+      const validIds = new Set((unitData?.questions || []).map((q: any) => q.id));
+      
+      const invalidIds = [...correctQuestionIds, ...wrongQuestionIds].filter(id => !validIds.has(id));
+      if (invalidIds.length > 0) {
+        suspiciousReasons.push(`存在しない問題IDの報告: ${invalidIds.join(", ")}`);
+      }
+    }
+
+    // 2. 物理的限界速度の検証 (前回の同一ユニット演習からの間隔)
+    const latestAttempt = await db.collection(`users/${uid}/attempts`)
+      .where("unitId", "==", unitId)
+      .orderBy("date", "desc")
+      .limit(1)
+      .get();
+
+    if (!latestAttempt.empty) {
+      const lastDateStr = latestAttempt.docs[0].data().date;
+      const lastDate = new Date(lastDateStr).getTime();
+      const diffSec = (now.toMillis() - lastDate) / 1000;
+
+      // 10問以上の演習で、前回の完了から30秒以内は極めて不自然（演出時間等を考慮）
+      if (diffSec < 30 && (correctQuestionIds.length + wrongQuestionIds.length) >= 10) {
+        suspiciousReasons.push(`異常に短い演習間隔: 前回から ${Math.round(diffSec)}秒`);
+      }
+    }
+
+    // 不審な点があれば記録
+    if (suspiciousReasons.length > 0) {
+      await db.collection("suspicious_activities").add({
+        uid,
+        userName: context.auth.token.name || context.auth.token.email || "Unknown",
+        unitId,
+        reasons: suspiciousReasons,
+        timestamp: now,
+        details: {
+          correctCount: correctQuestionIds.length,
+          wrongCount: wrongQuestionIds.length,
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Suspicious detection error (non-blocking):", error);
+  }
+
+  // 既存の統計更新ロジック (維持)
   const statsRef = db.doc(`units/${unitId}/stats/questions`);
   const updateData: Record<string, admin.firestore.FieldValue> = {};
 
