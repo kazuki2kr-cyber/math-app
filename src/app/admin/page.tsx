@@ -93,8 +93,11 @@ export default function AdminPage() {
     try {
       const snap = await getDoc(doc(db, 'units', unitId, 'stats', 'questions'));
       if (snap.exists()) {
-         setUnitStats(snap.data());
+         const data = snap.data();
+         console.log(`[fetchUnitStats] Data for ${unitId}:`, data);
+         setUnitStats(data);
       } else {
+         console.log(`[fetchUnitStats] No stats document for ${unitId} at units/${unitId}/stats/questions`);
          setUnitStats({});
          setMessage('この単元の詳細な統計データはまだありません。');
       }
@@ -932,15 +935,52 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                 if (!selectedUnitData) return null;
 
                 const qStatsList = selectedUnitData.questions.map((q: any) => {
-                  const stat = unitStats[q.id];
+                  const qId = q.id.toString();
+                  const key1 = qId;
+                  const key2 = `q_${qId}`;
+                  
+                  // Firestore might store nested: { q_1: { total: 1 } }
+                  // OR flat with dot: { "q_1.total": 1 }
+                  let stat = unitStats[key1] || unitStats[key2];
+                  
+                  // If not found in primary keys, try flat dot-notation from object
+                  if (!stat) {
+                    const totalFromFlat = unitStats[`${key1}.total`] || unitStats[`${key2}.total`];
+                    if (totalFromFlat !== undefined) {
+                      stat = {
+                        total: totalFromFlat,
+                        correct: unitStats[`${key1}.correct`] || unitStats[`${key2}.correct`] || 0
+                      };
+                    }
+                  }
+
+                  if (stat) {
+                    console.log(`[MappingSuccess] QID: ${qId} matched.`, stat);
+                  }
+                  
                   const total = stat?.total || 0;
                   const correct = stat?.correct || 0;
                   const rate = total > 0 ? (correct / total) * 100 : 0;
                   return { ...q, total, correct, rate };
-                }).filter((q: any) => q.total > 0); // Only questions that have been attempted
+                });
 
-                if (qStatsList.length === 0) {
-                  return <div className="text-gray-500 p-8 text-center bg-white rounded-md border shadow-sm">まだ回答データが十分ではありません。</div>;
+                const attemptedQStatsList = qStatsList.filter((q: any) => q.total > 0);
+                console.log(`[AnalyticsTabDebug] unitId=${selectedUnitForStats}`, {
+                  totalQuestions: selectedUnitData.questions.length,
+                  attemptedCount: attemptedQStatsList.length,
+                  availableStatsKeys: Object.keys(unitStats)
+                });
+
+                if (attemptedQStatsList.length === 0) {
+                  return (
+                    <div className="text-gray-500 p-12 text-center bg-white rounded-xl border border-dashed shadow-sm flex flex-col items-center justify-center space-y-4">
+                      <BarChart className="w-12 h-12 text-gray-300" />
+                      <div>
+                        <p className="font-bold text-gray-600">まだ回答データが十分ではありません</p>
+                        <p className="text-sm">少なくとも1回以上、この単元の演習が完了すると統計が表示されます。</p>
+                      </div>
+                    </div>
+                  );
                 }
 
                 const sortedByRateData = [...qStatsList].sort((a, b) => b.rate - a.rate);
