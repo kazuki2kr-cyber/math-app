@@ -19,7 +19,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles'>('import');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles'>('roles');
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]);
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
@@ -49,9 +49,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     if (activeTab === 'units' || activeTab === 'analytics') fetchUnits();
-    if (activeTab === 'scores') fetchScores();
+    if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
     if (activeTab === 'xp') fetchUsers();
-    if (activeTab === 'suspicious') { fetchScores(); }
     if (activeTab === 'roles') { fetchAdminList(); }
   }, [activeTab, isAdmin]);
 
@@ -71,6 +70,7 @@ export default function AdminPage() {
   };
 
   const fetchUnits = async () => {
+    if (!isAdmin) return;
     setLoading(true);
     setMessage('');
     try {
@@ -192,6 +192,7 @@ export default function AdminPage() {
   };
 
   const fetchScores = async () => {
+    if (!isAdmin) return;
     setLoading(true);
     setMessage('');
     try {
@@ -205,11 +206,15 @@ export default function AdminPage() {
       });
       setScores(arr);
 
-      const suspiciousSnap = await getDocs(collection(db, 'suspicious_activities'));
-      const sArr: any[] = [];
-      suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
-      setSuspiciousActivities(sArr);
-    } catch (e) {
+      try {
+        const suspiciousSnap = await getDocs(collection(db, 'suspicious_activities'));
+        const sArr: any[] = [];
+        suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
+        setSuspiciousActivities(sArr);
+      } catch (err: any) {
+        console.warn('Suspicious activities could not be fetched (expected if claims not synced):', err);
+      }
+    } catch (e: any) {
       console.error(e);
       setMessage('得点の取得に失敗しました。');
     }
@@ -217,6 +222,7 @@ export default function AdminPage() {
   };
 
   const fetchUsers = async () => {
+    if (!isAdmin) return;
     setLoading(true);
     setMessage('');
     try {
