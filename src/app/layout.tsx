@@ -11,8 +11,12 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 export const metadata: Metadata = {
-  title: "SIT Math Sync | 芝浦工業大学附属中学高等学校",
-  description: "世界に学ぶ。世界に貢献する。芝浦工業大学附属中学高等学校の生徒向け数学演習アプリケーション。",
+  title: "Formix | Forming the Essence of Knowledge.",
+  description: "Forming the Essence of Knowledge. 芝浦工業大学附属中学高等学校の生徒向け数学演習アプリケーション。",
+  icons: {
+    icon: '/images/icon.webp',
+    apple: '/images/icon.webp',
+  }
 };
 
 export default function RootLayout({

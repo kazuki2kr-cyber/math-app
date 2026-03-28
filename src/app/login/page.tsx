@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { LogIn } from 'lucide-react';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const { user, loginWithGoogle, loading, error } = useAuth();
@@ -26,15 +27,15 @@ export default function LoginPage() {
       <Card className="w-full max-w-lg shadow-xl border-t-4 border-t-primary bg-white/90 backdrop-blur z-10">
         <CardHeader className="text-center space-y-4 pt-10 pb-6">
           <div className="space-y-1">
-            <p className="text-sm font-semibold tracking-widest text-primary uppercase">世界に学ぶ。世界に貢献する。</p>
+            <p className="text-sm font-semibold tracking-widest text-primary uppercase">Forming the Essence of Knowledge.</p>
             <p className="text-xs text-muted-foreground">芝浦工業大学附属中学高等学校</p>
           </div>
           
-          <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit my-6">
-            <LogIn className="w-10 h-10 text-primary" strokeWidth={1.5} />
+          <div className="mx-auto w-24 h-24 sm:w-28 sm:h-28 overflow-hidden rounded-[2rem] shadow-xl flex items-center justify-center my-6">
+            <Image src="/images/icon.webp" alt="Formix Icon" width={160} height={160} className="object-cover w-full h-full scale-[1.35]" priority />
           </div>
           
-          <CardTitle className="text-3xl font-extrabold tracking-tight text-gray-900">SIT Math Sync</CardTitle>
+          <CardTitle className="text-4xl font-extrabold tracking-tight text-gray-900">Formix</CardTitle>
           <CardDescription className="text-base pt-2">
             学校アカウント（@shibaurafzk.com）でログインしてください
           </CardDescription>
@@ -60,7 +61,7 @@ export default function LoginPage() {
             |
             <a href="/privacy" className="hover:underline hover:text-primary transition-colors mx-2">プライバシーポリシー</a>
           </div>
-          <div>&copy; {new Date().getFullYear()} 芝浦工業大学附属中学高等学校 数学科</div>
+          <div>&copy; {new Date().getFullYear()} Shibaura Institute of Technology Junior and Senior High School K.Ichikawa</div>
         </CardFooter>
       </Card>
     </div>

@@ -3,6 +3,7 @@
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { LogOut, PlayCircle, Trophy, Clock, Medal, Database } from 'lucide-react';
+import Image from 'next/image';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
@@ -207,13 +208,13 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col">
       <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center shadow-inner">
-             <span className="text-primary-foreground font-bold text-lg">SIT</span>
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 md:w-12 md:h-12 overflow-hidden rounded-[1rem] shadow-md flex items-center justify-center flex-shrink-0">
+            <Image src="/images/icon.webp" alt="Formix Icon" width={64} height={64} className="object-cover w-full h-full scale-[1.35]" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none">SIT Math Sync</h1>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5">芝浦工業大学附属中学高等学校</p>
+          <div className="flex flex-col justify-center">
+            <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-none mb-[2px]">Formix</h1>
+            <p className="text-[10px] text-muted-foreground/80 uppercase tracking-widest font-semibold leading-none">Forming the Essence of Knowledge.</p>
           </div>
         </div>
         
@@ -539,7 +540,7 @@ export default function Home() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full flex flex-col gap-6 transform animate-in zoom-in-95 duration-200">
             <div className="text-center space-y-2">
-              <h3 className="text-2xl font-black text-gray-900 tracking-tight">SIT Math Sync へようこそ！</h3>
+              <h3 className="text-2xl font-black text-gray-900 tracking-tight">Formix へようこそ！</h3>
               <p className="text-sm text-muted-foreground">利用を始める前に、必ず以下の利用規約とプライバシーポリシーをお読みください。</p>
             </div>
             
@@ -586,7 +587,7 @@ export default function Home() {
           |
           <a href="/privacy" className="hover:underline hover:text-primary transition-colors mx-2">プライバシーポリシー</a>
         </div>
-        <div>&copy; {new Date().getFullYear()} 芝浦工業大学附属中学高等学校 数学科</div>
+        <div>&copy; {new Date().getFullYear()} Shibaura Institute of Technology Junior and Senior High School K.Ichikawa</div>
       </footer>
     </div>
   );
