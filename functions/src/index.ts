@@ -114,7 +114,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     let currentXp = 0;
     let currentIcon = "📐";
-    if (userSnap.exists()) {
+    if (userSnap.exists) {
       const uData = userSnap.data();
       currentXp = uData?.xp || 0;
       currentIcon = uData?.icon || "📐";
@@ -132,7 +132,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     // 2-2. スコア更新判定 (High Score)
     let isHighScore = false;
-    if (scoreSnap.exists()) {
+    if (scoreSnap.exists) {
       const sData = scoreSnap.data();
       if (score > sData?.maxScore || (score === sData?.maxScore && time < sData?.bestTime)) {
         isHighScore = true;
@@ -147,15 +147,15 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     transaction.set(userRef, { 
       xp: newTotalXp,
       updatedAt: dateStr,
-      ...(userSnap.exists() ? {} : { icon: "📐" })
+      ...(userSnap.exists ? {} : { icon: "📐" })
     }, { merge: true });
 
     // Score Update (Denormalized)
     if (isHighScore || isLevelUp) {
       transaction.set(scoreRef, {
         uid, userName, unitId,
-        maxScore: isHighScore ? score : (scoreSnap.exists() ? scoreSnap.data()?.maxScore : score),
-        bestTime: isHighScore ? time : (scoreSnap.exists() ? scoreSnap.data()?.bestTime : time),
+        maxScore: isHighScore ? score : (scoreSnap.exists ? scoreSnap.data()?.maxScore : score),
+        bestTime: isHighScore ? time : (scoreSnap.exists ? scoreSnap.data()?.bestTime : time),
         updatedAt: dateStr,
         icon: currentIcon,
         level: newLevel
@@ -184,7 +184,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     transaction.set(statsRef, statsUpdate, { merge: true });
 
     // Wrong Answers List
-    let currentWrongs: string[] = wrongSnap.exists() ? (wrongSnap.data()?.wrongQuestionIds || []) : [];
+    let currentWrongs: string[] = wrongSnap.exists ? (wrongSnap.data()?.wrongQuestionIds || []) : [];
     const newlyCorrectIds = correctQuestions.map((q: any) => q.id);
     const newlyWrongIds = wrongQuestions.map((q: any) => q.id);
     currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
