@@ -31,6 +31,7 @@ interface OverallRank {
   totalTime: number;
   icon?: string;
   level?: number;
+  lastUpdated?: string;
 }
 
 export default function Home() {
@@ -116,14 +117,27 @@ export default function Home() {
                totalScore: 0, 
                totalTime: 0,
                icon: data.icon || '📐',
-               level: data.level || 1
+               level: data.level || 1,
+               lastUpdated: data.updatedAt || ''
             };
           }
+          
           userTotals[data.uid].totalScore += (data.maxScore || 0);
           userTotals[data.uid].totalTime += (data.bestTime || 0);
           
-          if (data.icon) userTotals[data.uid].icon = data.icon;
-          if (data.level) userTotals[data.uid].level = data.level;
+          const existingLevel = userTotals[data.uid].level || 1;
+          const newLevel = data.level || 1;
+          const existingDate = userTotals[data.uid].lastUpdated || '';
+          const newDate = data.updatedAt || '';
+
+          if (newLevel > existingLevel || (newLevel === existingLevel && newDate > existingDate)) {
+            if (data.icon) userTotals[data.uid].icon = data.icon;
+            userTotals[data.uid].lastUpdated = newDate;
+          }
+          
+          if (data.level) {
+            userTotals[data.uid].level = Math.max(existingLevel, newLevel);
+          }
         });
 
         const rankingList = Object.values(userTotals)
@@ -195,7 +209,6 @@ export default function Home() {
       <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center shadow-inner">
-             {/* Small logo placeholder */}
              <span className="text-primary-foreground font-bold text-lg">SIT</span>
           </div>
           <div>
@@ -204,18 +217,6 @@ export default function Home() {
           </div>
         </div>
         
-        <div className="hidden md:flex items-center absolute left-1/2 transform -translate-x-1/2">
-          <label className="text-sm font-bold text-gray-700 mr-2 flex items-center"><Database className="w-4 h-4 mr-1"/> 教科:</label>
-          <select 
-            value={selectedSubject} 
-            onChange={(e) => setSelectedSubject(e.target.value)}
-            className="text-sm border-2 border-primary/20 rounded-lg px-3 py-1.5 bg-white font-medium text-gray-800 shadow-sm outline-none focus:border-primary transition-all hover:bg-gray-50 cursor-pointer"
-          >
-            <option value="数学">数学</option>
-            <option value="英語" disabled>英語 (準備中)</option>
-          </select>
-        </div>
-
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium text-gray-700 hidden sm:inline-block bg-gray-100 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-muted-foreground font-normal ml-1">さん</span>
@@ -289,26 +290,43 @@ export default function Home() {
 
             {/* Units List (Left/Top) */}
             <div className="lg:col-span-2 space-y-6">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-                <div>
-                  <h2 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
-                    <PlayCircle className="w-6 h-6 text-primary" /> 単元一覧
-                  </h2>
-                  <p className="text-sm text-muted-foreground mt-1 ml-8">学習したい単元を選択して演習を始めましょう。</p>
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <PlayCircle className="w-8 h-8 text-primary flex-shrink-0" />
+                  <div>
+                    <h2 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">単元一覧</h2>
+                    <p className="text-[11px] md:text-xs text-muted-foreground font-medium uppercase tracking-wider">Select a unit to start</p>
+                  </div>
                 </div>
                 
-                <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 ml-8 sm:ml-0 bg-gray-50 p-1.5 rounded-lg border">
-                  <span className="text-sm font-bold text-gray-600 px-2 whitespace-nowrap">分野:</span>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="flex-1 sm:w-48 text-sm border-none bg-white rounded-md px-3 py-1.5 font-medium text-gray-800 shadow-sm outline-none cursor-pointer"
-                  >
-                    <option value="all">すべて表示</option>
-                    {availableCategories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  {/* Subject Selector */}
+                  <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner group transition-all hover:border-primary/30">
+                    <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">教科</span>
+                    <select 
+                      value={selectedSubject} 
+                      onChange={(e) => setSelectedSubject(e.target.value)}
+                      className="flex-1 w-full sm:w-28 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
+                    >
+                      <option value="数学">数学</option>
+                      <option value="英語" disabled>英語 (準備中)</option>
+                    </select>
+                  </div>
+
+                  {/* Category Selector */}
+                  <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner group transition-all hover:border-primary/30">
+                    <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">分野</span>
+                    <select
+                      value={selectedCategory}
+                      onChange={(e) => setSelectedCategory(e.target.value)}
+                      className="flex-1 w-full sm:w-40 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
+                    >
+                      <option value="all">すべて表示</option>
+                      {availableCategories.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
