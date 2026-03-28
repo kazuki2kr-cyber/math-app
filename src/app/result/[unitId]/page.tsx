@@ -49,7 +49,6 @@ export default function ResultPage() {
       
       const stored = sessionStorage.getItem('drillResult');
       if (!stored) {
-        // Results not found, redirect to dashboard or drill
         router.push('/');
         return;
       }
@@ -57,143 +56,53 @@ export default function ResultPage() {
       const parsed: ResultData = JSON.parse(stored);
       setResult(parsed);
 
-      // Check and update high score and XP
       try {
-        const scoreRef = doc(db, 'scores', `${user.uid}_${unitId}`);
-        const userRef = doc(db, 'users', user.uid);
+        // 1. Call the consolidated Cloud Function
+        const functions = getFunctions(undefined, 'us-central1');
+        const process = httpsCallable(functions, 'processDrillResult');
         
-        // 1. Handle score saving
-        const snap = await getDoc(scoreRef);
-        let newHighScore = false;
-        if (snap.exists()) {
-          const currentData = snap.data();
-          if (parsed.score > currentData.maxScore || (parsed.score === currentData.maxScore && parsed.time < currentData.bestTime)) {
-            newHighScore = true;
-          }
-        } else {
-          newHighScore = true;
-        }
-
-        if (newHighScore) {
-          setIsHighScore(true);
-          // Fetch user's icon + level for ranking data
-          const userSnapForScore = await getDoc(doc(db, 'users', user.uid));
-          let scoreIcon = '📐';
-          let scoreLevel = 1;
-          if (userSnapForScore.exists()) {
-            const uData = userSnapForScore.data();
-            scoreIcon = uData.icon || '📐';
-            scoreLevel = calculateLevelAndProgress(uData.xp || 0).level;
-          }
-          await setDoc(scoreRef, {
-            uid: user.uid,
-            userName: user.displayName || '名無し',
-            unitId: unitId,
-            maxScore: parsed.score,
-            bestTime: parsed.time,
-            updatedAt: new Date().toISOString(),
-            icon: scoreIcon,
-            level: scoreLevel,
-          }, { merge: true });
-        }
-
-        // 2. Handle XP granting (always grant XP on finish)
-        if (parsed.xpDetails) {
-          const userSnap = await getDoc(userRef);
-          let currentTotalXp = 0;
-          if (userSnap.exists()) {
-            currentTotalXp = userSnap.data().xp || 0;
-          }
-          
-          const oldLevelData = calculateLevelAndProgress(currentTotalXp);
-          const newTotalXp = currentTotalXp + parsed.xpDetails.finalXp;
-          const newLevelData = calculateLevelAndProgress(newTotalXp);
-
-          if (newLevelData.level > oldLevelData.level) {
-             const newIcons = getAvailableIcons(newLevelData.level);
-             const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '🎓';
-             setLevelUpData({
-               oldLevel: oldLevelData.level,
-               newLevel: newLevelData.level,
-               icon: newlyUnlockedIcon,
-               title: getTitleForLevel(newLevelData.level)
-             });
-             // We trigger confetti here too if leveled up
-             confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
-          } else if (newHighScore) {
-             confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
-          }
-
-          // save updated XP
-          // check if they already have an icon, else set default
-          const existingIcon = userSnap.exists() ? userSnap.data().icon : null;
-          await setDoc(userRef, { 
-            xp: newTotalXp,
-            ...(existingIcon ? {} : { icon: '📐' }) 
-          }, { merge: true });
-        } else {
-          if (newHighScore) {
-            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
-          }
-        }
-
-        // 3. Save new analytical data (Attempts, Stats, Wrong Answers)
-        const batch = writeBatch(db);
-        
-        // 3-1: Add personal attempt history
-        const attemptsRef = doc(collection(db, 'users', user.uid, 'attempts'));
-        batch.set(attemptsRef, {
+        const resultResponse = await process({
           unitId,
           unitTitle: parsed.unitTitle,
           score: parsed.score,
           time: parsed.time,
-          totalQuestions: parsed.totalQuestions,
-          date: new Date().toISOString(),
-          details: [
-            ...parsed.correctQuestions.map(q => ({ qId: q.id, isCorrect: true, timeTaken: null })),
-            ...parsed.wrongQuestions.map(q => ({ qId: q.id, isCorrect: false, userSelected: q.user_selected_index, timeTaken: null }))
-          ]
+          correctQuestions: parsed.correctQuestions,
+          wrongQuestions: parsed.wrongQuestions,
+          xpDetails: parsed.xpDetails
         });
 
-        // 3-2: Update unit stats via Cloud Function (secure server-side increment)
-        const functions = getFunctions(undefined, 'us-central1');
-        const updateStats = httpsCallable(functions, 'updateQuestionStats');
-        updateStats({
-          unitId,
-          correctQuestionIds: parsed.correctQuestions.map((q: any) => q.id),
-          wrongQuestionIds: parsed.wrongQuestions.map((q: any) => q.id),
-        }).catch((err: any) => console.error('Stats update failed:', err));
+        const data = resultResponse.data as { 
+          success: boolean; 
+          isHighScore: boolean; 
+          isLevelUp: boolean; 
+          newLevel: number; 
+          oldLevel: number;
+        };
 
-        // 3-3: Update wrong answers list
-        const wrongDocRef = doc(db, 'users', user.uid, 'wrong_answers', unitId);
-        const wrongDocSnap = await getDoc(wrongDocRef);
-        let currentWrongs: string[] = [];
-        if (wrongDocSnap.exists()) {
-          currentWrongs = wrongDocSnap.data().wrongQuestionIds || [];
-        }
-        
-        // Remove those that were answered correctly this time
-        const newlyCorrectIds = parsed.correctQuestions.map(q => q.id);
-        currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
-        
-        // Add those that were answered wrongly this time
-        const newlyWrongIds = parsed.wrongQuestions.map(q => q.id);
-        newlyWrongIds.forEach(id => {
-          if (!currentWrongs.includes(id)) {
-            currentWrongs.push(id);
+        if (data.success) {
+          // 2. Trigger UI effects based on server-side calculation
+          if (data.isHighScore) {
+            setIsHighScore(true);
+            if (!data.isLevelUp) {
+              confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
+            }
           }
-        });
-        
-        batch.set(wrongDocRef, {
-          unitId,
-          wrongQuestionIds: currentWrongs,
-          lastUpdated: new Date().toISOString()
-        }, { merge: true });
 
-        await batch.commit();
+          if (data.isLevelUp) {
+            const newIcons = getAvailableIcons(data.newLevel);
+            const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '🎓';
+            setLevelUpData({
+              oldLevel: data.oldLevel,
+              newLevel: data.newLevel,
+              icon: newlyUnlockedIcon,
+              title: getTitleForLevel(data.newLevel)
+            });
+            confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
+          }
+        }
 
       } catch (err) {
-        console.error('Failed to save score/xp/stats:', err);
+        console.error('Failed to process drill result:', err);
       } finally {
         setSaving(false);
       }

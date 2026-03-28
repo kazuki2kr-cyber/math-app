@@ -42,49 +42,41 @@ export const setAdminClaim = functions.region("us-central1").https.onCall(async 
 });
 
 // ==========================================
-// 2. updateQuestionStats — 演習結果のstats更新
+// 2. processDrillResult — 演習結果の統合処理
 // ==========================================
-export const updateQuestionStats = functions.region("us-central1").https.onCall(async (data, context) => {
+export const processDrillResult = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {
-    throw new functions.https.HttpsError(
-      "unauthenticated",
-      "認証が必要です。"
-    );
+    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { unitId, correctQuestionIds, wrongQuestionIds } = data as {
+  const { unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as {
     unitId: string;
-    correctQuestionIds: string[];
-    wrongQuestionIds: string[];
+    unitTitle: string;
+    score: number;
+    time: number;
+    correctQuestions: any[];
+    wrongQuestions: any[];
+    xpDetails: any;
   };
 
-  if (!unitId || !Array.isArray(correctQuestionIds) || !Array.isArray(wrongQuestionIds)) {
-    throw new functions.https.HttpsError(
-      "invalid-argument",
-      "unitId, correctQuestionIds, wrongQuestionIds が必要です。"
-    );
+  if (!unitId || score === undefined || time === undefined) {
+    throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
   }
 
   const uid = context.auth.uid;
+  const userName = context.auth.token.name || context.auth.token.email || "名無し";
   const now = admin.firestore.Timestamp.now();
-  const suspiciousReasons: string[] = [];
+  const dateStr = now.toDate().toISOString();
 
+  // --- 1. 不審なアクティビティの検証 ---
+  const suspiciousReasons: string[] = [];
   try {
-    // 1. 存在しないIDの検証
     const unitDoc = await db.doc(`units/${unitId}`).get();
     if (!unitDoc.exists) {
       suspiciousReasons.push(`ユニットが存在しません: ${unitId}`);
-    } else {
-      const unitData = unitDoc.data();
-      const validIds = new Set((unitData?.questions || []).map((q: any) => q.id));
-      
-      const invalidIds = [...correctQuestionIds, ...wrongQuestionIds].filter(id => !validIds.has(id));
-      if (invalidIds.length > 0) {
-        suspiciousReasons.push(`存在しない問題IDの報告: ${invalidIds.join(", ")}`);
-      }
     }
-
-    // 2. 物理的限界速度の検証 (前回の同一ユニット演習からの間隔)
+    
+    // 演習間隔チェック
     const latestAttempt = await db.collection(`users/${uid}/attempts`)
       .where("unitId", "==", unitId)
       .orderBy("date", "desc")
@@ -92,49 +84,126 @@ export const updateQuestionStats = functions.region("us-central1").https.onCall(
       .get();
 
     if (!latestAttempt.empty) {
-      const lastDateStr = latestAttempt.docs[0].data().date;
-      const lastDate = new Date(lastDateStr).getTime();
+      const lastDate = new Date(latestAttempt.docs[0].data().date).getTime();
       const diffSec = (now.toMillis() - lastDate) / 1000;
-
-      // 10問以上の演習で、前回の完了から30秒以内は極めて不自然（演出時間等を考慮）
-      if (diffSec < 30 && (correctQuestionIds.length + wrongQuestionIds.length) >= 10) {
-        suspiciousReasons.push(`異常に短い演習間隔: 前回から ${Math.round(diffSec)}秒`);
+      if (diffSec < 30 && (correctQuestions.length + wrongQuestions.length) >= 10) {
+        suspiciousReasons.push(`異常に短い演習間隔: ${Math.round(diffSec)}秒`);
       }
     }
 
-    // 不審な点があれば記録
+    if (score > 100) suspiciousReasons.push(`スコア不正: ${score}`);
+
     if (suspiciousReasons.length > 0) {
       await db.collection("suspicious_activities").add({
-        uid,
-        userName: context.auth.token.name || context.auth.token.email || "Unknown",
-        unitId,
-        reasons: suspiciousReasons,
-        timestamp: now,
-        details: {
-          correctCount: correctQuestionIds.length,
-          wrongCount: wrongQuestionIds.length,
-        }
+        uid, userName, unitId, reasons: suspiciousReasons, timestamp: now,
+        details: { score, time, correctCount: correctQuestions.length }
       });
     }
-  } catch (error) {
-    console.error("Suspicious detection error (non-blocking):", error);
-  }
+  } catch (e) { console.error("Validation error:", e); }
 
-  // 既存の統計更新ロジック (維持)
-  const statsRef = db.doc(`units/${unitId}/stats/questions`);
-  const updateData: Record<string, admin.firestore.FieldValue> = {};
+  // --- 2. トランザクションによるデータ更新 ---
+  return await db.runTransaction(async (transaction) => {
+    const userRef = db.doc(`users/${uid}`);
+    const scoreRef = db.doc(`scores/${uid}_${unitId}`);
+    const statsRef = db.doc(`units/${unitId}/stats/questions`);
+    const wrongDocRef = db.doc(`users/${uid}/wrong_answers/${unitId}`);
+    
+    const userSnap = await transaction.get(userRef);
+    const scoreSnap = await transaction.get(scoreRef);
+    const wrongSnap = await transaction.get(wrongDocRef);
 
-  correctQuestionIds.forEach((qId) => {
-    updateData[`${qId}.correct`] = admin.firestore.FieldValue.increment(1);
-    updateData[`${qId}.total`] = admin.firestore.FieldValue.increment(1);
+    let currentXp = 0;
+    let currentIcon = "📐";
+    if (userSnap.exists()) {
+      const uData = userSnap.data();
+      currentXp = uData?.xp || 0;
+      currentIcon = uData?.icon || "📐";
+    }
+
+    // 2-1. XP / レベル計算
+    const finalXpGain = xpDetails?.finalXp || 0;
+    const newTotalXp = currentXp + finalXpGain;
+    
+    // フロントエンドのロジックと同期 (便宜上 here)
+    const calculateLevel = (xp: number) => Math.floor(Math.sqrt(xp / 10)) + 1;
+    const oldLevel = calculateLevel(currentXp);
+    const newLevel = calculateLevel(newTotalXp);
+    const isLevelUp = newLevel > oldLevel;
+
+    // 2-2. スコア更新判定 (High Score)
+    let isHighScore = false;
+    if (scoreSnap.exists()) {
+      const sData = scoreSnap.data();
+      if (score > sData?.maxScore || (score === sData?.maxScore && time < sData?.bestTime)) {
+        isHighScore = true;
+      }
+    } else {
+      isHighScore = true;
+    }
+
+    // --- 各種書き込み実行 ---
+    
+    // User Update (XP)
+    transaction.set(userRef, { 
+      xp: newTotalXp,
+      updatedAt: dateStr,
+      ...(userSnap.exists() ? {} : { icon: "📐" })
+    }, { merge: true });
+
+    // Score Update (Denormalized)
+    if (isHighScore || isLevelUp) {
+      transaction.set(scoreRef, {
+        uid, userName, unitId,
+        maxScore: isHighScore ? score : (scoreSnap.exists() ? scoreSnap.data()?.maxScore : score),
+        bestTime: isHighScore ? time : (scoreSnap.exists() ? scoreSnap.data()?.bestTime : time),
+        updatedAt: dateStr,
+        icon: currentIcon,
+        level: newLevel
+      }, { merge: true });
+    }
+
+    // Attempts (Subcollection) - トランザクション内でのaddはリファレンス経由
+    const attemptRef = userRef.collection("attempts").doc();
+    transaction.set(attemptRef, {
+      unitId, unitTitle, score, time, date: dateStr,
+      details: [
+        ...correctQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
+        ...wrongQuestions.map((q: any) => ({ qId: q.id, isCorrect: false }))
+      ]
+    });
+
+    // Stats (Aggregated)
+    const statsUpdate: any = {};
+    correctQuestions.forEach((q: any) => {
+      statsUpdate[`${q.id}.correct`] = admin.firestore.FieldValue.increment(1);
+      statsUpdate[`${q.id}.total`] = admin.firestore.FieldValue.increment(1);
+    });
+    wrongQuestions.forEach((q: any) => {
+      statsUpdate[`${q.id}.total`] = admin.firestore.FieldValue.increment(1);
+    });
+    transaction.set(statsRef, statsUpdate, { merge: true });
+
+    // Wrong Answers List
+    let currentWrongs: string[] = wrongSnap.exists() ? (wrongSnap.data()?.wrongQuestionIds || []) : [];
+    const newlyCorrectIds = correctQuestions.map((q: any) => q.id);
+    const newlyWrongIds = wrongQuestions.map((q: any) => q.id);
+    currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
+    newlyWrongIds.forEach(id => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
+    
+    transaction.set(wrongDocRef, {
+      unitId, wrongQuestionIds: currentWrongs, lastUpdated: dateStr
+    }, { merge: true });
+
+    return {
+      success: true,
+      isHighScore,
+      isLevelUp,
+      oldLevel,
+      newLevel,
+      xpGain: finalXpGain,
+      newTotalXp
+    };
   });
-  wrongQuestionIds.forEach((qId) => {
-    updateData[`${qId}.total`] = admin.firestore.FieldValue.increment(1);
-  });
-
-  await statsRef.set(updateData, { merge: true });
-
-  return { success: true };
 });
 
 // ==========================================

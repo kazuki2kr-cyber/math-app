@@ -35,6 +35,8 @@ yarn-error.log*
 
 # vercel
 .vercel
+/java_jdk/
+openjdk.zip
 
 # typescript
 *.tsbuildinfo

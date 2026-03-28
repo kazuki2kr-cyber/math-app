@@ -114,11 +114,16 @@ export default function Home() {
                uid: data.uid, 
                name: data.userName || '名無し', 
                totalScore: 0, 
-               totalTime: 0
+               totalTime: 0,
+               icon: data.icon || '📐',
+               level: data.level || 1
             };
           }
           userTotals[data.uid].totalScore += (data.maxScore || 0);
           userTotals[data.uid].totalTime += (data.bestTime || 0);
+          
+          if (data.icon) userTotals[data.uid].icon = data.icon;
+          if (data.level) userTotals[data.uid].level = data.level;
         });
 
         const rankingList = Object.values(userTotals)
@@ -127,48 +132,16 @@ export default function Home() {
             return a.totalTime - b.totalTime;
           });
 
-        // 必要なユーザー情報（トップ10 ＋ 自分の情報）だけをFetchする
-        const uidsToFetch = new Set<string>();
         const top10Initial = rankingList.slice(0, 10);
-        top10Initial.forEach(r => uidsToFetch.add(r.uid));
-        
+        setOverallRanking(top10Initial);
+
         let myIndex = -1;
         if (user) {
           myIndex = rankingList.findIndex(r => r.uid === user.uid);
-          if (myIndex !== -1) {
-             uidsToFetch.add(user.uid);
-          }
         }
 
-        const resolvedUsers = new Map<string, { icon: string, level: number }>();
-        await Promise.all(Array.from(uidsToFetch).map(async (uid) => {
-           const snap = await getDoc(doc(db, 'users', uid));
-           let icon = '📐';
-           let level = 1;
-           if (snap.exists()) {
-              const uData = snap.data();
-              icon = uData.icon || '📐';
-              level = calculateLevelAndProgress(uData.xp || 0).level;
-           }
-           resolvedUsers.set(uid, { icon, level });
-        }));
-
-        top10Initial.forEach(r => {
-           const res = resolvedUsers.get(r.uid);
-           if (res) {
-             r.icon = res.icon;
-             r.level = res.level;
-           }
-        });
-
         if (user && myIndex !== -1) {
-           const myData = rankingList[myIndex];
-           const res = resolvedUsers.get(user.uid);
-           if (res) {
-             myData.icon = res.icon;
-             myData.level = res.level;
-           }
-           setMyRankInfo({ rank: myIndex + 1, data: myData });
+           setMyRankInfo({ rank: myIndex + 1, data: rankingList[myIndex] });
         }
 
         setUnits(unitsData);
