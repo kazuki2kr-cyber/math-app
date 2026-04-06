@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 
 admin.initializeApp();
 
@@ -49,23 +50,23 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as {
-    unitId: string;
-    unitTitle: string;
-    score: number;
-    time: number;
-    correctQuestions: any[];
-    wrongQuestions: any[];
-    xpDetails: any;
-  };
+  const { unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
+
+  console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
+  console.log(`[processDrillResult] Data summary: score=${score}, time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
 
   if (!unitId || score === undefined || time === undefined) {
+    console.error("[processDrillResult] Missing required parameters", { unitId, score, time });
     throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
   }
 
+  // 配列が未定義の場合のフォールバック
+  const safeCorrectQuestions = Array.isArray(correctQuestions) ? correctQuestions : [];
+  const safeWrongQuestions = Array.isArray(wrongQuestions) ? wrongQuestions : [];
+
   const uid = context.auth.uid;
-  const userName = context.auth.token.name || context.auth.token.email || "名無し";
-  const now = admin.firestore.Timestamp.now();
+  const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+  const now = Timestamp.now();
   const dateStr = now.toDate().toISOString();
 
   // --- 1. 不審なアクティビティの検証 ---
@@ -84,10 +85,14 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       .get();
 
     if (!latestAttempt.empty) {
-      const lastDate = new Date(latestAttempt.docs[0].data().date).getTime();
-      const diffSec = (now.toMillis() - lastDate) / 1000;
-      if (diffSec < 30 && (correctQuestions.length + wrongQuestions.length) >= 10) {
-        suspiciousReasons.push(`異常に短い演習間隔: ${Math.round(diffSec)}秒`);
+      const lastData = latestAttempt.docs[0].data();
+      const lastDateStr = lastData?.date;
+      if (lastDateStr) {
+        const lastDateTime = new Date(lastDateStr).getTime();
+        const diffSec = (now.toMillis() - lastDateTime) / 1000;
+        if (diffSec < 30 && (safeCorrectQuestions.length + safeWrongQuestions.length) >= 10) {
+          suspiciousReasons.push(`異常に短い演習間隔: ${Math.round(diffSec)}秒`);
+        }
       }
     }
 
@@ -96,13 +101,17 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     if (suspiciousReasons.length > 0) {
       await db.collection("suspicious_activities").add({
         uid, userName, unitId, reasons: suspiciousReasons, timestamp: now,
-        details: { score, time, correctCount: correctQuestions.length }
+        details: { score, time, correctCount: safeCorrectQuestions.length }
       });
     }
-  } catch (e) { console.error("Validation error:", e); }
+  } catch (e) { 
+    console.error("[processDrillResult] Validation error:", e); 
+    // バリデーションエラーで処理全体を止めない
+  }
 
-  // --- 2. トランザクションによるデータ更新 ---
-  return await db.runTransaction(async (transaction) => {
+  try {
+    // --- 2. トランザクションによるデータ更新 ---
+    return await db.runTransaction(async (transaction) => {
     const userRef = db.doc(`users/${uid}`);
     const scoreRef = db.doc(`scores/${uid}_${unitId}`);
     const statsRef = db.doc(`units/${unitId}/stats/questions`);
@@ -167,26 +176,26 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     transaction.set(attemptRef, {
       unitId, unitTitle, score, time, date: dateStr,
       details: [
-        ...correctQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
-        ...wrongQuestions.map((q: any) => ({ qId: q.id, isCorrect: false }))
+        ...safeCorrectQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
+        ...safeWrongQuestions.map((q: any) => ({ qId: q.id, isCorrect: false }))
       ]
     });
 
     // Stats (Aggregated)
     const statsUpdate: any = {};
-    correctQuestions.forEach((q: any) => {
-      statsUpdate[`${q.id}.correct`] = admin.firestore.FieldValue.increment(1);
-      statsUpdate[`${q.id}.total`] = admin.firestore.FieldValue.increment(1);
+    safeCorrectQuestions.forEach((q: any) => {
+      statsUpdate[`${q.id}.correct`] = FieldValue.increment(1);
+      statsUpdate[`${q.id}.total`] = FieldValue.increment(1);
     });
-    wrongQuestions.forEach((q: any) => {
-      statsUpdate[`${q.id}.total`] = admin.firestore.FieldValue.increment(1);
+    safeWrongQuestions.forEach((q: any) => {
+      statsUpdate[`${q.id}.total`] = FieldValue.increment(1);
     });
     transaction.set(statsRef, statsUpdate, { merge: true });
 
     // Wrong Answers List
     let currentWrongs: string[] = wrongSnap.exists ? (wrongSnap.data()?.wrongQuestionIds || []) : [];
-    const newlyCorrectIds = correctQuestions.map((q: any) => q.id);
-    const newlyWrongIds = wrongQuestions.map((q: any) => q.id);
+    const newlyCorrectIds = safeCorrectQuestions.map((q: any) => q.id);
+    const newlyWrongIds = safeWrongQuestions.map((q: any) => q.id);
     currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
     newlyWrongIds.forEach(id => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
     
@@ -204,6 +213,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       newTotalXp
     };
   });
+} catch (error: any) {
+  console.error("[processDrillResult] Transaction failed:", error);
+  console.error("[processDrillResult] Stack trace:", error.stack);
+  throw new functions.https.HttpsError("internal", error.message || "内部処理エラーが発生しました。");
+}
 });
 
 // ==========================================

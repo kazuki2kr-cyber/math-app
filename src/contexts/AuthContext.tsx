@@ -29,6 +29,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   loginWithGoogle: () => Promise<void>;
+  loginForEmulator?: () => Promise<void>;
   logout: () => Promise<void>;
   agreeToTerms: () => Promise<void>;
   error: string | null;
@@ -92,7 +93,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               createdAt: new Date().toISOString(),
               xp: 0,
               icon: '📐',
-              hasAgreedToTerms: false
+              hasAgreedToTerms: false,
+              isAdmin: false,
             };
             await setDoc(userRef, finalUserData);
           } else {
@@ -116,7 +118,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           setError(null);
         } catch (err) {
           console.error("Firestore user fetch/create error:", err);
-          setError('ユーザー情報の取得に失敗しました。');
+          setError(`ユーザー情報の取得に失敗しました。: ${String(err)}`);
         }
       } else {
         setUser(null);
@@ -149,6 +151,33 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const loginForEmulator = async () => {
+    if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') return;
+    setError(null);
+    setLoading(true);
+    try {
+      // Dynamic import to avoid including these in production bundle directly if we can, 
+      // but it's simpler to just require them or import at top. Let's just use regular import logic.
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
+      const testEmail = 'test@shibaurafzk.com';
+      const testPass = 'emulator-test-password';
+      try {
+        await signInWithEmailAndPassword(auth, testEmail, testPass);
+      } catch (err: any) {
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          await createUserWithEmailAndPassword(auth, testEmail, testPass);
+        } else {
+          throw err;
+        }
+      }
+      router.push('/');
+    } catch (err: any) {
+      console.error("Emulator Login error:", err);
+      setError(err.message || 'エミュレータログインに失敗しました。');
+      setLoading(false);
+    }
+  };
+
   const logout = async () => {
     setLoading(true);
     await firebaseSignOut(auth);
@@ -169,7 +198,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin, loginWithGoogle, logout, agreeToTerms, error }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin, loginWithGoogle, loginForEmulator, logout, agreeToTerms, error }}>
       {children}
     </AuthContext.Provider>
   );

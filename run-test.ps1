@@ -1,0 +1,1 @@
+$env:Path = "C:\Program Files\Microsoft\jdk-17.0.18.8-hotspot\bin;" + $env:Path; npx cross-env NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true firebase emulators:exec "npx playwright test"

@@ -9,7 +9,7 @@ import { LogIn } from 'lucide-react';
 import Image from 'next/image';
 
 export default function LoginPage() {
-  const { user, loginWithGoogle, loading, error } = useAuth();
+  const { user, loginWithGoogle, loginForEmulator, loading, error } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -54,6 +54,18 @@ export default function LoginPage() {
           >
             {loading ? '読み込み中...' : 'Googleでログイン'}
           </Button>
+
+          {process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true' && (
+            <Button 
+              onClick={loginForEmulator} 
+              disabled={loading}
+              variant="outline"
+              className="w-full h-12 text-md font-bold text-amber-600 border-amber-300 bg-amber-50"
+              data-testid="emulator-login-button"
+            >
+              エミュレータ専用ログイン
+            </Button>
+          )}
         </CardContent>
         <CardFooter className="text-xs text-center text-muted-foreground pb-6 flex flex-col justify-center bg-gray-50/80 border-t py-4 gap-2">
           <div className="flex items-center justify-center">
