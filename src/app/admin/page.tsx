@@ -13,6 +13,8 @@ import { Trash2, RefreshCw, FileText, Database, UserCheck, Shield, Zap, AlertTri
 import { MathDisplay } from '@/components/MathDisplay';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import { parseOptions } from '@/lib/utils';
+import AnalyticsTab from './components/AnalyticsTab';
+import 'katex/dist/katex.min.css';
 
 export default function AdminPage() {
   const { user, isAdmin } = useAuth();
@@ -29,14 +31,10 @@ export default function AdminPage() {
   
   // Analytics
   const [selectedUnitForStats, setSelectedUnitForStats] = useState<string>('');
-  const [unitStats, setUnitStats] = useState<any>(null);
 
   const [importSubject, setImportSubject] = useState<string>('math');
   const [unitFilterSubject, setUnitFilterSubject] = useState<string>('all');
   const [unitFilterCategory, setUnitFilterCategory] = useState<string>('all');
-  
-  const [correlationMatrix, setCorrelationMatrix] = useState<number[][] | null>(null);
-  const [isComputingCorrelation, setIsComputingCorrelation] = useState(false);
 
   // Role management state
   const [roleEmail, setRoleEmail] = useState('');
@@ -49,10 +47,11 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     if (activeTab === 'units' || activeTab === 'analytics') fetchUnits();
-    if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
+    if (activeTab === 'scores' || activeTab === 'suspicious' || activeTab === 'analytics') fetchScores();
     if (activeTab === 'xp') fetchUsers();
     if (activeTab === 'roles') { fetchAdminList(); }
   }, [activeTab, isAdmin]);
+
 
   const fetchAdminList = async () => {
     setAdminListLoading(true);
@@ -76,7 +75,19 @@ export default function AdminPage() {
     try {
       const snap = await getDocs(collection(db, 'units'));
       const arr: any[] = [];
-      snap.forEach(d => arr.push(d.data()));
+      for (const d of snap.docs) {
+        const unitData = d.data();
+        // analytics タブ用: stats/questions ドキュメントも同時取得
+        try {
+          const statsSnap = await getDoc(doc(db, 'units', unitData.id, 'stats', 'questions'));
+          if (statsSnap.exists()) {
+            unitData.stats = statsSnap.data();
+          }
+        } catch {
+          // stats が存在しない場合は無視
+        }
+        arr.push(unitData);
+      }
       setUnits(arr);
     } catch (e) {
       console.error(e);
@@ -85,111 +96,8 @@ export default function AdminPage() {
     setLoading(false);
   };
 
-  const fetchUnitStats = async (unitId: string) => {
-    if (!unitId) {
-      setUnitStats(null); return;
-    }
-    setLoading(true);
-    setMessage('');
-    try {
-      const snap = await getDoc(doc(db, 'units', unitId, 'stats', 'questions'));
-      if (snap.exists()) {
-         const data = snap.data();
-         console.log(`[fetchUnitStats] Data for ${unitId}:`, data);
-         setUnitStats(data);
-      } else {
-         console.log(`[fetchUnitStats] No stats document for ${unitId} at units/${unitId}/stats/questions`);
-         setUnitStats({});
-         setMessage('この単元の詳細な統計データはまだありません。');
-      }
-    } catch (e) {
-      console.error(e);
-      setMessage('統計データの取得に失敗しました。');
-    }
-    setLoading(false);
-  };
-
-  const calculatePhi = (v1: number[], v2: number[]) => {
-     let n11 = 0, n10 = 0, n01 = 0, n00 = 0;
-     for (let i = 0; i < v1.length; i++) {
-        if (v1[i] === 1 && v2[i] === 1) n11++;
-        else if (v1[i] === 1 && v2[i] === 0) n10++;
-        else if (v1[i] === 0 && v2[i] === 1) n01++;
-        else n00++;
-     }
-     const num = (n11 * n00) - (n10 * n01);
-     const denom = Math.sqrt((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00));
-     return denom === 0 ? 0 : num / denom;
-  };
-
-  const computeCorrelation = async (unitId: string) => {
-    setIsComputingCorrelation(true);
-    setCorrelationMatrix(null);
-    setMessage('全ユーザーのプレイデータを取得中...');
-    try {
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const allAttempts: any[] = [];
-      for (const u of usersSnap.docs) {
-         const userAttemptsSnap = await getDocs(collection(db, 'users', u.id, 'attempts'));
-         userAttemptsSnap.forEach(d => {
-            const data = d.data();
-            if (data.unitId === unitId) {
-               allAttempts.push(data);
-            }
-         });
-      }
-      
-      if (allAttempts.length < 2) {
-         setMessage('相関分析を行うためのデータが不足しています（最低2件のプレイデータが必要です）。');
-         setCorrelationMatrix(null);
-         setIsComputingCorrelation(false);
-         return;
-      }
-
-      setMessage('相関行列を計算中...');
-      const selectedUnitData = units.find(u => u.id === unitId);
-      if (!selectedUnitData) return;
-      const questionIds = selectedUnitData.questions.map((q:any) => q.id);
-      
-      const n = questionIds.length;
-      const matrix = Array.from({length: n}, () => Array(n).fill(0));
-
-      const qVectors: Record<string, number[]> = {};
-      questionIds.forEach((qid:string) => { qVectors[qid] = []; });
-      
-      allAttempts.forEach(attempt => {
-         const map = new Map<string, boolean>();
-         attempt.details?.forEach((d:any) => map.set(d.qId, d.isCorrect));
-         
-         questionIds.forEach((qid:string) => {
-            if (map.has(qid)) {
-               qVectors[qid].push(map.get(qid) ? 1 : 0);
-            } else {
-               qVectors[qid].push(0);
-            }
-         });
-      });
-
-      for (let i = 0; i < n; i++) {
-         for (let j = 0; j < n; j++) {
-            if (i === j) {
-               matrix[i][j] = 1.0;
-            } else if (i < j) {
-               const v1 = qVectors[questionIds[i]];
-               const v2 = qVectors[questionIds[j]];
-               matrix[i][j] = calculatePhi(v1, v2);
-               matrix[j][i] = matrix[i][j];
-            }
-         }
-      }
-      setCorrelationMatrix(matrix);
-      setMessage(`計算完了！全 ${allAttempts.length} 件のプレイデータから相関行列を生成しました。`);
-    } catch (e) {
-      console.error(e);
-      setMessage('相関計算に失敗しました。');
-    }
-    setIsComputingCorrelation(false);
-  };
+  // NOTE: fetchUnitStats, calculatePhi, computeCorrelation は
+  // AnalyticsTab / SmartCorrelationPanel に移動済み
 
   const fetchScores = async () => {
     if (!isAdmin) return;
@@ -958,208 +866,13 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
 
       {/* ========== TAB: ANALYTICS ========== */}
       {activeTab === 'analytics' && (
-        <div className="space-y-6 mt-4">
-          <div className="flex flex-col sm:flex-row gap-4 items-center bg-gray-50 p-4 border rounded-md">
-            <h3 className="font-bold text-gray-700 whitespace-nowrap">分析対象の単元を選択:</h3>
-            <select 
-              className="flex-1 p-2 border rounded-md bg-white"
-              value={selectedUnitForStats}
-              onChange={(e) => {
-                setSelectedUnitForStats(e.target.value);
-                fetchUnitStats(e.target.value);
-              }}
-            >
-              <option value="">-- 単元を選択 --</option>
-              {units.map(u => (
-                <option key={u.id} value={u.id}>{u.title} ({u.id})</option>
-              ))}
-            </select>
-            <Button disabled={!selectedUnitForStats || loading} onClick={() => fetchUnitStats(selectedUnitForStats)}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              データを再取得
-            </Button>
-          </div>
-
-          {selectedUnitForStats && unitStats && Object.keys(unitStats).length > 0 && (
-            <div className="space-y-6">
-              {(() => {
-                // Compile rates
-                const selectedUnitData = units.find(u => u.id === selectedUnitForStats);
-                if (!selectedUnitData) return null;
-
-                const qStatsList = selectedUnitData.questions.map((q: any) => {
-                  const qId = q.id.toString();
-                  const key1 = qId;
-                  const key2 = `q_${qId}`;
-                  
-                  // Firestore might store nested: { q_1: { total: 1 } }
-                  // OR flat with dot: { "q_1.total": 1 }
-                  let stat = unitStats[key1] || unitStats[key2];
-                  
-                  // If not found in primary keys, try flat dot-notation from object
-                  if (!stat) {
-                    const totalFromFlat = unitStats[`${key1}.total`] || unitStats[`${key2}.total`];
-                    if (totalFromFlat !== undefined) {
-                      stat = {
-                        total: totalFromFlat,
-                        correct: unitStats[`${key1}.correct`] || unitStats[`${key2}.correct`] || 0
-                      };
-                    }
-                  }
-
-                  if (stat) {
-                    console.log(`[MappingSuccess] QID: ${qId} matched.`, stat);
-                  }
-                  
-                  const total = stat?.total || 0;
-                  const correct = stat?.correct || 0;
-                  const rate = total > 0 ? (correct / total) * 100 : 0;
-                  return { ...q, total, correct, rate };
-                });
-
-                const attemptedQStatsList = qStatsList.filter((q: any) => q.total > 0);
-                console.log(`[AnalyticsTabDebug] unitId=${selectedUnitForStats}`, {
-                  totalQuestions: selectedUnitData.questions.length,
-                  attemptedCount: attemptedQStatsList.length,
-                  availableStatsKeys: Object.keys(unitStats)
-                });
-
-                if (attemptedQStatsList.length === 0) {
-                  return (
-                    <div className="text-gray-500 p-12 text-center bg-white rounded-xl border border-dashed shadow-sm flex flex-col items-center justify-center space-y-4">
-                      <BarChart className="w-12 h-12 text-gray-300" />
-                      <div>
-                        <p className="font-bold text-gray-600">まだ回答データが十分ではありません</p>
-                        <p className="text-sm">少なくとも1回以上、この単元の演習が完了すると統計が表示されます。</p>
-                      </div>
-                    </div>
-                  );
-                }
-
-                const sortedByRateData = [...qStatsList].sort((a, b) => b.rate - a.rate);
-                const top5 = sortedByRateData.slice(0, 5);
-                const worst5 = [...qStatsList].sort((a, b) => a.rate - b.rate).slice(0, 5);
-
-                return (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Top 5 Card */}
-                    <Card className="shadow-md border-t-4 border-t-green-500">
-                      <CardHeader>
-                        <CardTitle className="text-green-700">よくできている問題 Top 5</CardTitle>
-                        <CardDescription>正答率が高い順</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {top5.map((q, idx) => (
-                          <div key={idx} className="bg-green-50 p-3 rounded-md border border-green-100 flex gap-4 items-center">
-                            <div className="w-12 h-12 bg-green-200 text-green-800 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0">
-                              {Math.round(q.rate)}%
-                            </div>
-                            <div className="flex-1 overflow-hidden">
-                              <p className="text-xs text-gray-500 mb-1">
-                                {q.correct} / {q.total} 回正解
-                              </p>
-                              <div className="text-sm line-clamp-2 overflow-hidden text-ellipsis h-[3em]">
-                                <MathDisplay math={q.question_text} />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-
-                    {/* Worst 5 Card */}
-                    <Card className="shadow-md border-t-4 border-t-red-500">
-                      <CardHeader>
-                        <CardTitle className="text-red-700">間違いが多い問題 Worst 5</CardTitle>
-                        <CardDescription>正答率が低い順</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {worst5.map((q, idx) => (
-                          <div key={idx} className="bg-red-50 p-3 rounded-md border border-red-100 flex gap-4 items-center">
-                            <div className="w-12 h-12 bg-red-200 text-red-800 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0">
-                              {Math.round(q.rate)}%
-                            </div>
-                            <div className="flex-1 overflow-hidden">
-                              <p className="text-xs text-gray-500 mb-1">
-                                {q.total - q.correct} / {q.total} 回不正解
-                              </p>
-                              <div className="text-sm line-clamp-2 overflow-hidden text-ellipsis h-[3em]">
-                                <MathDisplay math={q.question_text} />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-
-                    {/* Correlation Matrix Card */}
-                    <Card className="shadow-md lg:col-span-2 border-t-4 border-t-blue-500 mt-4">
-                      <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-4">
-                        <div>
-                          <CardTitle className="text-blue-700">問題間の相関分析 (ローカル計算)</CardTitle>
-                          <CardDescription className="max-w-xl">問題間の正誤の相関係数（Phi係数）を算出しヒートマップで表示します。ある問題を間違えた生徒が別の問題も間違えやすい等の傾向分析に利用できます。</CardDescription>
-                        </div>
-                        <Button onClick={() => computeCorrelation(selectedUnitForStats)} disabled={isComputingCorrelation}>
-                           {isComputingCorrelation ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <BarChart className="w-4 h-4 mr-2" />}
-                           相関を計算する
-                        </Button>
-                      </CardHeader>
-                      <CardContent>
-                        {correlationMatrix && (
-                           <div className="overflow-x-auto pb-4">
-                              <table className="w-full text-xs text-center border-collapse min-w-max">
-                                <thead>
-                                  <tr>
-                                    <th className="p-2 border bg-gray-50 uppercase tracking-widest text-muted-foreground w-12 sticky left-0 z-10">Q</th>
-                                    {selectedUnitData.questions.map((q:any, i:number) => (
-                                       <th key={i} className="p-2 border bg-gray-50 min-w-[3rem]" title={q.question_text}>Q{i+1}</th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {selectedUnitData.questions.map((q:any, i:number) => (
-                                     <tr key={i}>
-                                        <th className="p-2 border bg-gray-50 text-left truncate max-w-[100px] sticky left-0 z-10" title={q.question_text}>
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-bold">Q{i+1}</span>
-                                          </div>
-                                        </th>
-                                        {selectedUnitData.questions.map((_: any, j:number) => {
-                                           const val = correlationMatrix[i][j];
-                                           let bg = 'white';
-                                           let textColor = 'inherit';
-                                           if (i === j) {
-                                              bg = '#f3f4f6'; 
-                                           } else if (val > 0) {
-                                              bg = `rgba(59, 130, 246, ${Math.min(val * 0.9, 0.9)})`;
-                                              if (val > 0.5) textColor = 'white';
-                                           } else if (val < 0) {
-                                              bg = `rgba(239, 68, 68, ${Math.min(Math.abs(val) * 0.9, 0.9)})`;
-                                              if (Math.abs(val) > 0.5) textColor = 'white';
-                                           }
-                                           return (
-                                              <td key={j} className="p-2 border font-mono font-medium" style={{ backgroundColor: bg, color: textColor }}>
-                                                {val === 0 ? '0.00' : val.toFixed(2)}
-                                              </td>
-                                           );
-                                        })}
-                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                           </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-        </div>
+        <AnalyticsTab
+          units={units}
+          scores={scores}
+          selectedUnitForStats={selectedUnitForStats}
+          setSelectedUnitForStats={setSelectedUnitForStats}
+        />
       )}
-
 
       {/* ========== TAB: ROLES ========== */}
       {activeTab === 'roles' && (
