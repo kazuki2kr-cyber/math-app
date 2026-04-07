@@ -20,9 +20,9 @@ const JAVA_CANDIDATES = [
   'C:\\Program Files\\Java\\jdk-17',
 ];
 
-let javaHome = null;
+let javaHome = 'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot';
 for (const candidate of JAVA_CANDIDATES) {
-  if (candidate && fs.existsSync(path.join(candidate, 'bin', 'java.exe'))) {
+  if (candidate && fs.existsSync(path.join(candidate, 'bin', 'java.exe')) && candidate.includes('21')) {
     javaHome = candidate;
     break;
   }
