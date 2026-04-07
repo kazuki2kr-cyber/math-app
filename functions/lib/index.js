@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.listAdmins = exports.initializeAdminClaims = exports.processDrillResult = exports.setAdminClaim = void 0;
+exports.listAdmins = exports.processDrillResult = exports.setAdminClaim = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-admin/firestore");
@@ -226,31 +226,8 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
 });
 // ==========================================
 // 3. initializeAdminClaims — 初回セットアップ用
+// (セキュリティ向上のため削除済み)
 // ==========================================
-exports.initializeAdminClaims = functions.region("us-central1").https.onRequest(async (req, res) => {
-    // セキュリティ: Authorization ヘッダーで簡易認証
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${process.env.INIT_SECRET || "math-app-init-2026"}`) {
-        res.status(403).send("Forbidden");
-        return;
-    }
-    const adminEmails = [
-        "kazuki2kr@gmail.com",
-        "ichikawa.kazuki@shibaurafzk.com",
-    ];
-    const results = [];
-    for (const email of adminEmails) {
-        try {
-            const user = await auth.getUserByEmail(email);
-            await auth.setCustomUserClaims(user.uid, { admin: true });
-            results.push(`✅ ${email} に admin Claim を設定しました。`);
-        }
-        catch (error) {
-            results.push(`❌ ${email}: ${error.message}`);
-        }
-    }
-    res.status(200).send(results.join("\n"));
-});
 // ==========================================
 // 4. listAdmins — 管理者一覧を取得
 // ==========================================

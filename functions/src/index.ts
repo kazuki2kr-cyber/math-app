@@ -222,34 +222,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
 // ==========================================
 // 3. initializeAdminClaims — 初回セットアップ用
+// (セキュリティ向上のため削除済み)
 // ==========================================
-export const initializeAdminClaims = functions.region("us-central1").https.onRequest(async (req, res) => {
-  // セキュリティ: Authorization ヘッダーで簡易認証
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${process.env.INIT_SECRET || "math-app-init-2026"}`) {
-    res.status(403).send("Forbidden");
-    return;
-  }
-
-  const adminEmails = [
-    "kazuki2kr@gmail.com",
-    "ichikawa.kazuki@shibaurafzk.com",
-  ];
-
-  const results: string[] = [];
-
-  for (const email of adminEmails) {
-    try {
-      const user = await auth.getUserByEmail(email);
-      await auth.setCustomUserClaims(user.uid, { admin: true });
-      results.push(`✅ ${email} に admin Claim を設定しました。`);
-    } catch (error: any) {
-      results.push(`❌ ${email}: ${error.message}`);
-    }
-  }
-
-  res.status(200).send(results.join("\n"));
-});
 
 // ==========================================
 // 4. listAdmins — 管理者一覧を取得

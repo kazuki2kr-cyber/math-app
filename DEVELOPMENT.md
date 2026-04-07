@@ -47,3 +47,8 @@
   `.agents/skills/security-audit` に定義されたルール（Trail of Bits相当）に従い、デプロイや権限変更の前に、脆弱な設定がないか、入力値検証が抜けていないかの差分レビューを自立的に実施します。
 - **React / Next.js UI設計**:
   UIの改修時は、標準搭載の `vercel-react-best-practices` および `vercel-composition-patterns` スキルを適用し、パフォーマンスと保守性の高いコンポーネント設計を行います。
+
+## 5. 運用環境 (Production)
+
+- **Vercel ホスティング URL**: [https://math-app-sooty.vercel.app/](https://math-app-sooty.vercel.app/)
+- **備考**: GitHubの `main` ブランチへのプッシュにより、Vercel上で自動ビルド・デプロイが行われます。バックエンド（Functions/Firestore Rules）の変更は、`firebase deploy` を実行して別途反映させる必要があります。
