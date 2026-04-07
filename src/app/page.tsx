@@ -1,6 +1,6 @@
 'use client';
 
-import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';import { useAuth } from '@/contexts/AuthContext';
+import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp'; import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { LogOut, PlayCircle, Trophy, Clock, Medal, Database } from 'lucide-react';
 import Image from 'next/image';
@@ -68,7 +68,7 @@ export default function Home() {
         // 1. Fetch units
         const unitsSnap = await getDocs(collection(db, 'units'));
         const unitsData = unitsSnap.docs.map(doc => doc.data() as Unit);
-        
+
         // 2. Fetch user's best scores for dashboard display & User Profile for XP/Level
         const newScores: Record<string, Score> = {};
         for (const unit of unitsData) {
@@ -100,7 +100,7 @@ export default function Home() {
         wrongSnap.docs.forEach(docSnap => {
           const data = docSnap.data();
           if (data.wrongQuestionIds && data.wrongQuestionIds.length > 0) {
-             newWrongAnswers[docSnap.id] = data.wrongQuestionIds.length;
+            newWrongAnswers[docSnap.id] = data.wrongQuestionIds.length;
           }
         });
         setWrongAnswers(newWrongAnswers);
@@ -108,24 +108,24 @@ export default function Home() {
         // 4. Fetch all scores globally to calculate overall ranking
         const allScoresSnap = await getDocs(collection(db, 'scores'));
         const userTotals: Record<string, OverallRank> = {};
-        
+
         allScoresSnap.docs.forEach(docSnap => {
           const data = docSnap.data();
           if (!userTotals[data.uid]) {
-            userTotals[data.uid] = { 
-               uid: data.uid, 
-               name: data.userName || '名無し', 
-               totalScore: 0, 
-               totalTime: 0,
-               icon: data.icon || '📐',
-               level: data.level || 1,
-               lastUpdated: data.updatedAt || ''
+            userTotals[data.uid] = {
+              uid: data.uid,
+              name: data.userName || '名無し',
+              totalScore: 0,
+              totalTime: 0,
+              icon: data.icon || '📐',
+              level: data.level || 1,
+              lastUpdated: data.updatedAt || ''
             };
           }
-          
+
           userTotals[data.uid].totalScore += (data.maxScore || 0);
           userTotals[data.uid].totalTime += (data.bestTime || 0);
-          
+
           const existingLevel = userTotals[data.uid].level || 1;
           const newLevel = data.level || 1;
           const existingDate = userTotals[data.uid].lastUpdated || '';
@@ -135,7 +135,7 @@ export default function Home() {
             if (data.icon) userTotals[data.uid].icon = data.icon;
             userTotals[data.uid].lastUpdated = newDate;
           }
-          
+
           if (data.level) {
             userTotals[data.uid].level = Math.max(existingLevel, newLevel);
           }
@@ -156,11 +156,11 @@ export default function Home() {
         }
 
         if (user && myIndex !== -1) {
-           setMyRankInfo({ rank: myIndex + 1, data: rankingList[myIndex] });
+          setMyRankInfo({ rank: myIndex + 1, data: rankingList[myIndex] });
         }
 
         setUnits(unitsData);
-        
+
         // Extract available categories
         const categories = Array.from(new Set(unitsData.map(u => u.category || 'その他'))).sort();
         setAvailableCategories(categories);
@@ -217,7 +217,7 @@ export default function Home() {
             <p className="text-[10px] text-muted-foreground/80 uppercase tracking-widest font-semibold leading-none">Forming the Essence of Knowledge.</p>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium text-gray-700 hidden sm:inline-block bg-gray-100 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-muted-foreground font-normal ml-1">さん</span>
@@ -236,14 +236,14 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            
+
             {/* User XP Profile Banner */}
             {userData && (
               <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-primary/10 flex flex-col md:flex-row items-center gap-6 relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-20 -mt-20"></div>
-                
+
                 {/* Avatar */}
-                <div 
+                <div
                   className="relative cursor-pointer transition-transform hover:scale-105"
                   onClick={() => setIsAvatarModalOpen(true)}
                 >
@@ -271,10 +271,10 @@ export default function Home() {
                       <p className="text-2xl font-black text-primary font-mono">{userData.xp}</p>
                     </div>
                   </div>
-                  
+
                   {/* Progress Bar */}
                   <div className="w-full bg-gray-100 h-3.5 rounded-full overflow-hidden shadow-inner">
-                    <div 
+                    <div
                       className="bg-gradient-to-r from-[#88c946] to-primary h-full rounded-full transition-all duration-1000 ease-out relative"
                       style={{ width: `${userData.progress}%` }}
                     >
@@ -295,17 +295,17 @@ export default function Home() {
                 <div className="flex items-center gap-3">
                   <PlayCircle className="w-8 h-8 text-primary flex-shrink-0" />
                   <div>
-                    <h2 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">単元一覧</h2>
+                    <h2 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">教科・分野一覧</h2>
                     <p className="text-[11px] md:text-xs text-muted-foreground font-medium uppercase tracking-wider">Select a unit to start</p>
                   </div>
                 </div>
-                
+
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                   {/* Subject Selector */}
                   <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner group transition-all hover:border-primary/30">
                     <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">教科</span>
-                    <select 
-                      value={selectedSubject} 
+                    <select
+                      value={selectedSubject}
                       onChange={(e) => setSelectedSubject(e.target.value)}
                       className="flex-1 w-full sm:w-28 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
                     >
@@ -332,7 +332,7 @@ export default function Home() {
               </div>
 
               {units.length === 0 ? (
-                 <Card className="border-dashed border-2 shadow-none bg-white/50">
+                <Card className="border-dashed border-2 shadow-none bg-white/50">
                   <CardContent className="flex flex-col items-center justify-center p-16 text-muted-foreground">
                     <p className="text-lg">利用可能な単元がありません。</p>
                     {(user?.email === 'kazuki2kr@gmail.com' || user?.email === 'ichikawa.kazuki@shibaurafzk.com') && (
@@ -348,75 +348,75 @@ export default function Home() {
                     .filter(unit => selectedSubject === '数学' ? (unit.subject === 'math' || unit.subject === '数学' || !unit.subject) : unit.subject === selectedSubject)
                     .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
                     .map((unit) => {
-                    const myScore = scores[unit.id];
-                    const totalQ = unit.questions?.length || 0;
-                    const hasPlayed = !!myScore;
-                    // "単元 " プレフィックスを削除してスッキリ表示
-                    const displayTitle = unit.title.replace(/^単元\s*/, '');
+                      const myScore = scores[unit.id];
+                      const totalQ = unit.questions?.length || 0;
+                      const hasPlayed = !!myScore;
+                      // "単元 " プレフィックスを削除してスッキリ表示
+                      const displayTitle = unit.title.replace(/^単元\s*/, '');
 
-                    return (
-                      <Card 
-                        key={unit.id} 
-                        className="flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 group bg-white border-transparent hover:border-primary/20"
-                      >
-                        <CardHeader className="pb-3 border-b bg-gray-50/50 group-hover:bg-primary/5 transition-colors">
-                          <CardTitle className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">{displayTitle}</CardTitle>
-                          <CardDescription className="font-mono text-xs">総問題数: {totalQ}問</CardDescription>
-                        </CardHeader>
-                        <CardContent className="flex-1 pt-4 pb-5">
-                          {hasPlayed ? (
-                            <div className="space-y-1 mt-1 bg-green-50/70 p-4 rounded-xl border border-green-100/50 shadow-inner">
-                              <div className="text-xs font-semibold text-green-800/70 flex items-center mb-2 uppercase tracking-wide">
-                                <Trophy className="w-3.5 h-3.5 mr-1" />
-                                Highest Score
+                      return (
+                        <Card
+                          key={unit.id}
+                          className="flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 group bg-white border-transparent hover:border-primary/20"
+                        >
+                          <CardHeader className="pb-3 border-b bg-gray-50/50 group-hover:bg-primary/5 transition-colors">
+                            <CardTitle className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">{displayTitle}</CardTitle>
+                            <CardDescription className="font-mono text-xs">総問題数: {totalQ}問</CardDescription>
+                          </CardHeader>
+                          <CardContent className="flex-1 pt-4 pb-5">
+                            {hasPlayed ? (
+                              <div className="space-y-1 mt-1 bg-green-50/70 p-4 rounded-xl border border-green-100/50 shadow-inner">
+                                <div className="text-xs font-semibold text-green-800/70 flex items-center mb-2 uppercase tracking-wide">
+                                  <Trophy className="w-3.5 h-3.5 mr-1" />
+                                  Highest Score
+                                </div>
+                                <div className="text-4xl font-extrabold text-primary flex items-baseline gap-1">
+                                  {myScore.maxScore} <span className="text-sm font-medium text-primary/60">/ 100</span>
+                                </div>
+                                <div className="flex items-center text-xs text-primary/70 mt-2 font-mono">
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  Time: {myScore.bestTime}s
+                                </div>
                               </div>
-                              <div className="text-4xl font-extrabold text-primary flex items-baseline gap-1">
-                                {myScore.maxScore} <span className="text-sm font-medium text-primary/60">/ 100</span>
+                            ) : (
+                              <div className="space-y-2 mt-1 bg-gray-50/80 p-4 rounded-xl border border-gray-100 flex items-center justify-center min-h-[110px]">
+                                <span className="text-muted-foreground/60 text-sm font-bold tracking-widest uppercase">未受験</span>
                               </div>
-                              <div className="flex items-center text-xs text-primary/70 mt-2 font-mono">
-                                <Clock className="w-3 h-3 mr-1" />
-                                Time: {myScore.bestTime}s
-                              </div>
+                            )}
+                          </CardContent>
+                          <CardFooter className="flex flex-col gap-2 px-6 pb-6 pt-0">
+                            <div className="flex gap-3 w-full">
+                              <Button
+                                className="flex-1 shadow-md hover:shadow-lg transition-shadow bg-primary text-primary-foreground font-semibold"
+                                onClick={() => startDrill(unit.id)}
+                                disabled={totalQ === 0}
+                              >
+                                <PlayCircle className="w-4 h-4 mr-2" />
+                                演習開始
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={() => gotoRanking(unit.id)}
+                                aria-label={`${displayTitle}のランキングを見る`}
+                                className="border-primary/20 text-primary hover:bg-primary/5 hover:text-primary transition-colors"
+                              >
+                                <Trophy className="w-4 h-4" />
+                              </Button>
                             </div>
-                          ) : (
-                            <div className="space-y-2 mt-1 bg-gray-50/80 p-4 rounded-xl border border-gray-100 flex items-center justify-center min-h-[110px]">
-                              <span className="text-muted-foreground/60 text-sm font-bold tracking-widest uppercase">未受験</span>
-                            </div>
-                          )}
-                        </CardContent>
-                        <CardFooter className="flex flex-col gap-2 px-6 pb-6 pt-0">
-                          <div className="flex gap-3 w-full">
-                            <Button 
-                              className="flex-1 shadow-md hover:shadow-lg transition-shadow bg-primary text-primary-foreground font-semibold" 
-                              onClick={() => startDrill(unit.id)}
-                              disabled={totalQ === 0}
-                            >
-                              <PlayCircle className="w-4 h-4 mr-2" />
-                              演習開始
-                            </Button>
-                            <Button 
-                              variant="outline" 
-                              onClick={() => gotoRanking(unit.id)}
-                              aria-label={`${displayTitle}のランキングを見る`}
-                              className="border-primary/20 text-primary hover:bg-primary/5 hover:text-primary transition-colors"
-                            >
-                              <Trophy className="w-4 h-4" />
-                            </Button>
-                          </div>
-                          {wrongAnswers[unit.id] > 0 && (
-                            <Button
-                              variant="secondary"
-                              className="w-full shadow-sm hover:shadow-md transition-shadow bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200 text-xs font-bold"
-                              onClick={() => router.push(`/drill/${unit.id}?mode=wrong`)}
-                            >
-                              <PlayCircle className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-                              間違えた問題のみ復習 ({wrongAnswers[unit.id]}問)
-                            </Button>
-                          )}
-                        </CardFooter>
-                      </Card>
-                    );
-                  })}
+                            {wrongAnswers[unit.id] > 0 && (
+                              <Button
+                                variant="secondary"
+                                className="w-full shadow-sm hover:shadow-md transition-shadow bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200 text-xs font-bold"
+                                onClick={() => router.push(`/drill/${unit.id}?mode=wrong`)}
+                              >
+                                <PlayCircle className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                                間違えた問題のみ復習 ({wrongAnswers[unit.id]}問)
+                              </Button>
+                            )}
+                          </CardFooter>
+                        </Card>
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -438,13 +438,13 @@ export default function Home() {
                   {myRankInfo && (
                     <div className="bg-amber-100/60 border-b border-amber-200 p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 bg-amber-500 text-white rounded-full flex items-center justify-center font-black text-lg shadow-sm">
-                           {myRankInfo.rank}
-                         </div>
-                         <div>
-                           <p className="text-xs font-bold text-amber-800 tracking-wider">あなたの総合順位</p>
-                           <p className="text-xl font-black text-amber-900 leading-none mt-0.5">{myRankInfo.data.totalScore} <span className="text-xs font-medium text-amber-800/70">pts</span></p>
-                         </div>
+                        <div className="w-10 h-10 bg-amber-500 text-white rounded-full flex items-center justify-center font-black text-lg shadow-sm">
+                          {myRankInfo.rank}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-amber-800 tracking-wider">あなたの総合順位</p>
+                          <p className="text-xl font-black text-amber-900 leading-none mt-0.5">{myRankInfo.data.totalScore} <span className="text-xs font-medium text-amber-800/70">pts</span></p>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -458,37 +458,36 @@ export default function Home() {
                       {overallRanking.map((rankUser, index) => {
                         const rank = index + 1;
                         const isCurrentUser = rankUser.uid === user?.uid;
-                        
+
                         return (
-                          <div 
-                            key={rankUser.uid} 
-                            className={`flex items-center px-5 py-4 transition-colors ${
-                              isCurrentUser ? 'bg-amber-50/50 relative' : 'hover:bg-gray-50'
-                            }`}
+                          <div
+                            key={rankUser.uid}
+                            className={`flex items-center px-5 py-4 transition-colors ${isCurrentUser ? 'bg-amber-50/50 relative' : 'hover:bg-gray-50'
+                              }`}
                           >
                             {isCurrentUser && <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400"></div>}
                             <div className="w-8 flex-shrink-0 text-center font-black mr-3">
-                               {rank === 1 ? <Medal className="text-yellow-500 w-6 h-6 mx-auto" /> :
+                              {rank === 1 ? <Medal className="text-yellow-500 w-6 h-6 mx-auto" /> :
                                 rank === 2 ? <Medal className="text-gray-400 w-5 h-5 mx-auto" /> :
-                                rank === 3 ? <Medal className="text-amber-700 w-5 h-5 mx-auto" /> :
-                                <span className="text-gray-400">{rank}</span>}
+                                  rank === 3 ? <Medal className="text-amber-700 w-5 h-5 mx-auto" /> :
+                                    <span className="text-gray-400">{rank}</span>}
                             </div>
                             <div className="flex-1 min-w-0 flex items-center gap-3">
-                               <div className="text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:block">{rankUser.icon}</div>
-                               <div>
-                                 <p className="font-bold text-gray-800 truncate text-sm flex items-center">
-                                   <span className="text-xl sm:hidden mr-1">{rankUser.icon}</span>
-                                   {rankUser.name}
-                                   {isCurrentUser && <span className="ml-2 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full uppercase">You</span>}
-                                 </p>
-                                 <p className="text-[10px] text-muted-foreground font-mono font-semibold">Lv.{rankUser.level || 1}</p>
-                               </div>
-                             </div>
+                              <div className="text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:block">{rankUser.icon}</div>
+                              <div>
+                                <p className="font-bold text-gray-800 truncate text-sm flex items-center">
+                                  <span className="text-xl sm:hidden mr-1">{rankUser.icon}</span>
+                                  {rankUser.name}
+                                  {isCurrentUser && <span className="ml-2 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full uppercase">You</span>}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-mono font-semibold">Lv.{rankUser.level || 1}</p>
+                              </div>
+                            </div>
                             <div className="text-right flex-shrink-0 ml-4">
-                               <p className="text-lg font-black text-amber-600 leading-none">{rankUser.totalScore}</p>
-                               <p className="text-[10px] text-gray-400 font-mono mt-1">
-                                 <Clock className="w-2.5 h-2.5 inline mr-0.5" />{rankUser.totalTime}s
-                               </p>
+                              <p className="text-lg font-black text-amber-600 leading-none">{rankUser.totalScore}</p>
+                              <p className="text-[10px] text-gray-400 font-mono mt-1">
+                                <Clock className="w-2.5 h-2.5 inline mr-0.5" />{rankUser.totalTime}s
+                              </p>
                             </div>
                           </div>
                         );
@@ -498,7 +497,7 @@ export default function Home() {
                 </CardContent>
               </Card>
             </div>
-            
+
           </div>
         )}
       </main>
@@ -521,11 +520,10 @@ export default function Home() {
                     key={i}
                     onClick={() => handleIconChange(icon)}
                     title={`Lv.${i + 1} で解放`}
-                    className={`aspect-square text-3xl sm:text-4xl flex items-center justify-center rounded-xl transition-all ${
-                      userData.icon === icon 
-                        ? 'bg-primary/20 ring-4 ring-primary scale-110 shadow-md z-10' 
+                    className={`aspect-square text-3xl sm:text-4xl flex items-center justify-center rounded-xl transition-all ${userData.icon === icon
+                        ? 'bg-primary/20 ring-4 ring-primary scale-110 shadow-md z-10'
                         : 'bg-gray-50 hover:bg-gray-100 hover:scale-110 border border-gray-100'
-                    }`}
+                      }`}
                   >
                     {icon}
                   </button>
@@ -543,7 +541,7 @@ export default function Home() {
               <h3 className="text-2xl font-black text-gray-900 tracking-tight">Formix へようこそ！</h3>
               <p className="text-sm text-muted-foreground">利用を始める前に、必ず以下の利用規約とプライバシーポリシーをお読みください。</p>
             </div>
-            
+
             <div className="bg-gray-50 p-4 border rounded-xl text-sm text-gray-700 h-40 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
               <p className="font-bold mb-2 text-primary">■ 生徒の皆さんへのお願い</p>
               <ul className="list-disc pl-5 space-y-1">
@@ -558,9 +556,9 @@ export default function Home() {
             </div>
 
             <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-200">
-              <input 
-                type="checkbox" 
-                checked={termsChecked} 
+              <input
+                type="checkbox"
+                checked={termsChecked}
                 onChange={(e) => setTermsChecked(e.target.checked)}
                 className="mt-1 flex-shrink-0 w-6 h-6 text-primary rounded focus:ring-primary focus:ring-offset-2 border-gray-300"
               />
@@ -569,8 +567,8 @@ export default function Home() {
               </span>
             </label>
 
-            <Button 
-              onClick={handleAgreeToTerms} 
+            <Button
+              onClick={handleAgreeToTerms}
               disabled={!termsChecked || savingTerms}
               className="w-full h-12 text-lg font-bold shadow-md hover:shadow-lg transition-all hover:-translate-y-0.5"
             >
