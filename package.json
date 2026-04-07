@@ -1,6 +1,6 @@
 {
   "name": "math.app",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,7 +10,8 @@
     "test": "jest",
     "test:security": "jest tests/firestore.rules.spec.ts",
     "test:e2e": "playwright test",
-    "test:e2e:emu": "node scripts/run-e2e-emu.js"
+    "test:e2e:emu": "node scripts/run-e2e-emu.js",
+    "prepare": "husky"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
@@ -47,6 +48,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "firebase-tools": "^15.12.0",
+    "husky": "^9.1.7",
     "jest": "^30.3.0",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.6",

@@ -1,0 +1,41 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+if [ "$BRANCH" = "main" ]; then
+    LAST_MESSAGE=$(git log -1 --pretty=%B)
+    # すでにバージョンバンプのコミットならパス
+    if echo "$LAST_MESSAGE" | grep -q "^chore: bump version"; then
+        exit 0
+    fi
+    
+    echo "==========================================="
+    echo "🚀 Auto-bumping app version for deployment..."
+    echo "==========================================="
+
+    # Working dirがクリーンかチェック
+    if ! git diff-index --quiet HEAD --; then
+        echo "⚠️  エラー: 作業ディレクトリにコミットされていない変更があります。"
+        echo "Push 前に変更をコミットしてください。"
+        exit 1
+    fi
+
+    # バージョンを上げる
+    npm version patch --no-git-tag-version > /dev/null
+    
+    git add package.json package-lock.json
+    NEW_VERSION=$(node -p "require('./package.json').version")
+    
+    git commit -m "chore: bump version to $NEW_VERSION" > /dev/null
+    
+    echo "✅ Version bumped to $NEW_VERSION."
+    echo "🔁 念のため元の Push を中断し、バージョンアップを含む完全な状態を自動で再度 Push します..."
+    
+    # 無限ループを避けるため --no-verify で Push
+    # Start the push detached from this hook so it doesn't block the exit
+    exec git push --no-verify origin main &
+    
+    # 現在の古い状態での Push はキャンセルする
+    exit 1
+fi

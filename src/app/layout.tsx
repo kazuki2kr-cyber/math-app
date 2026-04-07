@@ -27,13 +27,16 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <body
-        className={`${notoSansJP.variable} font-sans antialiased`}
+        className={`${notoSansJP.variable} font-sans antialiased relative`}
       >
         <AuthProvider>
           <ProtectedRoute>
             {children}
           </ProtectedRoute>
         </AuthProvider>
+        <div className="fixed bottom-2 right-2 text-xs text-slate-400 opacity-50 pointer-events-none z-50">
+          v{process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0"}
+        </div>
       </body>
     </html>
   );
