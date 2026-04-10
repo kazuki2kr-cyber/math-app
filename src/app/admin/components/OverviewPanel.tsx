@@ -152,6 +152,57 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
         </div>
       )}
 
+      {/* 分野別正答率チャート */}
+      {metrics.categoryAccuracies && metrics.categoryAccuracies.length > 0 && (
+        <Card className="shadow-sm border-primary/10">
+          <CardHeader className="pb-2 bg-primary/5 border-b">
+            <CardTitle className="text-base font-black text-primary flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              分野別 平均正答率
+            </CardTitle>
+            <CardDescription className="text-xs">
+              分野ごとの正答率。弱点分野の把握に役立ちます。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div style={{ width: '100%', height: Math.max(metrics.categoryAccuracies.length * 45, 150) }}>
+              <ResponsiveContainer>
+                <BarChart
+                  data={metrics.categoryAccuracies}
+                  layout="vertical"
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E5E7EB" />
+                  <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={10} fontWeight="bold" />
+                  <YAxis
+                    type="category"
+                    dataKey="category"
+                    width={120}
+                    fontSize={11}
+                    fontWeight="bold"
+                    tick={{ fill: '#374151' }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: '#F3F4F6' }}
+                    formatter={(value: any, name: any, props: any) => [
+                      <span className="font-bold text-gray-900">{value.toFixed(1)}%</span>,
+                      '正答率'
+                    ]}
+                    labelStyle={{ fontWeight: 'bold', color: '#1F2937', marginBottom: '4px' }}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                  />
+                  <Bar dataKey="accuracy" radius={[0, 6, 6, 0]} maxBarSize={32}>
+                    {metrics.categoryAccuracies.map((entry, idx) => (
+                      <Cell key={idx} fill={getBarColor(entry.accuracy)} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* 単元別正答率チャート */}
       {chartData.length > 0 && (
         <Card className="shadow-sm">

@@ -13,35 +13,8 @@ import {
   collection, getDocs, collectionGroup, query, where,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { MathDisplay } from '@/components/MathDisplay';
 
-// MathDisplay（共通）
-function MathDisplay({ math }: { math: string }) {
-  if (typeof window !== 'undefined') {
-    try {
-      const katex = require('katex');
-      const parts = math.split(/(\$[^$]+\$)/g);
-      return (
-        <span>
-          {parts.map((p: string, i: number) => {
-            if (p.startsWith('$') && p.endsWith('$')) {
-              const tex = p.slice(1, -1);
-              return (
-                <span
-                  key={i}
-                  dangerouslySetInnerHTML={{ __html: katex.renderToString(tex, { throwOnError: false }) }}
-                />
-              );
-            }
-            return <span key={i}>{p}</span>;
-          })}
-        </span>
-      );
-    } catch {
-      return <span>{math}</span>;
-    }
-  }
-  return <span>{math}</span>;
-}
 
 interface SmartCorrelationPanelProps {
   unitId: string;
@@ -63,9 +36,7 @@ export default function SmartCorrelationPanel({ unitId, questions }: SmartCorrel
   const computeCorrelation = async () => {
     setIsComputing(true);
     try {
-      // 1. ユーザーを取得（既存ロジックと同じ）
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const allUserIds = usersSnap.docs.map((d) => d.id);
+      // 1. ユーザー一覧の取得は不要（attempts から抽出可能）
 
       // 2. 該当単元の attempts を collectionGroup で一括取得
       //    既存のロジック: users/{uid}/attempts をユーザーごとに取得していた
@@ -242,16 +213,14 @@ export default function SmartCorrelationPanel({ unitId, questions }: SmartCorrel
                           {pair.direction === 'positive' ? '正の相関（連鎖ミス）' : '負の相関（相反傾向）'}
                         </span>
                       </div>
-                      <div className="text-xs space-y-1">
-                        <div className="truncate text-gray-700">
-                          <span className="font-semibold text-gray-500 mr-1">Q{pair.indexA + 1}:</span>
-                          <MathDisplay math={pair.qTextA} />
+                        <div className="text-gray-700">
+                          <span className="font-semibold text-gray-500 mr-2">Q{pair.indexA + 1}:</span>
+                          <MathDisplay math={pair.qTextA} className="text-sm" />
                         </div>
-                        <div className="truncate text-gray-700">
-                          <span className="font-semibold text-gray-500 mr-1">Q{pair.indexB + 1}:</span>
-                          <MathDisplay math={pair.qTextB} />
+                        <div className="text-gray-700">
+                          <span className="font-semibold text-gray-500 mr-2">Q{pair.indexB + 1}:</span>
+                          <MathDisplay math={pair.qTextB} className="text-sm" />
                         </div>
-                      </div>
                     </div>
                   </div>
                 ))}

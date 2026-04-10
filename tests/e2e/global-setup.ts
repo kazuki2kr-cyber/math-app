@@ -2,17 +2,32 @@
 import { FullConfig } from '@playwright/test';
 
 async function patchDoc(projectId: string, collection: string, docId: string, fields: any) {
-  const response = await fetch(`http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/${collection}/${docId}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer owner'
-    },
-    body: JSON.stringify({ fields })
-  });
-  if (!response.ok) {
-    console.error(`Failed to seed ${collection}/${docId}:`, await response.text());
+  const url = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/${collection}/${docId}?allow_missing=true`;
+  const maxRetries = 5;
+  let lastError = '';
+
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer owner' // 管理者権限（ルールバイパス）で投入
+        },
+        body: JSON.stringify({ fields })
+      });
+
+      if (response.ok) {
+        return;
+      }
+      lastError = await response.text();
+    } catch (e: any) {
+      lastError = e.message;
+    }
+    // エミュレータの起動待ちを考慮してリトライ
+    await new Promise(r => setTimeout(r, 1000));
   }
+  console.error(`Failed to seed ${collection}/${docId} after ${maxRetries} attempts:`, lastError);
 }
 
 async function globalSetup(config: FullConfig) {

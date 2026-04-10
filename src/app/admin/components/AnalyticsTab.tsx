@@ -7,6 +7,7 @@ import SmartCorrelationPanel from './SmartCorrelationPanel';
 import {
   buildQuestionStats,
   calculateOverviewFromStats,
+  calculateCategoryAccuracies,
   calculateAccuracyDistribution,
   generateActionSuggestions,
   calculateStudentRankings,
@@ -31,6 +32,7 @@ export default function AnalyticsTab({
 }: AnalyticsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('overview');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   // 利用可能な教科リストの抽出
   const subjects = useMemo(() => {
@@ -43,10 +45,25 @@ export default function AnalyticsTab({
   }, [units]);
 
   // 教科フィルターに基づく単元の絞り込み
-  const filteredUnits = useMemo(() => {
+  const subjectFilteredUnits = useMemo(() => {
     if (subjectFilter === 'all') return units;
     return units.filter(u => (u.subject || '数学') === subjectFilter);
   }, [units, subjectFilter]);
+
+  // 分野リストの抽出
+  const availableCategories = useMemo(() => {
+    const c = new Set<string>();
+    subjectFilteredUnits.forEach(u => {
+      c.add(u.category || 'その他');
+    });
+    return Array.from(c).sort();
+  }, [subjectFilteredUnits]);
+
+  // 分野フィルターに基づく単元の絞り込み
+  const filteredUnits = useMemo(() => {
+    if (categoryFilter === 'all') return subjectFilteredUnits;
+    return subjectFilteredUnits.filter(u => (u.category || 'その他') === categoryFilter);
+  }, [subjectFilteredUnits, categoryFilter]);
 
   // 教科フィルターに基づくスコアの絞り込み
   const filteredScores = useMemo(() => {
@@ -63,13 +80,16 @@ export default function AnalyticsTab({
         allStats[unit.id] = unit.stats;
       }
     }
-    const metrics = calculateOverviewFromStats(filteredUnits, allStats);
+    const metrics = calculateOverviewFromStats(subjectFilteredUnits, allStats);
     
+    // 分野別統計の計算 (OverviewPanel用)
+    metrics.categoryAccuracies = calculateCategoryAccuracies(subjectFilteredUnits, allStats);
+
     // 生徒ランキングの計算
     metrics.rankings = calculateStudentRankings(filteredScores, filteredUnits);
     
     return metrics;
-  }, [filteredUnits, filteredScores]);
+  }, [subjectFilteredUnits, filteredScores, filteredUnits]);
 
   // 選択中の単元データ
   const selectedUnitData = useMemo(
@@ -127,19 +147,40 @@ export default function AnalyticsTab({
           ))}
         </div>
 
-        <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
-          <BookOpen className="w-4 h-4 text-gray-500" />
-          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">教科:</span>
-          <select
-            value={subjectFilter}
-            onChange={(e) => setSubjectFilter(e.target.value)}
-            className="text-sm font-medium bg-transparent outline-none border-none focus:ring-0 cursor-pointer"
-          >
-            <option value="all">すべての教科</option>
-            {subjects.map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 教科フィルター */}
+          <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
+            <BookOpen className="w-4 h-4 text-gray-400" />
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">教科:</span>
+            <select
+              value={subjectFilter}
+              onChange={(e) => {
+                setSubjectFilter(e.target.value);
+                setCategoryFilter('all');
+              }}
+              className="text-sm font-medium bg-transparent outline-none border-none focus:ring-0 cursor-pointer min-w-[80px]"
+            >
+              <option value="all">すべて</option>
+              {subjects.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 分野フィルター */}
+          <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">分野:</span>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="text-sm font-medium bg-transparent outline-none border-none focus:ring-0 cursor-pointer min-w-[120px]"
+            >
+              <option value="all">すべての分野</option>
+              {availableCategories.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

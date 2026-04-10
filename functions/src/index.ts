@@ -28,16 +28,36 @@ export const setAdminClaim = functions.region("us-central1").https.onCall(async 
     );
   }
 
+  // セキュリティガード: 自分自身の権限は剥奪できない
+  if (email === context.auth.token.email && !isAdmin) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "自分自身の管理者権限を剥奪することはできません。他の管理者に依頼してください。"
+    );
+  }
+
   try {
     const targetUser = await auth.getUserByEmail(email);
+    
+    // 1. Auth Custom Claims の更新
     await auth.setCustomUserClaims(targetUser.uid, {
       admin: isAdmin,
     });
-    return { success: true, message: `${email} の管理者権限を ${isAdmin ? "付与" : "剥奪"} しました。` };
+
+    // 2. Firestore ドキュメントの同期 (互換性・UI表示用)
+    await db.collection("users").doc(targetUser.uid).set({
+      isAdmin: isAdmin,
+      updatedAt: Timestamp.now().toDate().toISOString()
+    }, { merge: true });
+
+    return { 
+      success: true, 
+      message: `${email} の管理者権限を ${isAdmin ? "付与" : "剥奪"} し、Firestore データを更新しました。` 
+    };
   } catch (error: any) {
     throw new functions.https.HttpsError(
       "not-found",
-      `ユーザー ${email} が見つかりません: ${error.message}`
+      `ユーザー ${email} の処理中にエラーが発生しました: ${error.message}`
     );
   }
 });

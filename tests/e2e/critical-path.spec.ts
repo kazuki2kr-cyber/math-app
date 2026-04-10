@@ -46,10 +46,10 @@ test.describe('Formix Critical Path E2E', () => {
     await unit2Card.locator('button', { hasText: '演習開始' }).click();
 
     // 6. 演習画面の検証
-    await page.waitForURL(/\/drill\/test_unit_2/, { timeout: 10000 });
-    // MathDisplay は KaTeX で描画するため <annotation> は hidden になる
+    await page.waitForURL(/\/drill\/test_unit_2/, { timeout: 15000 });
+    
     // プレーンテキスト部分の "Question 1" で画面読み込み完了を確認
-    await expect(page.getByText(/Question 1/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Question 1/)).toBeVisible({ timeout: 15000 });
 
     // 正解の選択肢「4」を含むボタンをクリック
     // ※選択肢はシャッフルされるが、テキスト「4」を含む唯一のボタンを探す

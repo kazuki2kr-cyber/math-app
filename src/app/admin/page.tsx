@@ -3,17 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Trash2, RefreshCw, FileText, Database, UserCheck, Shield, Zap, AlertTriangle, Save, X, BarChart, Users } from 'lucide-react';
+import { Trash2, RefreshCw, FileText, Database, UserCheck, Shield, Zap, AlertTriangle, Save, X, BarChart, Users, Upload, Package, History } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import { parseOptions } from '@/lib/utils';
 import AnalyticsTab from './components/AnalyticsTab';
+import { VersionHistoryPanel } from './components/VersionHistoryPanel';
 import 'katex/dist/katex.min.css';
 
 export default function AdminPage() {
@@ -21,7 +22,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles'>('roles');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles' | 'changelog'>('roles');
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]);
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
@@ -74,20 +75,27 @@ export default function AdminPage() {
     setMessage('');
     try {
       const snap = await getDocs(collection(db, 'units'));
-      const arr: any[] = [];
-      for (const d of snap.docs) {
-        const unitData = d.data();
-        // analytics タブ用: stats/questions ドキュメントも同時取得
-        try {
-          const statsSnap = await getDoc(doc(db, 'units', unitData.id, 'stats', 'questions'));
-          if (statsSnap.exists()) {
-            unitData.stats = statsSnap.data();
-          }
-        } catch {
-          // stats が存在しない場合は無視
+      const unitsArray = snap.docs.map(d => d.data());
+      
+      // stats/questions ドキュメントを一括取得 (collectionGroupを使用)
+      // IDが 'questions' のドキュメントのみを対象とする
+      const statsSnap = await getDocs(query(collectionGroup(db, 'stats')));
+      const statsMap: Record<string, any> = {};
+      
+      statsSnap.forEach(sDoc => {
+        if (sDoc.id === 'questions') {
+          // パスから unitId を抽出: units/{unitId}/stats/questions
+          const pathParts = sDoc.ref.path.split('/');
+          const unitId = pathParts[1];
+          statsMap[unitId] = sDoc.data();
         }
-        arr.push(unitData);
-      }
+      });
+
+      const arr = unitsArray.map(unit => ({
+        ...unit,
+        stats: statsMap[unit.id] || null
+      }));
+
       setUnits(arr);
     } catch (e) {
       console.error(e);
@@ -104,9 +112,20 @@ export default function AdminPage() {
     setLoading(true);
     setMessage('');
     try {
-      const snap = await getDocs(collection(db, 'scores'));
+      // 全件取得を避け、最新1000件に制限
+      const scoreQuery = query(
+        collection(db, 'scores'),
+        orderBy('updatedAt', 'desc'),
+        limit(1000)
+      );
+      const snap = await getDocs(scoreQuery);
       const arr: any[] = [];
-      snap.forEach(d => arr.push({ docId: d.id, ...d.data() }));
+      snap.forEach(d => {
+        const data = d.data();
+        if (data) {
+          arr.push({ docId: d.id, ...data });
+        }
+      });
       arr.sort((a,b) => {
         const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt?.toMillis?.() || 0);
         const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt?.toMillis?.() || 0);
@@ -371,6 +390,13 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
         >
           <Users className="inline w-4 h-4 mr-2" />
           管理者ロール
+        </button>
+        <button 
+          onClick={() => setActiveTab('changelog')} 
+          className={`px-4 py-2 font-medium ${activeTab === 'changelog' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <History className="inline w-4 h-4 mr-2" />
+          更新履歴
         </button>
       </div>
 
@@ -990,6 +1016,12 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               )}
             </CardContent>
           </Card>
+        </div>
+      )}
+      
+      {activeTab === 'changelog' && (
+        <div className="animate-in fade-in duration-500">
+          <VersionHistoryPanel />
         </div>
       )}
 

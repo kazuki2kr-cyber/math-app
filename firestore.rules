@@ -13,7 +13,7 @@ service cloud.firestore {
     }
     
     function isAdmin() {
-      return request.auth != null && request.auth.token.admin == true;
+      return request.auth != null && request.auth.token.get('admin', false) == true;
     }
 
     // ------------------------------------------
@@ -49,6 +49,11 @@ service cloud.firestore {
     // ── CollectionGroup query for attempts（管理者分析用） ──
     match /{path=**}/attempts/{docId} {
       allow read: if isAdmin();
+    }
+
+    // ── CollectionGroup query for stats（管理者分析用） ──
+    match /{path=**}/stats/{docId} {
+      allow read: if isAuthenticated();
     }
 
     // ------------------------------------------
@@ -89,6 +94,14 @@ service cloud.firestore {
     // ------------------------------------------
     match /analytics_cache/{docId} {
       allow read, write: if isAdmin();
+    }
+
+    // ------------------------------------------
+    // 6. 更新履歴 (管理者のみ)
+    // ------------------------------------------
+    match /changelog/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }
