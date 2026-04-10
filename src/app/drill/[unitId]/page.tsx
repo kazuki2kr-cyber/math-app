@@ -307,7 +307,7 @@ export default function DrillPage() {
                       <span className={`flex-shrink-0 inline-block w-8 h-8 text-center leading-8 rounded-full text-sm font-bold mr-4 transition-colors ${isSelected ? 'bg-primary text-white' : 'bg-gray-100 text-gray-500'}`}>
                         {i + 1}
                       </span>
-                      <div className="pt-1 overflow-x-auto">
+                      <div className="pt-1 overflow-visible">
                         <MathDisplay math={opt} />
                       </div>
                     </div>

@@ -32,7 +32,7 @@ export default function LoginPage() {
           </div>
           
           <div className="mx-auto w-24 h-24 sm:w-28 sm:h-28 overflow-hidden rounded-[2rem] shadow-xl flex items-center justify-center my-6">
-            <Image src="/images/icon.webp" alt="Formix Icon" width={160} height={160} className="object-cover w-full h-full scale-[1.35]" priority />
+            <Image src="/images/icon.webp" alt="Formix Icon" width={160} height={160} className="object-cover w-full h-full" priority />
           </div>
           
           <CardTitle className="text-4xl font-extrabold tracking-tight text-gray-900">Formix</CardTitle>

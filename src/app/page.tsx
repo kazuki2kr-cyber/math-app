@@ -210,7 +210,7 @@ export default function Home() {
       <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 md:w-12 md:h-12 overflow-hidden rounded-[1rem] shadow-md flex items-center justify-center flex-shrink-0">
-            <Image src="/images/icon.webp" alt="Formix Icon" width={64} height={64} className="object-cover w-full h-full scale-[1.35]" />
+            <Image src="/images/icon.webp" alt="Formix Icon" width={64} height={64} className="object-cover w-full h-full" />
           </div>
           <div className="flex flex-col justify-center">
             <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-none mb-[2px]">Formix</h1>
