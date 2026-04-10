@@ -47,6 +47,11 @@ export interface OverviewMetrics {
     accuracy: number;
     totalAttempts: number;
   }>;
+  categoryAccuracies?: Array<{
+    category: string;
+    accuracy: number;
+    totalAttempts: number;
+  }>;
   rankings?: {
     top5Accuracy: StudentRank[];
     worst5Accuracy: StudentRank[];
@@ -200,6 +205,41 @@ export function calculateOverviewFromStats(
 }
 
 /**
+ * 分野（分野）別の集計データを算出する
+ */
+export function calculateCategoryAccuracies(
+  units: Array<{ id: string; category?: string; questions: any[] }>,
+  allStats: Record<string, any>
+): OverviewMetrics['categoryAccuracies'] {
+  const catMap: Record<string, { total: number; correct: number }> = {};
+
+  for (const unit of units) {
+    const stats = allStats[unit.id];
+    if (!stats) continue;
+
+    const catName = unit.category || 'その他';
+    if (!catMap[catName]) catMap[catName] = { total: 0, correct: 0 };
+
+    for (const q of unit.questions) {
+      const { total, correct } = getQuestionStatValue(stats, q.id);
+      catMap[catName].total += total;
+      catMap[catName].correct += correct;
+    }
+  }
+
+  const results = Object.entries(catMap)
+    .filter(([_, data]) => data.total > 0)
+    .map(([category, data]) => ({
+      category,
+      accuracy: (data.correct / data.total) * 100,
+      totalAttempts: data.total
+    }));
+
+  results.sort((a, b) => b.totalAttempts - a.totalAttempts); // 利用数順
+  return results;
+}
+
+/**
  * 生徒ランキング算出 (V3)
  */
 export function calculateStudentRankings(
@@ -243,7 +283,8 @@ export function calculateStudentRankings(
     studentMap[s.uid].totalTime += timeVal;
 
     const unit = units.find(u => u.id === s.unitId);
-    const qCount = unit?.questions?.length || 10;
+    // 実際の出題数は最大 10 問に制限されている (DrillPage 参照) ため、計算上の分母も 10 に揃える
+    const qCount = Math.min(unit?.questions?.length || 10, 10);
     const solvedCount = Math.round((scoreVal / 100) * qCount);
     studentMap[s.uid].totalCorrect += solvedCount;
   }
