@@ -153,10 +153,25 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const finalXpGain = xpDetails?.finalXp || 0;
     const newTotalXp = currentXp + finalXpGain;
     
-    // フロントエンドのロジックと同期 (便宜上 here)
-    const calculateLevel = (xp: number) => Math.floor(Math.sqrt(xp / 10)) + 1;
-    const oldLevel = calculateLevel(currentXp);
-    const newLevel = calculateLevel(newTotalXp);
+    // フロントエンド (src/lib/xp.ts) のロジックと完全に同期
+    const MAX_LEVEL = 100;
+    const getLevelFromXp = (totalXp: number) => {
+      let level = 1;
+      let accumulatedXp = 0;
+      while (level < MAX_LEVEL) {
+        const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50;
+        if (totalXp >= accumulatedXp + xpForNext) {
+          accumulatedXp += xpForNext;
+          level++;
+        } else {
+          break;
+        }
+      }
+      return level;
+    };
+
+    const oldLevel = getLevelFromXp(currentXp);
+    const newLevel = getLevelFromXp(newTotalXp);
     const isLevelUp = newLevel > oldLevel;
 
     // 2-2. スコア更新判定 (High Score)

@@ -63,8 +63,8 @@ service cloud.firestore {
       // ランキング表示のため、認証済みユーザーなら誰でも読み取り可能
       allow read: if isAuthenticated();
       
-      // 書き込みは Cloud Functions (Admin SDK) のみ
-      allow write: if false;
+      // 管理者のみ管理画面からの削除や更新（不正無視フラグ設定など）が可能
+      allow write: if isAdmin();
     }
 
     // ------------------------------------------
@@ -85,8 +85,9 @@ service cloud.firestore {
     // 4. 管理用 (Suspicious Activities 他)
     // ------------------------------------------
     match /suspicious_activities/{id} {
-      allow read: if isAdmin();
-      allow write: if false; // Cloud Functions (Admin SDK) のみ
+      // 管理者のみ読み取り、アーカイブ/削除が可能。作成は Cloud Functions (Admin SDK)
+      allow read, delete, update: if isAdmin();
+      allow create: if false;
     }
 
     // ------------------------------------------

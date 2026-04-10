@@ -53,15 +53,28 @@ exports.setAdminClaim = functions.region("us-central1").https.onCall(async (data
     if (!email || typeof isAdmin !== "boolean") {
         throw new functions.https.HttpsError("invalid-argument", "email (string) と isAdmin (boolean) が必要です。");
     }
+    // セキュリティガード: 自分自身の権限は剥奪できない
+    if (email === context.auth.token.email && !isAdmin) {
+        throw new functions.https.HttpsError("failed-precondition", "自分自身の管理者権限を剥奪することはできません。他の管理者に依頼してください。");
+    }
     try {
         const targetUser = await auth.getUserByEmail(email);
+        // 1. Auth Custom Claims の更新
         await auth.setCustomUserClaims(targetUser.uid, {
             admin: isAdmin,
         });
-        return { success: true, message: `${email} の管理者権限を ${isAdmin ? "付与" : "剥奪"} しました。` };
+        // 2. Firestore ドキュメントの同期 (互換性・UI表示用)
+        await db.collection("users").doc(targetUser.uid).set({
+            isAdmin: isAdmin,
+            updatedAt: firestore_1.Timestamp.now().toDate().toISOString()
+        }, { merge: true });
+        return {
+            success: true,
+            message: `${email} の管理者権限を ${isAdmin ? "付与" : "剥奪"} し、Firestore データを更新しました。`
+        };
     }
     catch (error) {
-        throw new functions.https.HttpsError("not-found", `ユーザー ${email} が見つかりません: ${error.message}`);
+        throw new functions.https.HttpsError("not-found", `ユーザー ${email} の処理中にエラーが発生しました: ${error.message}`);
     }
 });
 // ==========================================
@@ -144,10 +157,25 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             // 2-1. XP / レベル計算
             const finalXpGain = (xpDetails === null || xpDetails === void 0 ? void 0 : xpDetails.finalXp) || 0;
             const newTotalXp = currentXp + finalXpGain;
-            // フロントエンドのロジックと同期 (便宜上 here)
-            const calculateLevel = (xp) => Math.floor(Math.sqrt(xp / 10)) + 1;
-            const oldLevel = calculateLevel(currentXp);
-            const newLevel = calculateLevel(newTotalXp);
+            // フロントエンド (src/lib/xp.ts) のロジックと完全に同期
+            const MAX_LEVEL = 100;
+            const getLevelFromXp = (totalXp) => {
+                let level = 1;
+                let accumulatedXp = 0;
+                while (level < MAX_LEVEL) {
+                    const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50;
+                    if (totalXp >= accumulatedXp + xpForNext) {
+                        accumulatedXp += xpForNext;
+                        level++;
+                    }
+                    else {
+                        break;
+                    }
+                }
+                return level;
+            };
+            const oldLevel = getLevelFromXp(currentXp);
+            const newLevel = getLevelFromXp(newTotalXp);
             const isLevelUp = newLevel > oldLevel;
             // 2-2. スコア更新判定 (High Score)
             let isHighScore = false;

@@ -57,19 +57,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Domain check (can also be enforced by Firebase Auth settings, but we verify here for UX)
-        if (
-          !firebaseUser.email?.endsWith('@shibaurafzk.com') &&
-          firebaseUser.email !== 'kazuki2kr@gmail.com' // Allow admin for testing if needed, though spec says only the domain. Removing this depending on strictly sticking to spec.
-        ) {
-          // Strictly stick to spec
-          if (!firebaseUser.email?.endsWith('@shibaurafzk.com')) {
-             await firebaseSignOut(auth);
-             setError('@shibaurafzk.com ドメインのGoogleアカウントでログインしてください。');
-             setUser(null);
-             setLoading(false);
-             return;
-          }
+        // ドメイン制限チェック
+        const email = firebaseUser.email || "";
+        const isAllowedDomain = email.endsWith('@shibaurafzk.com');
+        const isIndividualAllowed = email === 'kazuki2kr@gmail.com';
+
+        if (!isAllowedDomain && !isIndividualAllowed) {
+          console.warn("Unauthorized domain. Signing out.");
+          await firebaseSignOut(auth);
+          setError('@shibaurafzk.com ドメインのGoogleアカウントでログインしてください。');
+          setUser(null);
+          setIsAdmin(false);
+          setLoading(false);
+          return;
         }
 
         try {
