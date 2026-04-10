@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 
 // Load .env.local for test user credentials and firebase config
 dotenv.config({ path: path.resolve(__dirname, '.env.local') });
+process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR = 'true';
 
 export default defineConfig({
   globalSetup: require.resolve('./tests/e2e/global-setup.ts'),
