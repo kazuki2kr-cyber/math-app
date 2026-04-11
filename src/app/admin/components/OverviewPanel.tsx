@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import { TrendingUp, Users, Target, BookOpen, Crown, AlertOctagon, Award, Clock, Sparkles } from 'lucide-react';
 import type { OverviewMetrics, StudentRank } from '@/lib/analytics';
@@ -107,15 +108,15 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
               <div className="grid grid-cols-2">
                 <div className="border-r p-3">
                   <h4 className="text-[10px] font-bold text-amber-600 mb-2 uppercase tracking-widest flex items-center gap-1">
-                    <Crown className="w-3 h-3" /> TOP 5
+                    <Crown className="w-3 h-3" /> TOP
                   </h4>
-                  <RankingList list={metrics.rankings.top5Accuracy} type="high" showTime icon={<Clock className="w-2.5 h-2.5" />} />
+                  <RankingList list={metrics.rankings.topAccuracy} type="high" showTime icon={<Clock className="w-2.5 h-2.5" />} />
                 </div>
                 <div className="p-3">
                   <h4 className="text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-widest flex items-center gap-1">
                     <AlertOctagon className="w-3 h-3" /> 苦戦傾向
                   </h4>
-                  <RankingList list={metrics.rankings.worst5Accuracy} type="low" showTime />
+                  <RankingList list={metrics.rankings.worstAccuracy} type="low" showTime />
                 </div>
               </div>
             </CardContent>
@@ -126,25 +127,25 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
             <CardHeader className="pb-2 border-b">
               <CardTitle className="text-sm font-black flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-blue-500" />
-                努力家：ベスト累計正解数 ({subjectLabel})
+                努力家：累計正解数ランキング ({subjectLabel})
               </CardTitle>
               <CardDescription className="text-[10px]">
-                各単元のベストスコアに基づく正解数の合計
+                全演習における正解回答数の累計合計
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <div className="grid grid-cols-2">
                 <div className="border-r p-3">
                   <h4 className="text-[10px] font-bold text-blue-600 mb-2 uppercase tracking-widest flex items-center gap-1">
-                    <Crown className="w-3 h-3" /> TOP 5
+                    <Crown className="w-3 h-3" /> TOP
                   </h4>
-                  <RankingList list={metrics.rankings.top5Correct} type="high" />
+                  <RankingList list={metrics.rankings.topCorrect} type="high" />
                 </div>
                 <div className="p-3">
                   <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-widest flex items-center gap-1">
                     <Sparkles className="w-3 h-3" /> これから頑張る生徒
                   </h4>
-                  <RankingList list={metrics.rankings.worst5Correct} type="low" />
+                  <RankingList list={metrics.rankings.worstCorrect} type="low" />
                 </div>
               </div>
             </CardContent>
@@ -256,11 +257,17 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
 }
 
 function RankingList({ list, type, showTime = false, icon }: { list: StudentRank[], type: 'high' | 'low', showTime?: boolean, icon?: React.ReactNode }) {
+  const [limit, setLimit] = useState(5);
+  
   if (!list?.length) return <div className="text-[10px] text-gray-400 py-4 text-center">データなし</div>;
   
+  const visibleList = list.slice(0, limit);
+  // 表示件数が全件数より少ない場合のみボタンを表示
+  const hasMore = list.length > limit;
+
   return (
     <div className="space-y-1">
-      {list.map((item, idx) => (
+      {visibleList.map((item, idx) => (
         <div key={item.uid} className="flex flex-col group py-1 border-b border-gray-50 last:border-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 overflow-hidden">
@@ -289,6 +296,16 @@ function RankingList({ list, type, showTime = false, icon }: { list: StudentRank
           )}
         </div>
       ))}
+      {hasMore && (
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="w-full text-[10px] h-7 mt-2 text-muted-foreground border-dashed"
+          onClick={() => setLimit(p => p + 30)}
+        >
+          もっと見る (+30)
+        </Button>
+      )}
     </div>
   );
 }

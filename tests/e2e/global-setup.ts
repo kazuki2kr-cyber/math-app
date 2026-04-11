@@ -87,44 +87,48 @@ async function globalSetup(config: FullConfig) {
       });
 
       // 2. Seed Scores (User A: 100 on test_unit, 50 on test_unit_2 => 150)
-      await patchDoc(projectId, 'scores', 'test-user-a_test-unit', {
+      await patchDoc(projectId, 'scores', 'test-user-a_test_unit', {
         uid: { stringValue: 'test-user-a' },
         unitId: { stringValue: 'test_unit' },
         userName: { stringValue: 'テスト君A (Seed)' },
         maxScore: { integerValue: 100 },
         bestTime: { integerValue: 10 },
+        totalCorrect: { integerValue: 10 }, // 追加
         icon: { stringValue: '🥇' },
         level: { integerValue: 5 },
         updatedAt: { stringValue: new Date().toISOString() }
       });
-      await patchDoc(projectId, 'scores', 'test-user-a_test-unit-2', {
+      await patchDoc(projectId, 'scores', 'test-user-a_test_unit_2', {
         uid: { stringValue: 'test-user-a' },
         unitId: { stringValue: 'test_unit_2' },
         userName: { stringValue: 'テスト君A (Seed)' },
         maxScore: { integerValue: 50 },
         bestTime: { integerValue: 20 },
+        totalCorrect: { integerValue: 5 }, // 追加
         icon: { stringValue: '🥇' },
         level: { integerValue: 5 },
         updatedAt: { stringValue: new Date().toISOString() }
       });
 
       // 3. Seed Scores (User B: 80 on test_unit, 95 on test_unit_2 => 175)
-      await patchDoc(projectId, 'scores', 'test-user-b_test-unit', {
+      await patchDoc(projectId, 'scores', 'test-user-b_test_unit', {
         uid: { stringValue: 'test-user-b' },
         unitId: { stringValue: 'test_unit' },
         userName: { stringValue: 'テストちゃんB (Seed)' },
         maxScore: { integerValue: 80 },
         bestTime: { integerValue: 15 },
+        totalCorrect: { integerValue: 8 }, // 追加
         icon: { stringValue: '🥈' },
         level: { integerValue: 3 },
         updatedAt: { stringValue: new Date().toISOString() }
       });
-      await patchDoc(projectId, 'scores', 'test-user-b_test-unit-2', {
+      await patchDoc(projectId, 'scores', 'test-user-b_test_unit_2', {
         uid: { stringValue: 'test-user-b' },
         unitId: { stringValue: 'test_unit_2' },
         userName: { stringValue: 'テストちゃんB (Seed)' },
         maxScore: { integerValue: 95 },
         bestTime: { integerValue: 15 },
+        totalCorrect: { integerValue: 9 }, // 追加
         icon: { stringValue: '🥈' },
         level: { integerValue: 3 },
         updatedAt: { stringValue: new Date().toISOString() }

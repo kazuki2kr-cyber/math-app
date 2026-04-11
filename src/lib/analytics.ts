@@ -53,10 +53,10 @@ export interface OverviewMetrics {
     totalAttempts: number;
   }>;
   rankings?: {
-    top5Accuracy: StudentRank[];
-    worst5Accuracy: StudentRank[];
-    top5Correct: StudentRank[];
-    worst5Correct: StudentRank[];
+    topAccuracy: StudentRank[];
+    worstAccuracy: StudentRank[];
+    topCorrect: StudentRank[];
+    worstCorrect: StudentRank[];
   };
 }
 
@@ -282,10 +282,7 @@ export function calculateStudentRankings(
     studentMap[s.uid].unitCount += 1;
     studentMap[s.uid].totalTime += timeVal;
 
-    const unit = units.find(u => u.id === s.unitId);
-    // 実際の出題数は最大 10 問に制限されている (DrillPage 参照) ため、計算上の分母も 10 に揃える
-    const qCount = Math.min(unit?.questions?.length || 10, 10);
-    const solvedCount = Math.round((scoreVal / 100) * qCount);
+    const solvedCount = s.totalCorrect || 0;
     studentMap[s.uid].totalCorrect += solvedCount;
   }
 
@@ -305,7 +302,7 @@ export function calculateStudentRankings(
     });
 
   if (!students.length) {
-     return { top5Accuracy: [], worst5Accuracy: [], top5Correct: [], worst5Correct: [] };
+     return { topAccuracy: [], worstAccuracy: [], topCorrect: [], worstCorrect: [] };
   }
 
   // 1. 実力派ランキング (正答率順)
@@ -314,7 +311,7 @@ export function calculateStudentRankings(
     return a.avgTime - b.avgTime; 
   });
 
-  const top5Acc = sortedByAcc.slice(0, 5).map(s => ({
+  const topAcc = sortedByAcc.map(s => ({
     uid: s.uid, 
     userName: s.userName, 
     value: s.accuracy, 
@@ -322,10 +319,10 @@ export function calculateStudentRankings(
     rankValue: s.avgTime > 0 ? `${Math.round(s.avgTime)}秒/単元` : undefined
   }));
 
-  const worst5Acc = [...students].sort((a, b) => {
+  const worstAcc = [...students].sort((a, b) => {
     if (Math.abs(a.accuracy - b.accuracy) > 0.01) return a.accuracy - b.accuracy;
     return b.avgTime - a.avgTime; 
-  }).slice(0, 5).map(s => ({
+  }).map(s => ({
     uid: s.uid, 
     userName: s.userName, 
     value: s.accuracy, 
@@ -340,7 +337,7 @@ export function calculateStudentRankings(
     return a.avgTime - b.avgTime;
   });
 
-  const top5Count = sortedByCount.slice(0, 5).map(s => ({
+  const topCount = sortedByCount.map(s => ({
     uid: s.uid, 
     userName: s.userName, 
     value: s.correctCount, 
@@ -348,7 +345,7 @@ export function calculateStudentRankings(
     rankValue: `${s.unitCount}単元`
   }));
 
-  const worst5Count = [...sortedByCount].reverse().slice(0, 5).map(s => ({
+  const worstCount = [...sortedByCount].reverse().map(s => ({
     uid: s.uid, 
     userName: s.userName, 
     value: s.correctCount, 
@@ -357,10 +354,10 @@ export function calculateStudentRankings(
   }));
 
   return {
-    top5Accuracy: top5Acc,
-    worst5Accuracy: worst5Acc,
-    top5Correct: top5Count,
-    worst5Correct: worst5Count
+    topAccuracy: topAcc,
+    worstAccuracy: worstAcc,
+    topCorrect: topCount,
+    worstCorrect: worstCount
   };
 }
 

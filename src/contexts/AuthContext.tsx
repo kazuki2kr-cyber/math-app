@@ -165,7 +165,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         await signInWithEmailAndPassword(auth, testEmail, testPass);
       } catch (err: any) {
         if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          await createUserWithEmailAndPassword(auth, testEmail, testPass);
+          try {
+            await createUserWithEmailAndPassword(auth, testEmail, testPass);
+          } catch (createErr: any) {
+            if (createErr.code !== 'auth/email-already-in-use') {
+              throw createErr;
+            }
+            // If already in use, someone else might have created it between our sign-in attempt and create attempt
+            await signInWithEmailAndPassword(auth, testEmail, testPass);
+          }
         } else {
           throw err;
         }

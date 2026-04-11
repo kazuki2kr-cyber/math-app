@@ -27,6 +27,7 @@ export default function RankingPage() {
   const { user } = useAuth();
   
   const [scores, setScores] = useState<ScoreEntry[]>([]);
+  const [showMore, setShowMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [unitTitle, setUnitTitle] = useState(unitId);
 
@@ -48,7 +49,7 @@ export default function RankingPage() {
           collection(db, 'scores'),
           where('unitId', '==', unitId),
           orderBy('maxScore', 'desc'),
-          limit(50)
+          limit(100)
         );
 
         const snap = await getDocs(q);
@@ -62,11 +63,8 @@ export default function RankingPage() {
           return a.bestTime - b.bestTime;
         });
 
-        // Take top 10
-        const top10Data = data.slice(0, 10);
-        
         // Use icon/level directly from scores documents (no users/ access needed)
-        const top10: ScoreEntry[] = top10Data.map(scoreObj => ({
+        const allFetched: ScoreEntry[] = data.map(scoreObj => ({
           uid: scoreObj.uid,
           name: scoreObj.userName || '名無し',
           maxScore: scoreObj.maxScore,
@@ -76,7 +74,7 @@ export default function RankingPage() {
           level: scoreObj.level || 1,
         }));
 
-        setScores(top10);
+        setScores(allFetched);
       } catch (err) {
         console.error("Error fetching ranking:", err);
       } finally {
@@ -103,7 +101,7 @@ export default function RankingPage() {
         <Card className="shadow-lg border-t-4 border-t-amber-400 overflow-hidden bg-white/95">
           <CardHeader className="bg-white rounded-t-lg border-b px-6 py-5">
             <CardTitle className="text-lg flex justify-between items-center text-gray-800">
-              <span className="font-bold flex items-center gap-2">上位10名の記録</span>
+              <span className="font-bold flex items-center gap-2">上位記録</span>
               <span className="text-sm text-muted-foreground font-normal bg-gray-100 px-3 py-1 rounded-full">同点の場合はタイムが短い順</span>
             </CardTitle>
           </CardHeader>
@@ -118,50 +116,20 @@ export default function RankingPage() {
               </div>
             ) : (
               <div className="divide-y">
-                {scores.map((s, index) => {
+                {scores.slice(0, showMore ? 100 : 10).map((s, index) => {
                   const rank = index + 1;
-                  const isCurrentUser = s.uid === user?.uid;
-                  
-                  return (
-                    <div 
-                      key={s.uid} 
-                      className={`flex items-center justify-between p-4 transition-colors ${
-                        isCurrentUser ? 'bg-primary/5 border-l-4 border-primary' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3 sm:space-x-4">
-                        <div className="w-8 sm:w-10 text-center font-bold text-xl flex justify-center flex-shrink-0">
-                          {rank === 1 ? <Medal className="text-yellow-500 w-8 h-8 filter drop-shadow" /> :
-                           rank === 2 ? <Medal className="text-gray-400 w-7 h-7 filter drop-shadow" /> :
-                           rank === 3 ? <Medal className="text-amber-700 w-7 h-7 filter drop-shadow" /> :
-                           <span className="text-muted-foreground">{rank}</span>}
-                        </div>
-                        <div className="text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:block text-center w-10">
-                          {s.icon}
-                        </div>
-                        <div>
-                          <p className="font-bold text-sm sm:text-lg text-gray-800 flex items-center min-w-0">
-                            <span className="text-xl sm:hidden mr-1.5">{s.icon}</span>
-                            <span className="truncate max-w-[120px] sm:max-w-[200px]">{s.name}</span>
-                            {isCurrentUser && <span className="ml-2 text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex-shrink-0">You</span>}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground font-mono font-semibold">Lv.{s.level || 1}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center space-x-6 text-right">
-                        <div>
-                          <p className="text-sm text-muted-foreground mb-1 flex items-center justify-end"><Clock className="w-3 h-3 mr-1"/> タイム</p>
-                          <p className="font-mono">{s.bestTime}秒</p>
-                        </div>
-                        <div className="w-20">
-                          <p className="text-sm text-muted-foreground mb-1">スコア</p>
-                          <p className="font-bold text-xl text-primary">{s.maxScore}</p>
-                        </div>
-                      </div>
-                    </div>
+// ...
                   );
                 })}
+                {scores.length > 10 && !showMore && (
+                  <Button 
+                    variant="ghost" 
+                    className="w-full text-sm h-12 text-muted-foreground hover:bg-amber-50 transition-colors rounded-none"
+                    onClick={() => setShowMore(true)}
+                  >
+                    もっと見る (100位まで)
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>

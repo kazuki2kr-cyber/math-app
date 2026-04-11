@@ -28,6 +28,7 @@ export default function SmartCorrelationPanel({ unitId, questions }: SmartCorrel
   const [showFullMatrix, setShowFullMatrix] = useState(false);
   const [lastComputed, setLastComputed] = useState<string | null>(null);
   const [attemptCount, setAttemptCount] = useState(0);
+  const [showMoreCount, setShowMoreCount] = useState(0);
 
   /**
    * 相関計算 — 既存の computeCorrelation ロジックを完全に踏襲
@@ -163,7 +164,7 @@ export default function SmartCorrelationPanel({ unitId, questions }: SmartCorrel
               </div>
             ) : (
               <div className="space-y-3">
-                {correlationPairs.map((pair, idx) => (
+                {correlationPairs.slice(0, 5 + (showMoreCount || 0)).map((pair, idx) => (
                   <div
                     key={idx}
                     className={`p-4 rounded-lg border flex gap-4 items-start ${
@@ -224,6 +225,16 @@ export default function SmartCorrelationPanel({ unitId, questions }: SmartCorrel
                     </div>
                   </div>
                 ))}
+                {correlationPairs.length > 5 + (showMoreCount || 0) && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full text-[10px] h-7 mt-2 text-muted-foreground border-dashed"
+                    onClick={() => setShowMoreCount(prev => (prev || 0) + 30)}
+                  >
+                    もっと見る (+30)
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>

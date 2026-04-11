@@ -16,11 +16,14 @@ test.describe('Formix Critical Path E2E', () => {
 
     // 初回ログイン時の利用規約同意モーダルが表示された場合は処理する
     const termsCheckbox = page.getByRole('checkbox', { name: /利用規約およびプライバシーポリシーの内容を確認し/ });
+    const agreeBtn = page.getByRole('button', { name: '同意して学習を始める' });
     try {
-      await termsCheckbox.waitFor({ state: 'visible', timeout: 10000 });
-      await termsCheckbox.check({ force: true });
-      await page.getByRole('button', { name: '同意して学習を始める' }).click();
-      await expect(termsCheckbox).toBeHidden({ timeout: 5000 });
+      if (await termsCheckbox.isVisible({ timeout: 5000 })) {
+        await termsCheckbox.click({ force: true });
+        await expect(agreeBtn).toBeEnabled({ timeout: 5000 });
+        await agreeBtn.click();
+        await expect(termsCheckbox).toBeHidden({ timeout: 10000 });
+      }
     } catch (e) {
       // モーダルが出なければそのまま通過
     }

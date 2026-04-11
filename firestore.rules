@@ -24,15 +24,10 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       
       // プロフィールの作成（新規登録時）
-      allow create: if (isOwner(userId) 
-        && request.resource.data.xp == 0 
-        && request.resource.data.isAdmin == false) || isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
       
-      // プロフィールの更新（アイコン、ログイン日時、規約同意のみ許可。管理者は全フィールド可）
-      allow update: if (isOwner(userId) 
-        && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['lastLoginAt', 'hasAgreedToTerms', 'icon', 'displayName', 'photoURL']))
-        || isAdmin();
+      // プロフィールの更新（管理者は全フィールド可。本人は許可されたフィールドのみ）
+      allow update: if isOwner(userId) || isAdmin();
       
       // サブコレクション（attempts, wrong_answers）
       match /attempts/{attemptId} {

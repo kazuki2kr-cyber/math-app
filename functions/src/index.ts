@@ -70,7 +70,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
+  const { attemptId, unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
 
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
   console.log(`[processDrillResult] Data summary: score=${score}, time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
@@ -137,9 +137,26 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const statsRef = db.doc(`units/${unitId}/stats/questions`);
     const wrongDocRef = db.doc(`users/${uid}/wrong_answers/${unitId}`);
     
-    const userSnap = await transaction.get(userRef);
-    const scoreSnap = await transaction.get(scoreRef);
-    const wrongSnap = await transaction.get(wrongDocRef);
+    // Idempotency: attemptIdを使ってすでに記録が存在するか確認
+    const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
+    const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
+
+    const [userSnap, scoreSnap, wrongSnap, attemptSnap] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(scoreRef),
+      transaction.get(wrongDocRef),
+      transaction.get(attemptRef)
+    ]);
+
+    if (attemptSnap.exists) {
+      console.log(`[processDrillResult] Attempt ${attemptDocId} is already processed. Bailing out early.`);
+      return {
+        success: true,
+        alreadyProcessed: true,
+        isHighScore: false,
+        isLevelUp: false
+      };
+    }
 
     let currentXp = 0;
     let currentIcon = "📐";
@@ -195,19 +212,23 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }, { merge: true });
 
     // Score Update (Denormalized)
-    if (isHighScore || isLevelUp) {
-      transaction.set(scoreRef, {
-        uid, userName, unitId,
+    // 努力量ランキング用に totalCorrect (実際の正解数) を毎回加算する
+    // maxScore/bestTime/icon/level はハイスコアまたはレベルアップ時のみ更新
+    transaction.set(scoreRef, {
+      uid, 
+      userName, 
+      unitId,
+      totalCorrect: FieldValue.increment(safeCorrectQuestions.length),
+      updatedAt: dateStr,
+      ...(isHighScore || isLevelUp ? {
         maxScore: isHighScore ? score : (scoreSnap.exists ? scoreSnap.data()?.maxScore : score),
         bestTime: isHighScore ? time : (scoreSnap.exists ? scoreSnap.data()?.bestTime : time),
-        updatedAt: dateStr,
         icon: currentIcon,
         level: newLevel
-      }, { merge: true });
-    }
+      } : {})
+    }, { merge: true });
 
-    // Attempts (Subcollection) - トランザクション内でのaddはリファレンス経由
-    const attemptRef = userRef.collection("attempts").doc();
+    // Attempts (Subcollection) - トランザクション内で事前作成した attemptRef を使用
     transaction.set(attemptRef, {
       unitId, unitTitle, score, time, date: dateStr,
       details: [

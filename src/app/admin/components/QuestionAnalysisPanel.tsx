@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, PieChart, Pie } from 'recharts';
 import { AlertTriangle, CheckCircle, Info, Trophy, Users, Award, Sparkles, Clock } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
@@ -34,9 +35,14 @@ export default function QuestionAnalysisPanel({
     );
   }
 
+  const [topQLimit, setTopQLimit] = useState(5);
+  const [worstQLimit, setWorstQLimit] = useState(5);
+  const [topRankLimit, setTopRankLimit] = useState(5);
+  const [worstRankLimit, setWorstRankLimit] = useState(3);
+
   const sortedByRate = [...attempted].sort((a, b) => b.rate - a.rate);
-  const top5Q = sortedByRate.slice(0, 5);
-  const worst5Q = [...attempted].sort((a, b) => a.rate - b.rate).slice(0, 5);
+  const topQ = sortedByRate;
+  const worstQ = [...attempted].sort((a, b) => a.rate - b.rate);
 
   const COLORS = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e'];
 
@@ -175,14 +181,14 @@ export default function QuestionAnalysisPanel({
               </CardDescription>
             </CardHeader>
             <CardContent className="p-4 flex-1 overflow-y-auto">
-              {rankings?.top5Accuracy && rankings.top5Accuracy.length > 0 ? (
+              {rankings?.topAccuracy && rankings.topAccuracy.length > 0 ? (
                 <div className="space-y-6">
                   <div>
                     <h4 className="text-[10px] font-bold text-indigo-600 mb-2 uppercase tracking-widest flex items-center gap-1">
                       👑 TOP プレイヤー
                     </h4>
                     <div className="space-y-2">
-                      {rankings.top5Accuracy.map((item, idx) => (
+                      {rankings.topAccuracy.slice(0, topRankLimit).map((item, idx) => (
                         <div key={item.uid} className="flex flex-col bg-white p-2 rounded border border-indigo-50 shadow-sm transition-transform hover:scale-[1.02]">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 min-w-0">
@@ -203,16 +209,26 @@ export default function QuestionAnalysisPanel({
                           )}
                         </div>
                       ))}
+                      {rankings.topAccuracy.length > topRankLimit && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="w-full text-[10px] h-7 text-indigo-500/70 hover:text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50"
+                          onClick={() => setTopRankLimit(p => p + 30)}
+                        >
+                          もっと見る (+30)
+                        </Button>
+                      )}
                     </div>
                   </div>
                   
-                  {rankings.worst5Accuracy && rankings.worst5Accuracy.length > 0 && (
+                  {rankings.worstAccuracy && rankings.worstAccuracy.length > 0 && (
                     <div>
                       <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-widest flex items-center gap-1">
                         ⚠️ 苦戦中（低正答率 × 低速）
                       </h4>
                       <div className="space-y-1 opacity-70 bg-white/40 p-2 rounded-lg">
-                        {rankings.worst5Accuracy.slice(0, 3).map((item, idx) => (
+                        {rankings.worstAccuracy.slice(0, worstRankLimit).map((item, idx) => (
                           <div key={item.uid} className="flex items-center justify-between py-1">
                             <span className="text-[10px] text-gray-500 truncate mr-2">{item.userName}</span>
                             <div className="flex flex-col items-end">
@@ -221,6 +237,16 @@ export default function QuestionAnalysisPanel({
                             </div>
                           </div>
                         ))}
+                        {rankings.worstAccuracy.length > worstRankLimit && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="w-full text-[10px] h-6 mt-1 text-gray-400 hover:text-gray-500"
+                            onClick={() => setWorstRankLimit(p => p + 30)}
+                          >
+                            もっと見る (+30)
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -242,13 +268,23 @@ export default function QuestionAnalysisPanel({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-black text-green-700 flex items-center gap-2">
               <CheckCircle className="w-4 h-4" />
-              正答率が良い問題 TOP 5
+              正答率が良い問題
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 space-y-3">
-            {top5Q.map((q, idx) => (
+            {topQ.slice(0, topQLimit).map((q, idx) => (
               <QuestionSimpleCard key={idx} q={q} variant="success" />
             ))}
+            {topQ.length > topQLimit && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full text-xs h-8 text-green-600 border-green-200 border-dashed"
+                onClick={() => setTopQLimit(p => p + 30)}
+              >
+                もっと見る (+30)
+              </Button>
+            )}
           </CardContent>
         </Card>
 
@@ -256,13 +292,23 @@ export default function QuestionAnalysisPanel({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-black text-red-700 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
-              間違いが多い問題 WORST 5
+              間違いが多い問題
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 space-y-3">
-            {worst5Q.map((q, idx) => (
+            {worstQ.slice(0, worstQLimit).map((q, idx) => (
               <QuestionSimpleCard key={idx} q={q} variant="danger" />
             ))}
+            {worstQ.length > worstQLimit && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full text-xs h-8 text-red-600 border-red-200 border-dashed"
+                onClick={() => setWorstQLimit(p => p + 30)}
+              >
+                もっと見る (+30)
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>

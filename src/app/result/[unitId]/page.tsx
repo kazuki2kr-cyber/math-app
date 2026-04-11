@@ -40,6 +40,7 @@ export default function ResultPage() {
   const [saving, setSaving] = useState(true);
   const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
+  const processedRef = React.useRef(false);
 
   useEffect(() => {
     async function processResult() {
@@ -51,8 +52,12 @@ export default function ResultPage() {
         return;
       }
 
-      const parsed: ResultData = JSON.parse(stored);
+      const parsed: ResultData & { attemptId?: string } = JSON.parse(stored);
       setResult(parsed);
+
+      // Prevent double API call without clearing sessionStorage to keep UI stable on refresh
+      if (processedRef.current) return;
+      processedRef.current = true;
 
       try {
         // 1. Call the consolidated Cloud Function
@@ -60,6 +65,7 @@ export default function ResultPage() {
         const process = httpsCallable(functions, 'processDrillResult');
         
         const resultResponse = await process({
+          attemptId: parsed.attemptId,
           unitId,
           unitTitle: parsed.unitTitle,
           score: parsed.score,

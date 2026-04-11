@@ -29,6 +29,9 @@ export default function AdminPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
   const [suspiciousFilter, setSuspiciousFilter] = useState<'red' | 'yellow' | 'all'>('red');
+  const [displayScoresCount, setDisplayScoresCount] = useState(50);
+  const [displayUsersCount, setDisplayUsersCount] = useState(50);
+  const [displaySuspiciousCount, setDisplaySuspiciousCount] = useState(30);
   
   // Analytics
   const [selectedUnitForStats, setSelectedUnitForStats] = useState<string>('');
@@ -586,7 +589,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                 </tr>
               </thead>
               <tbody className="divide-y text-gray-600">
-                {scores.map(s => (
+                {scores.slice(0, displayScoresCount).map(s => (
                   <tr key={s.docId} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 whitespace-nowrap">
                       {s.updatedAt 
@@ -629,6 +632,15 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               </tbody>
             </table>
           </div>
+          {scores.length > displayScoresCount && (
+            <Button 
+              variant="outline" 
+              className="w-full text-xs h-9 text-muted-foreground border-dashed"
+              onClick={() => setDisplayScoresCount(prev => prev + 100)}
+            >
+              もっと見る (+100)
+            </Button>
+          )}
         </div>
       )}
 
@@ -657,7 +669,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                 </tr>
               </thead>
               <tbody className="divide-y text-gray-600">
-                {users.map((u, idx) => {
+                {users.slice(0, displayUsersCount).map((u, idx) => {
                   const lvData = calculateLevelAndProgress(u.xp || 0);
                   const title = getTitleForLevel(lvData.level);
                   const isEditing = editingXp[u.docId] !== undefined;
@@ -668,7 +680,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                       <td className="px-4 py-3 text-xs text-gray-500">{u.email || '-'}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
-                          Lv.{lvData.level}
+                           Lv.{lvData.level}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs font-medium text-amber-700">{title}</td>
@@ -713,6 +725,15 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               </tbody>
             </table>
           </div>
+          {users.length > displayUsersCount && (
+            <Button 
+              variant="outline" 
+              className="w-full text-xs h-9 text-muted-foreground border-dashed"
+              onClick={() => setDisplayUsersCount(prev => prev + 100)}
+            >
+              もっと見る (+100)
+            </Button>
+          )}
         </div>
       )}
 
@@ -809,7 +830,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                       </tr>
                     </thead>
                     <tbody className="divide-y text-gray-700">
-                      {filtered.map((s, idx) => (
+                      {filtered.slice(0, displaySuspiciousCount).map((s, idx) => (
                         <tr key={`${s.docId}-${idx}`} className={`hover:bg-gray-50/50 transition-colors ${s.flag === 'red' ? 'bg-red-50/20' : ''}`}>
                           <td className="px-4 py-4 text-center">
                             <span className={`inline-block px-2 py-1 rounded text-[10px] font-black tracking-tighter uppercase shadow-sm ${s.isServer ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
@@ -884,6 +905,15 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                     </tbody>
                   </table>
                 </div>
+                {filtered.length > displaySuspiciousCount && (
+                  <Button 
+                    variant="outline" 
+                    className="w-full text-xs h-9 text-muted-foreground border-dashed"
+                    onClick={() => setDisplaySuspiciousCount(prev => prev + 50)}
+                  >
+                    もっと見る (+50)
+                  </Button>
+                )}
               </>
             );
           })()}

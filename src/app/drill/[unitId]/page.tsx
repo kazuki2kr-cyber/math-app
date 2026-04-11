@@ -91,7 +91,8 @@ export default function DrillPage() {
           // 2. 各問題の選択肢もシャッフルし、正解インデックスを更新する
           const finalQuestions = shuffledQuestions.map((q) => {
             // 元の正解テキストを保持
-            const correctOptionText = q.options[q.answer_index - 1]; // answer_indexは1-based
+            const currentAnswerIndex = Number(q.answer_index);
+            const correctOptionText = q.options[currentAnswerIndex - 1]; 
             
             // 選択肢をシャッフル
             const optionsWithOriginalObjects = q.options.map(text => ({ text }));
@@ -99,7 +100,8 @@ export default function DrillPage() {
             
             const newOptions = shuffledOptionsObjs.map(obj => obj.text);
             // 新しい正解インデックス（1-based）を探す
-            const newAnswerIndex = newOptions.indexOf(correctOptionText) + 1;
+            const foundIndex = newOptions.indexOf(correctOptionText);
+            const newAnswerIndex = foundIndex !== -1 ? foundIndex + 1 : currentAnswerIndex;
             
             return {
               ...q,
@@ -200,6 +202,7 @@ export default function DrillPage() {
 
       // Save drill results to session storage so result page can pick it up
       const drillResult = {
+        attemptId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2),
         unitId,
         unitTitle: unit.title,
         totalQuestions: unit.questions.length,

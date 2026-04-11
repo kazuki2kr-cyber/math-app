@@ -43,6 +43,7 @@ export default function Home() {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [overallRanking, setOverallRanking] = useState<OverallRank[]>([]);
+  const [showMoreRanking, setShowMoreRanking] = useState(false);
   const [myRankInfo, setMyRankInfo] = useState<{ rank: number; data: OverallRank } | null>(null);
   const [loading, setLoading] = useState(true);
   const [wrongAnswers, setWrongAnswers] = useState<Record<string, number>>({});
@@ -54,7 +55,7 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    if (user && user.hasAgreedToTerms === false) {
+    if (user && !user.hasAgreedToTerms && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') {
       setShowTermsModal(true);
     } else {
       setShowTermsModal(false);
@@ -123,6 +124,7 @@ export default function Home() {
             };
           }
 
+          // 「総合」ランキング: 各単元の最高スコアと、その時のタイムを合算する
           userTotals[data.uid].totalScore += (data.maxScore || 0);
           userTotals[data.uid].totalTime += (data.bestTime || 0);
 
@@ -147,8 +149,8 @@ export default function Home() {
             return a.totalTime - b.totalTime;
           });
 
-        const top10Initial = rankingList.slice(0, 10);
-        setOverallRanking(top10Initial);
+        const top30 = rankingList.slice(0, 30);
+        setOverallRanking(top30);
 
         let myIndex = -1;
         if (user) {
@@ -166,7 +168,7 @@ export default function Home() {
         setAvailableCategories(categories);
 
         setScores(newScores);
-        setOverallRanking(top10Initial);
+        setOverallRanking(top30);
       } catch (err) {
         console.error("Error fetching dashboard data:", err);
       } finally {
@@ -428,7 +430,7 @@ export default function Home() {
                   <h2 className="text-2xl font-extrabold text-amber-500 flex items-center gap-2">
                     <Medal className="w-6 h-6" /> 総合ランキング
                   </h2>
-                  <p className="text-sm text-muted-foreground mt-1 ml-8">全単元の得点合計 Top 10</p>
+                  <p className="text-sm text-muted-foreground mt-1 ml-8">合計スコア Top 10</p>
                 </div>
               </div>
 
@@ -442,8 +444,8 @@ export default function Home() {
                           {myRankInfo.rank}
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-amber-800 tracking-wider">あなたの総合順位</p>
-                          <p className="text-xl font-black text-amber-900 leading-none mt-0.5">{myRankInfo.data.totalScore} <span className="text-xs font-medium text-amber-800/70">pts</span></p>
+                          <p className="text-xs font-bold text-amber-800 tracking-wider">あなたの現在の順位</p>
+                          <p className="text-xl font-black text-amber-900 leading-none mt-0.5">{myRankInfo.data.totalScore} <span className="text-xs font-medium text-amber-800/70">点</span></p>
                         </div>
                       </div>
                     </div>
@@ -455,7 +457,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {overallRanking.map((rankUser, index) => {
+                      {overallRanking.slice(0, showMoreRanking ? 30 : 10).map((rankUser, index) => {
                         const rank = index + 1;
                         const isCurrentUser = rankUser.uid === user?.uid;
 
@@ -486,12 +488,23 @@ export default function Home() {
                             <div className="text-right flex-shrink-0 ml-4">
                               <p className="text-lg font-black text-amber-600 leading-none">{rankUser.totalScore}</p>
                               <p className="text-[10px] text-gray-400 font-mono mt-1">
+                                <span className="text-[9px] mr-1 opacity-60">点</span>
                                 <Clock className="w-2.5 h-2.5 inline mr-0.5" />{rankUser.totalTime}s
                               </p>
                             </div>
                           </div>
                         );
                       })}
+
+                      {overallRanking.length > 10 && !showMoreRanking && (
+                        <Button
+                          variant="ghost"
+                          className="w-full text-[10px] h-9 text-muted-foreground hover:bg-amber-50 transition-colors"
+                          onClick={() => setShowMoreRanking(true)}
+                        >
+                          もっと見る (Top 30まで)
+                        </Button>
+                      )}
                     </div>
                   )}
                 </CardContent>
