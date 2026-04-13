@@ -131,10 +131,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
   try {
     // --- 2. トランザクションによるデータ更新 ---
-    return await db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
     const userRef = db.doc(`users/${uid}`);
     const scoreRef = db.doc(`scores/${uid}_${unitId}`);
     const statsRef = db.doc(`units/${unitId}/stats/questions`);
+    const globalStatsRef = db.doc("stats/global");
     const wrongDocRef = db.doc(`users/${uid}/wrong_answers/${unitId}`);
     
     // Idempotency: attemptIdを使ってすでに記録が存在するか確認
@@ -160,10 +161,12 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     let currentXp = 0;
     let currentIcon = "📐";
+    let currentTotalScore = 0;
     if (userSnap.exists) {
       const uData = userSnap.data();
       currentXp = uData?.xp || 0;
       currentIcon = uData?.icon || "📐";
+      currentTotalScore = uData?.totalScore || 0;
     }
 
     // 2-1. XP / レベル計算
@@ -193,6 +196,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     // 2-2. スコア更新判定 (High Score)
     let isHighScore = false;
+    const existingMaxScore = scoreSnap.exists ? (scoreSnap.data()?.maxScore || 0) : 0;
     if (scoreSnap.exists) {
       const sData = scoreSnap.data();
       if (score > sData?.maxScore || (score === sData?.maxScore && time < sData?.bestTime)) {
@@ -204,12 +208,18 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     // --- 各種書き込み実行 ---
     
-    // User Update (XP)
-    transaction.set(userRef, { 
+    // User Update (XP + totalScore)
+    const userUpdate: any = { 
       xp: newTotalXp,
       updatedAt: dateStr,
       ...(userSnap.exists ? {} : { icon: "📐" })
-    }, { merge: true });
+    };
+    // ハイスコア更新時に totalScore を差分更新
+    if (isHighScore) {
+      const scoreDiff = score - existingMaxScore;
+      userUpdate.totalScore = FieldValue.increment(scoreDiff);
+    }
+    transaction.set(userRef, userUpdate, { merge: true });
 
     // Score Update (Denormalized)
     // 努力量ランキング用に totalCorrect (実際の正解数) を毎回加算する
@@ -229,8 +239,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }, { merge: true });
 
     // Attempts (Subcollection) - トランザクション内で事前作成した attemptRef を使用
+    // TTL用 expireAt: 90日後に自動削除対象
+    const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
     transaction.set(attemptRef, {
       unitId, unitTitle, score, time, date: dateStr,
+      expireAt: Timestamp.fromDate(expireAt),
       details: [
         ...safeCorrectQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
         ...safeWrongQuestions.map((q: any) => ({ qId: q.id, isCorrect: false }))
@@ -259,6 +272,19 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       unitId, wrongQuestionIds: currentWrongs, lastUpdated: dateStr
     }, { merge: true });
 
+    // Global Stats (管理画面用の集計データ)
+    const globalStatsUpdate: any = {
+      totalDrills: FieldValue.increment(1),
+      totalCorrect: FieldValue.increment(safeCorrectQuestions.length),
+      totalAnswered: FieldValue.increment(safeCorrectQuestions.length + safeWrongQuestions.length),
+      updatedAt: dateStr
+    };
+    // 新規参加者（初めてスコアを獲得するユーザー）の場合、カウンターをインクリメント
+    if (isHighScore && currentTotalScore === 0) {
+      globalStatsUpdate.totalParticipants = FieldValue.increment(1);
+    }
+    transaction.set(globalStatsRef, globalStatsUpdate, { merge: true });
+
     return {
       success: true,
       isHighScore,
@@ -266,9 +292,26 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       oldLevel,
       newLevel,
       xpGain: finalXpGain,
-      newTotalXp
+      newTotalXp,
+      // リーダーボード更新に必要な情報を返す
+      _leaderboardUpdate: isHighScore ? { uid, userName, currentIcon, newLevel, newTotalXp } : null
     };
   });
+
+  // --- 3. トランザクション後にリーダーボード更新（非同期・ベストエフォート） ---
+  if (result._leaderboardUpdate) {
+    try {
+      await updateLeaderboard(result._leaderboardUpdate);
+    } catch (leaderboardErr) {
+      console.error("[processDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
+      // リーダーボード更新失敗はユーザーには影響しない
+    }
+  }
+
+  // _leaderboardUpdate はクライアントに返さない
+  const { _leaderboardUpdate, ...clientResult } = result;
+  return clientResult;
+
 } catch (error: any) {
   console.error("[processDrillResult] Transaction failed:", error);
   console.error("[processDrillResult] Stack trace:", error.stack);
@@ -277,7 +320,74 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 });
 
 // ==========================================
-// 3. initializeAdminClaims — 初回セットアップ用
+// 3. updateLeaderboard — リーダーボード更新ヘルパー
+// ==========================================
+async function updateLeaderboard(info: {
+  uid: string;
+  userName: string;
+  currentIcon: string;
+  newLevel: number;
+  newTotalXp: number;
+}) {
+  const leaderboardRef = db.doc("leaderboards/overall");
+
+  // ユーザードキュメントから最新のtotalScoreを取得
+  const userSnap = await db.doc(`users/${info.uid}`).get();
+  const userData = userSnap.data();
+  if (!userData) return;
+
+  const totalScore = userData.totalScore || 0;
+  const xp = userData.xp || 0;
+
+  const leaderboardSnap = await leaderboardRef.get();
+  let rankings: any[] = [];
+
+  if (leaderboardSnap.exists) {
+    rankings = leaderboardSnap.data()?.rankings || [];
+  }
+
+  // 既存エントリを更新 or 新規追加
+  const existingIdx = rankings.findIndex((r: any) => r.uid === info.uid);
+  const entry = {
+    uid: info.uid,
+    name: info.userName,
+    totalScore,
+    xp,
+    icon: info.currentIcon,
+    level: info.newLevel,
+  };
+
+  if (existingIdx >= 0) {
+    rankings[existingIdx] = entry;
+  } else {
+    rankings.push(entry);
+  }
+
+  // ソート: totalScore 降順 → xp 降順
+  rankings.sort((a: any, b: any) => {
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    return b.xp - a.xp;
+  });
+
+  // 上位40名のみ保持
+  rankings = rankings.slice(0, 40);
+
+
+  // 参加者数を stats/global カウンターから取得（全ユーザー走査を回避）
+  const globalStatsSnap = await db.doc("stats/global").get();
+  const totalParticipants = globalStatsSnap.exists ? (globalStatsSnap.data()?.totalParticipants || rankings.length) : rankings.length;
+
+  await leaderboardRef.set({
+    rankings,
+    totalParticipants,
+    updatedAt: new Date().toISOString(),
+  });
+
+  console.log(`[updateLeaderboard] Updated: ${rankings.length} entries, ${totalParticipants} total participants`);
+}
+
+// ==========================================
+// initializeAdminClaims — 初回セットアップ用
 // (セキュリティ向上のため削除済み)
 // ==========================================
 

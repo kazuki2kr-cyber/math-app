@@ -248,8 +248,8 @@ export function calculateStudentRankings(
 ): NonNullable<OverviewMetrics['rankings']> {
   if (!scores.length) {
     return {
-      top5Accuracy: [], worst5Accuracy: [],
-      top5Correct: [], worst5Correct: []
+      topAccuracy: [], worstAccuracy: [],
+      topCorrect: [], worstCorrect: []
     };
   }
 

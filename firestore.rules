@@ -48,7 +48,27 @@ service cloud.firestore {
 
     // ── CollectionGroup query for stats（管理者分析用） ──
     match /{path=**}/stats/{docId} {
+      allow read: if isAdmin();
+    }
+
+    // ------------------------------------------
+    // リーダーボード（集計済みランキング）
+    // - 認証済みユーザーは閲覧可能
+    // - 書き込みは Cloud Functions (Admin SDK) からのみ
+    // ------------------------------------------
+    match /leaderboards/{docId} {
       allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ------------------------------------------
+    // グローバル統計（管理画面用）
+    // - 管理者のみ読み取り可能
+    // - 書き込みは Cloud Functions (Admin SDK) からのみ
+    // ------------------------------------------
+    match /stats/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // ------------------------------------------
