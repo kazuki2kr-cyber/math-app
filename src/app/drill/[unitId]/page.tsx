@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
@@ -24,7 +24,7 @@ interface Question {
 interface Unit {
   id: string;
   title: string;
-  questions: Question[];
+  questions?: Question[];
 }
 
 export default function DrillPage() {
@@ -56,19 +56,26 @@ export default function DrillPage() {
         const snap = await getDoc(doc(db, 'units', unitId));
         if (snap.exists()) {
           const rawUnit = snap.data() as Unit;
-          rawUnit.questions = rawUnit.questions.map(q => ({
+
+          let fetchedQuestions: Question[] = rawUnit.questions || [];
+          if (!rawUnit.questions || rawUnit.questions.length === 0) {
+            const qSnap = await getDocs(query(collection(db, 'units', unitId, 'questions'), orderBy('order', 'asc')));
+            fetchedQuestions = qSnap.docs.map(d => d.data() as Question);
+          }
+
+          rawUnit.questions = fetchedQuestions.map(q => ({
             ...q,
-            options: parseOptions(q.options)
+            options: parseOptions(q.options as unknown as string)
           }));
           
           let filteredQuestions = [...rawUnit.questions];
           const mode = new URLSearchParams(window.location.search).get('mode');
           
           if (mode === 'wrong' && user) {
-            const wrongDocRef = doc(db, 'users', user.uid, 'wrong_answers', unitId);
-            const wrongSnap = await getDoc(wrongDocRef);
-            if (wrongSnap.exists() && wrongSnap.data().wrongQuestionIds) {
-              const wrongIds = wrongSnap.data().wrongQuestionIds;
+            const userDocRef = doc(db, 'users', user.uid);
+            const userSnap = await getDoc(userDocRef);
+            if (userSnap.exists() && userSnap.data().unitStats && userSnap.data().unitStats[unitId]) {
+              const wrongIds = userSnap.data().unitStats[unitId].wrongQuestionIds || [];
               filteredQuestions = filteredQuestions.filter(q => wrongIds.includes(q.id));
               if (filteredQuestions.length === 0) {
                  setError('間違えた問題がありません。復習完了です！');

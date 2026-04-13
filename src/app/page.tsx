@@ -14,7 +14,8 @@ import { setDoc } from 'firebase/firestore';
 interface Unit {
   id: string;
   title: string;
-  questions: any[];
+  questions?: any[]; 
+  totalQuestions?: number;
   category?: string;
   subject?: string;
 }
@@ -68,47 +69,64 @@ export default function Home() {
     async function fetchData() {
       if (!user) return;
       try {
-        // 1. Fetch units
-        const unitsSnap = await getDocs(collection(db, 'units'));
-        const unitsData = unitsSnap.docs.map(doc => doc.data() as Unit);
-
-        // 2. Fetch user's best scores in a single query (instead of N individual reads)
-        const newScores: Record<string, Score> = {};
-        const scoresQuery = query(collection(db, 'scores'), where('uid', '==', user.uid));
-        const scoresSnap = await getDocs(scoresQuery);
-        scoresSnap.forEach(scoreDoc => {
-          const data = scoreDoc.data();
-          if (data.unitId) {
-            newScores[data.unitId] = data as Score;
+        // 1. Fetch units with caching
+        const CACHE_KEY = 'math_units_cache';
+        const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day
+        const cachedUnits = localStorage.getItem(CACHE_KEY);
+        let unitsData: Unit[] = [];
+        
+        if (cachedUnits) {
+          try {
+            const parsed = JSON.parse(cachedUnits);
+            if (Date.now() - parsed.timestamp < CACHE_EXPIRY) {
+              unitsData = parsed.data;
+            }
+          } catch (e) {
+            console.error('Failed to parse units cache', e);
           }
-        });
+        }
+        
+        if (unitsData.length === 0) {
+          const unitsSnap = await getDocs(collection(db, 'units'));
+          unitsData = unitsSnap.docs.map(doc => doc.data() as Unit);
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
+        }
+
+        // 2 & 3. Fetch user's stats and extract scores / wrong answers
+        const newScores: Record<string, Score> = {};
+        const newWrongAnswers: Record<string, number> = {};
 
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const ud = userSnap.data();
-          const currentXp = ud.xp || 0;
-          const { level, progressPercent } = calculateLevelAndProgress(currentXp);
+          
+          if (ud.unitStats) {
+            Object.keys(ud.unitStats).forEach(unitId => {
+              const stat = ud.unitStats[unitId];
+              if (stat.maxScore !== undefined) {
+                newScores[unitId] = {
+                  unitId,
+                  maxScore: stat.maxScore,
+                  bestTime: stat.bestTime || Infinity,
+                };
+              }
+              if (stat.wrongQuestionIds && stat.wrongQuestionIds.length > 0) {
+                newWrongAnswers[unitId] = stat.wrongQuestionIds.length;
+              }
+            });
+          }
+
           setUserData({
-            xp: currentXp,
+            xp: ud.xp || 0,
             icon: ud.icon || '📐',
-            title: getTitleForLevel(level),
-            level: level,
-            progress: progressPercent
+            title: ud.title || '算数卒業生',
+            level: ud.level || 1,
+            progress: ud.progressPercent !== undefined ? ud.progressPercent : calculateLevelAndProgress(ud.xp || 0).progressPercent
           });
         }
 
-        // 3. Fetch wrong answers
-        const wrongSnap = await getDocs(collection(db, 'users', user.uid, 'wrong_answers'));
-        const newWrongAnswers: Record<string, number> = {};
-        wrongSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.wrongQuestionIds && data.wrongQuestionIds.length > 0) {
-            newWrongAnswers[docSnap.id] = data.wrongQuestionIds.length;
-          }
-        });
         setWrongAnswers(newWrongAnswers);
-
         setUnits(unitsData);
 
         // Extract available categories

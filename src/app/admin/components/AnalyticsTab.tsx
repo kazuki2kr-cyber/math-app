@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { collection, query, orderBy, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import OverviewPanel from './OverviewPanel';
 import QuestionAnalysisPanel from './QuestionAnalysisPanel';
 import SmartCorrelationPanel from './SmartCorrelationPanel';
@@ -33,6 +35,25 @@ export default function AnalyticsTab({
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('overview');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [unitQuestionsData, setUnitQuestionsData] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!selectedUnitForStats) {
+      setUnitQuestionsData([]);
+      return;
+    }
+    
+    const fetchQuestions = async () => {
+      try {
+        const qSnap = await getDocs(query(collection(db, 'units', selectedUnitForStats, 'questions'), orderBy('order', 'asc')));
+        const qList = qSnap.docs.map(doc => doc.data());
+        setUnitQuestionsData(qList);
+      } catch (e) {
+        console.error("Failed to load questions", e);
+      }
+    };
+    fetchQuestions();
+  }, [selectedUnitForStats]);
 
   // 利用可能な教科リストの抽出
   const subjects = useMemo(() => {
@@ -99,9 +120,9 @@ export default function AnalyticsTab({
 
   // 選択中の単元の問題統計
   const questionStats = useMemo(() => {
-    if (!selectedUnitData?.stats || !selectedUnitData?.questions) return [];
-    return buildQuestionStats(selectedUnitData.questions, selectedUnitData.stats);
-  }, [selectedUnitData]);
+    if (!selectedUnitData?.stats || unitQuestionsData.length === 0) return [];
+    return buildQuestionStats(unitQuestionsData, selectedUnitData.stats);
+  }, [selectedUnitData, unitQuestionsData]);
 
   // 選択中の単元のランキング
   const unitRankings = useMemo(() => {

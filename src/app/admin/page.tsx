@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,9 @@ export default function AdminPage() {
   
   const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles' | 'changelog'>('roles');
   const [units, setUnits] = useState<any[]>([]);
-  const [scores, setScores] = useState<any[]>([]);
+  const [scores, setScores] = useState<any[]>([]); // holds attempts now
+  const [lastAttemptDoc, setLastAttemptDoc] = useState<any>(null);
+  const [hasMoreAttempts, setHasMoreAttempts] = useState(true);
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
@@ -110,39 +112,52 @@ export default function AdminPage() {
   // NOTE: fetchUnitStats, calculatePhi, computeCorrelation は
   // AnalyticsTab / SmartCorrelationPanel に移動済み
 
-  const fetchScores = async () => {
+  const fetchScores = async (loadMore = false) => {
     if (!isAdmin) return;
     setLoading(true);
     setMessage('');
     try {
-      // 全件取得を避け、最新1000件に制限
-      const scoreQuery = query(
-        collection(db, 'scores'),
-        orderBy('updatedAt', 'desc'),
-        limit(1000)
+      let attemptQuery = query(
+        collectionGroup(db, 'attempts'),
+        orderBy('date', 'desc'),
+        limit(50)
       );
-      const snap = await getDocs(scoreQuery);
-      const arr: any[] = [];
-      snap.forEach(d => {
-        const data = d.data();
-        if (data) {
-          arr.push({ docId: d.id, ...data });
-        }
-      });
-      arr.sort((a,b) => {
-        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt?.toMillis?.() || 0);
-        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt?.toMillis?.() || 0);
-        return timeB - timeA;
-      });
-      setScores(arr);
 
-      try {
-        const suspiciousSnap = await getDocs(collection(db, 'suspicious_activities'));
-        const sArr: any[] = [];
-        suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
-        setSuspiciousActivities(sArr);
-      } catch (err: any) {
-        console.warn('Suspicious activities could not be fetched (expected if claims not synced):', err);
+      if (loadMore && lastAttemptDoc) {
+        attemptQuery = query(
+          collectionGroup(db, 'attempts'),
+          orderBy('date', 'desc'),
+          startAfter(lastAttemptDoc),
+          limit(50)
+        );
+      }
+
+      const snap = await getDocs(attemptQuery);
+      if (snap.empty) {
+        setHasMoreAttempts(false);
+      } else {
+        setLastAttemptDoc(snap.docs[snap.docs.length - 1]);
+        const arr: any[] = loadMore ? [...scores] : [];
+        snap.forEach(d => {
+          const data = d.data();
+          if (data) {
+            arr.push({ docId: d.id, ...data });
+          }
+        });
+        setScores(arr);
+        if (snap.docs.length < 50) setHasMoreAttempts(false);
+        else setHasMoreAttempts(true);
+      }
+
+      if (!loadMore) {
+        try {
+          const suspiciousSnap = await getDocs(query(collection(db, 'suspicious_activities'), orderBy('timestamp', 'desc'), limit(100)));
+          const sArr: any[] = [];
+          suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
+          setSuspiciousActivities(sArr);
+        } catch (err: any) {
+          console.warn('Suspicious activities could not be fetched:', err);
+        }
       }
     } catch (e: any) {
       console.error(e);
@@ -218,30 +233,17 @@ export default function AdminPage() {
     setLoading(false);
   };
 
-  const handleDeleteScore = async (docId: string) => {
-    if (!window.confirm('この得点データを削除しますか？')) return;
+  const handleDeleteScore = async (s: any) => {
+    if (!window.confirm('この得点データ(Attempt)を削除しますか？')) return;
     setLoading(true);
     try {
-      await deleteDoc(doc(db, 'scores', docId));
-      setScores(scores.filter(s => s.docId !== docId));
+      if (!s.uid || !s.docId) throw new Error("Missing uid or docId");
+      await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
+      setScores(scores.filter(score => score.docId !== s.docId));
       setMessage('得点データを削除しました。');
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
-    }
-    setLoading(false);
-  };
-
-  const handleIgnoreFraud = async (docId: string) => {
-    if (!window.confirm('この記録を問題なしとして非表示にしますか？')) return;
-    setLoading(true);
-    try {
-      await updateDoc(doc(db, 'scores', docId), { ignoreFraud: true });
-      setScores(scores.map(s => s.docId === docId ? { ...s, ignoreFraud: true } : s));
-      setMessage('記録を問題なしとして処理しました。');
-    } catch (e) {
-      console.error(e);
-      setMessage('更新エラーが発生しました。');
     }
     setLoading(false);
   };
@@ -261,7 +263,7 @@ export default function AdminPage() {
           const data = results.data as any[];
           setMessage(`解析完了. ${data.length}件のレコードを処理しています...`);
 
-          const unitsMap: Record<string, any> = {};
+          const unitsMap: Record<string, { unitDoc: any, questions: any[] }> = {};
 
           data.forEach((row, index) => {
             const { unit_id, question_text, options, answer_index, explanation, image_url, category } = row;
@@ -269,34 +271,44 @@ export default function AdminPage() {
 
             if (!unitsMap[unit_id]) {
               unitsMap[unit_id] = { 
-                id: unit_id, 
-                title: `単元 ${unit_id}`, 
-                questions: [],
-                subject: importSubject === 'math' ? '数学' : importSubject === 'english' ? '英語' : importSubject,
-                category: category || '1.正の数と負の数'
+                unitDoc: {
+                  id: unit_id, 
+                  title: `単元 ${unit_id}`, 
+                  subject: importSubject === 'math' ? '数学' : importSubject === 'english' ? '英語' : importSubject,
+                  category: category || '1.正の数と負の数',
+                  totalQuestions: 0
+                },
+                questions: []
               };
             }
 
             unitsMap[unit_id].questions.push({
               id: `q_${index}`,
+              order: unitsMap[unit_id].questions.length,
               question_text: question_text || '',
               options: parseOptions(options),
               answer_index: parseInt(answer_index) || 1,
               explanation: explanation || '',
               image_url: image_url || null,
             });
+            unitsMap[unit_id].unitDoc.totalQuestions = unitsMap[unit_id].questions.length;
           });
 
-          const batch = writeBatch(db);
-          let count = 0;
-          Object.values(unitsMap).forEach((unit) => {
-            const unitRef = doc(db, 'units', unit.id);
-            batch.set(unitRef, unit, { merge: true });
-            count++;
+          const writes: Array<{ ref: any, data: any }> = [];
+          Object.values(unitsMap).forEach((u) => {
+            writes.push({ ref: doc(db, 'units', u.unitDoc.id), data: u.unitDoc });
+            u.questions.forEach(q => {
+              writes.push({ ref: doc(collection(db, 'units', u.unitDoc.id, 'questions'), q.id), data: q });
+            });
           });
 
-          await batch.commit();
-          setMessage(`完了: ${count} 個の単元データをFirestoreに保存しました。`);
+          for (let i = 0; i < writes.length; i += 400) {
+            const batch = writeBatch(db);
+            writes.slice(i, i + 400).forEach(w => batch.set(w.ref, w.data, { merge: true }));
+            await batch.commit();
+          }
+
+          setMessage(`完了: ${Object.keys(unitsMap).length} 個の単元データと ${writes.length - Object.keys(unitsMap).length} 問の問題を保存しました。`);
         } catch (err: any) {
           console.error("Firestore Upload Error", err);
           setMessage(`エラー: ${err.message}`);
@@ -570,8 +582,8 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
       {activeTab === 'scores' && (
         <div className="space-y-4 mt-4">
           <div className="flex justify-between items-center border-b pb-2">
-             <p className="text-sm text-gray-500">総プレイデータ数: {scores.length}</p>
-             <Button variant="outline" size="sm" onClick={fetchScores} disabled={loading}>
+             <p className="text-sm text-gray-500">総プレイデータ（Attempts）</p>
+             <Button variant="outline" size="sm" onClick={() => fetchScores(false)} disabled={loading}>
               <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
             </Button>
           </div>
@@ -589,18 +601,12 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                 </tr>
               </thead>
               <tbody className="divide-y text-gray-600">
-                {scores.slice(0, displayScoresCount).map(s => (
+                {scores.map(s => (
                   <tr key={s.docId} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 whitespace-nowrap">
-                      {s.updatedAt 
-                        ? new Date(s.updatedAt).toLocaleString() 
-                        : (s.createdAt?.toDate 
-                            ? s.createdAt.toDate().toLocaleString() 
-                            : (typeof s.createdAt === 'string' || typeof s.createdAt === 'number' 
-                                ? new Date(s.createdAt).toLocaleString() 
-                                : '-'))}
+                      {s.date ? new Date(s.date).toLocaleString() : '-'}
                     </td>
-                    <td className="px-4 py-3">{s.userName || s.uid || s.userId || '-'}</td>
+                    <td className="px-4 py-3">{s.userName || s.uid || '-'}</td>
                     <td className="px-4 py-3 font-medium text-primary">{s.unitId}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-1 rounded-full text-xs font-bold ${(s.maxScore ?? s.score ?? 0) >= 80 ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>
@@ -744,9 +750,9 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
             // 1. クライアント側（解答時間）での検知
             const QUESTIONS_PER_DRILL = 10;
             const suspiciousScores = scores
-              .filter(s => s.bestTime != null && s.bestTime > 0 && !s.ignoreFraud)
+              .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
               .map(s => {
-                const avgPerQ = s.bestTime / QUESTIONS_PER_DRILL;
+                const avgPerQ = s.time / QUESTIONS_PER_DRILL;
                 let flag: 'red' | 'yellow' | 'green' = 'green';
                 if (avgPerQ <= 3) flag = 'red';
                 else if (avgPerQ <= 5) flag = 'yellow';
@@ -755,7 +761,8 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                   avgPerQ, 
                   flag,
                   isServer: false,
-                  updatedAtTime: s.updatedAt ? new Date(s.updatedAt).getTime() : 0
+                  updatedAtTime: s.date ? new Date(s.date).getTime() : 0,
+                  updatedAt: s.date ? new Date(s.date).toISOString() : new Date().toISOString()
                 };
               });
 
@@ -771,8 +778,8 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               isServer: true,
               flag: 'red' as const, // サーバー検知は重要度高
               avgPerQ: 0,
-              bestTime: 0,
-              maxScore: 0
+              time: 0,
+              score: 0
             }));
 
             // 3. 統合
@@ -812,7 +819,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                       <option value="yellow">⚠️ 要注意以上 (≤5s)</option>
                       <option value="all">全件表示</option>
                     </select>
-                    <Button variant="outline" size="sm" onClick={fetchScores} disabled={loading} className="shadow-sm">
+                    <Button variant="outline" size="sm" onClick={() => fetchScores(false)} disabled={loading} className="shadow-sm">
                       <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> 更新
                     </Button>
                   </div>
@@ -863,7 +870,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                                 </div>
                                 <div className="border-l pl-3">
                                   <p className="text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">実績</p>
-                                  <p className="text-xs font-mono">{s.bestTime}s / {s.maxScore}点</p>
+                                  <p className="text-xs font-mono">{s.time}s / {s.score}点</p>
                                 </div>
                               </div>
                             )}
@@ -886,7 +893,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                                   variant="ghost" 
                                   size="sm" 
                                   className="h-7 text-[10px] font-bold text-red-500 hover:bg-red-50 px-2"
-                                  onClick={() => handleDeleteScore(s.docId)}
+                                  onClick={() => handleDeleteScore(s)}
                                 >
                                   削除
                                 </Button>

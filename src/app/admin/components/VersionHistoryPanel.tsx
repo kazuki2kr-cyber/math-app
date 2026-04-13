@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, limit, getDocs, doc, setDoc, addDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, doc, setDoc, addDoc, deleteDoc, Timestamp, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -128,6 +128,55 @@ export function VersionHistoryPanel() {
       case 'patch': return 'bg-green-100 text-green-700 border-green-200';
       case 'hotfix': return 'bg-red-100 text-red-700 border-red-200';
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
+    }
+  };
+
+  const handleMigration = async () => {
+    if (!window.confirm('全テストデータのquestionsプロパティを抽出し、サブコレクションへ移行します。よろしいですか？')) return;
+    
+    setSaving(true);
+    try {
+      const dbSnap = await getDocs(collection(db, 'units'));
+      const writes: Array<{ ref: any, data: any, type: string }> = [];
+
+      dbSnap.forEach(uDoc => {
+        const u = uDoc.data();
+        if (u.questions && Array.isArray(u.questions) && u.questions.length > 0) {
+          
+          u.questions.forEach((q: any, i: number) => {
+             writes.push({ 
+               type: 'set',
+               ref: doc(collection(db, 'units', uDoc.id, 'questions'), q.id || `q_${i}`), 
+               data: { ...q, order: q.order ?? i } 
+             });
+          });
+
+          // Delete `questions` from the unit Doc and set `totalQuestions`
+          writes.push({ 
+            type: 'set',
+            ref: doc(db, 'units', uDoc.id), 
+            data: { _legacy_questions: u.questions, totalQuestions: u.questions.length, questions: null } 
+          });
+        }
+      });
+
+      if (writes.length === 0) {
+        alert('移行するデータが見つかりませんでした (既に移行済み、またはデータがありません)。');
+        return;
+      }
+
+      for (let i = 0; i < writes.length; i += 400) {
+        const batch = writeBatch(db);
+        writes.slice(i, i + 400).forEach(w => batch.set(w.ref, w.data, { merge: true }));
+        await batch.commit();
+      }
+
+      alert(`マイグレーションが完了しました。(${writes.length}件の書き込み)`);
+    } catch (err) {
+      console.error('Migration failed:', err);
+      alert('マイグレーションに失敗しました。');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -320,6 +369,24 @@ export function VersionHistoryPanel() {
           )
         )}
       </div>
+
+      <Card className="border-red-200 shadow-sm bg-red-50/30 mt-12">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-md text-red-700 flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5" />
+            開発者向け機能
+          </CardTitle>
+          <CardDescription>
+            既存の問題データを最適化するマイグレーションスクリプト。1度だけ実行してください。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-100" onClick={handleMigration} disabled={saving}>
+             {saving ? '処理中...' : '問題データのサブコレクション化マイグレーションを実行'}
+          </Button>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

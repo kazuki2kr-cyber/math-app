@@ -160,7 +160,7 @@ export function classifyDifficulty(rate: number): QuestionStat['difficulty'] {
 // ============================================
 
 export function calculateOverviewFromStats(
-  units: Array<{ id: string; title: string; questions: any[] }>,
+  units: Array<{ id: string; title: string; questions?: any[] }>,
   allStats: Record<string, any>
 ): OverviewMetrics {
   let totalAttempts = 0;
@@ -175,10 +175,15 @@ export function calculateOverviewFromStats(
     let unitTotal = 0;
     let unitCorrect = 0;
 
-    for (const q of unit.questions) {
-      const { total, correct } = getQuestionStatValue(stats, q.id);
-      unitTotal += total;
-      unitCorrect += correct;
+    for (const [key, value] of Object.entries(stats)) {
+      if (typeof value === 'object' && value !== null) {
+        if ('total' in value) unitTotal += Number(value.total) || 0;
+        if ('correct' in value) unitCorrect += Number(value.correct) || 0;
+      } else if (key.endsWith('.total')) {
+        unitTotal += Number(value) || 0;
+      } else if (key.endsWith('.correct')) {
+        unitCorrect += Number(value) || 0;
+      }
     }
 
     if (unitTotal > 0) {
@@ -208,7 +213,7 @@ export function calculateOverviewFromStats(
  * 分野（分野）別の集計データを算出する
  */
 export function calculateCategoryAccuracies(
-  units: Array<{ id: string; category?: string; questions: any[] }>,
+  units: Array<{ id: string; category?: string; questions?: any[] }>,
   allStats: Record<string, any>
 ): OverviewMetrics['categoryAccuracies'] {
   const catMap: Record<string, { total: number; correct: number }> = {};
@@ -220,11 +225,22 @@ export function calculateCategoryAccuracies(
     const catName = unit.category || 'その他';
     if (!catMap[catName]) catMap[catName] = { total: 0, correct: 0 };
 
-    for (const q of unit.questions) {
-      const { total, correct } = getQuestionStatValue(stats, q.id);
-      catMap[catName].total += total;
-      catMap[catName].correct += correct;
+    let unitTotal = 0;
+    let unitCorrect = 0;
+
+    for (const [key, value] of Object.entries(stats)) {
+      if (typeof value === 'object' && value !== null) {
+        if ('total' in value) unitTotal += Number(value.total) || 0;
+        if ('correct' in value) unitCorrect += Number(value.correct) || 0;
+      } else if (key.endsWith('.total')) {
+        unitTotal += Number(value) || 0;
+      } else if (key.endsWith('.correct')) {
+        unitCorrect += Number(value) || 0;
+      }
     }
+
+    catMap[catName].total += unitTotal;
+    catMap[catName].correct += unitCorrect;
   }
 
   const results = Object.entries(catMap)
