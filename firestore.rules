@@ -89,6 +89,11 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
       
+      match /questions/{qId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
       match /stats/{docId} {
         allow read: if isAuthenticated();
         // admin 以外は Cloud Functions 経由で間接的に更新
