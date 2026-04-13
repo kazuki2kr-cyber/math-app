@@ -137,7 +137,7 @@ export default function DrillPage() {
 
   useEffect(() => {
     // Start interval
-    if (unit && currentIndex < unit.questions.length) {
+    if (unit && unit.questions && currentIndex < unit.questions.length) {
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startTime) / 1000));
       }, 1000);
@@ -154,7 +154,8 @@ export default function DrillPage() {
   const handleNext = () => {
     if (selectedOption === null || !unit) return;
 
-    const currentQ = unit.questions[currentIndex];
+    const questions = unit.questions || [];
+    const currentQ = questions[currentIndex];
     // answer_index is 1-based in CSV
     const isCorrect = selectedOption + 1 === currentQ.answer_index;
 
@@ -166,7 +167,7 @@ export default function DrillPage() {
       setWrongQuestions(prev => [...prev, { ...currentQ, user_selected_index: selectedOption + 1 }]);
     }
 
-    if (currentIndex < unit.questions.length - 1) {
+    if (currentIndex < (unit.questions?.length || 0) - 1) {
       // Go to next question
       setSelectedOption(null);
       setCurrentIndex(currentIndex + 1);
@@ -179,7 +180,7 @@ export default function DrillPage() {
       const newCorrect = isCorrect ? [...correctQuestions, currentQ] : correctQuestions;
       const newWrong = !isCorrect ? [...wrongQuestions, { ...currentQ, user_selected_index: selectedOption + 1 }] : wrongQuestions;
       
-      const finalScore = Math.floor((newCorrect.length / unit.questions.length) * 100);
+      const finalScore = Math.floor((newCorrect.length / (unit.questions?.length || 1)) * 100);
 
       // XP Calculation
       let baseTotal = 0;
@@ -196,7 +197,7 @@ export default function DrillPage() {
         }
       });
 
-      const correctRatio = newCorrect.length / unit.questions.length;
+      const correctRatio = newCorrect.length / (unit.questions?.length || 1);
       let multiplier = 0;
       if (correctRatio === 1) multiplier = 1.5;
       else if (correctRatio >= 0.7) multiplier = 1.0;
@@ -212,7 +213,7 @@ export default function DrillPage() {
         attemptId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2),
         unitId,
         unitTitle: unit.title,
-        totalQuestions: unit.questions.length,
+        totalQuestions: unit.questions?.length || 0,
         score: finalScore,
         time: finalTime,
         correctQuestions: newCorrect,
@@ -245,7 +246,7 @@ export default function DrillPage() {
     );
   }
 
-  if (error || !unit || unit.questions.length === 0) {
+  if (error || !unit || !unit.questions || unit.questions.length === 0) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
         <p className="text-destructive mb-4">{error || '問題データがありません。'}</p>
@@ -254,9 +255,10 @@ export default function DrillPage() {
     );
   }
 
-  const currentQ = unit.questions[currentIndex];
+  const questions = unit.questions || [];
+  const currentQ = questions[currentIndex];
   // Calculate progress safely
-  const progressPercent = ((currentIndex) / unit.questions.length) * 100;
+  const progressPercent = ((currentIndex) / (questions.length || 1)) * 100;
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">
@@ -286,7 +288,7 @@ export default function DrillPage() {
           <div className="h-2 w-full bg-primary/80"></div>
           <CardHeader className="px-8 pt-8 pb-4">
             <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
-              Question {currentIndex + 1} <span className="opacity-50 mx-1">/</span> {unit.questions.length}
+              Question {currentIndex + 1} <span className="opacity-50 mx-1">/</span> {unit.questions?.length || 0}
             </CardDescription>
             <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
               <MathDisplay math={currentQ.question_text} />
@@ -333,7 +335,7 @@ export default function DrillPage() {
               onClick={handleNext}
               className="px-10 h-14 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
             >
-              {currentIndex < unit.questions.length - 1 ? '次の問題へ' : '演習を完了する'}
+              {currentIndex < (unit.questions?.length || 0) - 1 ? '次の問題へ' : '演習を完了する'}
               <ArrowRight className="w-6 h-6 ml-3" />
             </Button>
           </CardFooter>
