@@ -34,6 +34,7 @@ export default function AdminPage() {
   const [displayScoresCount, setDisplayScoresCount] = useState(50);
   const [displayUsersCount, setDisplayUsersCount] = useState(50);
   const [displaySuspiciousCount, setDisplaySuspiciousCount] = useState(30);
+  const [selectedScoreIds, setSelectedScoreIds] = useState<Set<string>>(new Set());
   
   // Analytics
   const [selectedUnitForStats, setSelectedUnitForStats] = useState<string>('');
@@ -96,9 +97,15 @@ export default function AdminPage() {
         }
       });
 
-      const arr = unitsArray.map(unit => ({
-        ...unit,
-        stats: statsMap[unit.id] || null
+      const arr = await Promise.all(unitsArray.map(async unit => {
+        // 各単元の問題をサブコレクションから取得
+        const qSnap = await getDocs(collection(db, 'units', unit.id, 'questions'));
+        const questions = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        return {
+          ...unit,
+          questions,
+          stats: statsMap[unit.id] || null
+        };
       }));
 
       setUnits(arr);
@@ -220,11 +227,22 @@ export default function AdminPage() {
     if (!window.confirm(`問題を削除しますか？`)) return;
     setLoading(true);
     try {
+      // サブコレクションからドキュメントを削除
+      await deleteDoc(doc(db, 'units', unitId, 'questions', qId));
+      
+      // 単元の totalQuestions をデクリメント
+      const unitRef = doc(db, 'units', unitId);
       const unit = units.find(u => u.id === unitId);
-      if (!unit) return;
-      const newQuestions = unit.questions.filter((q:any) => q.id !== qId);
-      await updateDoc(doc(db, 'units', unitId), { questions: newQuestions });
-      setUnits(units.map(u => u.id === unitId ? { ...u, questions: newQuestions } : u));
+      const newTotal = Math.max(0, (unit?.totalQuestions || 0) - 1);
+      await updateDoc(unitRef, { totalQuestions: newTotal });
+      
+      // ローカルステートを更新
+      setUnits(units.map(u => 
+        u.id === unitId 
+          ? { ...u, totalQuestions: newTotal, questions: u.questions.filter((q: any) => q.id !== qId) } 
+          : u
+      ));
+      
       setMessage('問題を削除しました。');
     } catch (e) {
       console.error(e);
@@ -241,6 +259,52 @@ export default function AdminPage() {
       await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
       setScores(scores.filter(score => score.docId !== s.docId));
       setMessage('得点データを削除しました。');
+    } catch (e) {
+      console.error(e);
+      setMessage('削除エラーが発生しました。');
+    }
+    setLoading(false);
+  };
+
+  const handleToggleSelectScore = (docId: string) => {
+    const newSet = new Set(selectedScoreIds);
+    if (newSet.has(docId)) {
+      newSet.delete(docId);
+    } else {
+      newSet.add(docId);
+    }
+    setSelectedScoreIds(newSet);
+  };
+
+  const handleSelectAllScores = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedScoreIds(new Set(scores.map(s => s.docId)));
+    } else {
+      setSelectedScoreIds(new Set());
+    }
+  };
+
+  const handleBatchDeleteScores = async () => {
+    if (selectedScoreIds.size === 0) return;
+    if (!window.confirm(`選択した ${selectedScoreIds.size} 件のデータを一括削除しますか？\n（Attemptsのみが削除されます）`)) return;
+
+    setLoading(true);
+    try {
+      const selectedItems = scores.filter(s => selectedScoreIds.has(s.docId));
+      
+      for (let i = 0; i < selectedItems.length; i += 400) {
+        const batch = writeBatch(db);
+        selectedItems.slice(i, i + 400).forEach(s => {
+          if (s.uid && s.docId) {
+            batch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
+          }
+        });
+        await batch.commit();
+      }
+
+      setScores(scores.filter(s => !selectedScoreIds.has(s.docId)));
+      setSelectedScoreIds(new Set());
+      setMessage(`${selectedItems.length}件の得点データを削除しました。`);
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
@@ -545,7 +609,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                     </span>
                   </div>
                   <CardTitle className="text-lg text-primary">{unit.title} (ID: {unit.id})</CardTitle>
-                  <CardDescription>問題数: {unit.questions?.length || 0}問</CardDescription>
+                  <CardDescription>問題数: {unit.totalQuestions || 0}問</CardDescription>
                 </div>
                 <Button variant="destructive" size="sm" onClick={() => handleDeleteUnit(unit.id)}>
                   <Trash2 className="w-4 h-4 mr-2" /> 単元を削除
@@ -582,7 +646,14 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
       {activeTab === 'scores' && (
         <div className="space-y-4 mt-4">
           <div className="flex justify-between items-center border-b pb-2">
-             <p className="text-sm text-gray-500">総プレイデータ（Attempts）</p>
+             <div className="flex items-center gap-4">
+                <p className="text-sm text-gray-500">総プレイデータ（Attempts）</p>
+                {selectedScoreIds.size > 0 && (
+                  <Button variant="destructive" size="sm" onClick={handleBatchDeleteScores} disabled={loading}>
+                    <Trash2 className="w-4 h-4 mr-2" /> 選択した項目を削除 ({selectedScoreIds.size}件)
+                  </Button>
+                )}
+             </div>
              <Button variant="outline" size="sm" onClick={() => fetchScores(false)} disabled={loading}>
               <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
             </Button>
@@ -592,6 +663,9 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-50 text-gray-600 border-b">
                 <tr>
+                  <th className="px-4 py-3">
+                    <input type="checkbox" onChange={handleSelectAllScores} checked={scores.length > 0 && selectedScoreIds.size === scores.length} />
+                  </th>
                   <th className="px-4 py-3">日時</th>
                   <th className="px-4 py-3">ユーザー名</th>
                   <th className="px-4 py-3">単元ID</th>
@@ -603,6 +677,9 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               <tbody className="divide-y text-gray-600">
                 {scores.map(s => (
                   <tr key={s.docId} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-3">
+                      <input type="checkbox" checked={selectedScoreIds.has(s.docId)} onChange={() => handleToggleSelectScore(s.docId)} />
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {s.date ? new Date(s.date).toLocaleString() : '-'}
                     </td>
@@ -624,7 +701,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                       })()}
                     </td>
                     <td className="px-4 py-3">
-                      <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteScore(s.docId)}>
+                      <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteScore(s)}>
                         データ削除
                       </Button>
                     </td>

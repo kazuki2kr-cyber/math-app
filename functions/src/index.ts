@@ -70,7 +70,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { attemptId, unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
+  const { attemptId, unitId: rawUnitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
+  const unitId = (rawUnitId || "").replace(/\./g, "_"); // ID内のドットをアンダースコアに正規化
 
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
   console.log(`[processDrillResult] Data summary: score=${score}, time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
@@ -252,11 +253,20 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     currentWrongs = currentWrongs.filter((id: string) => !newlyCorrectIds.includes(id));
     newlyWrongIds.forEach((id: string) => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
 
-    userUpdate[`unitStats.${unitId}.maxScore`] = isHighScore ? score : existingMaxScore;
-    userUpdate[`unitStats.${unitId}.bestTime`] = isHighScore ? time : (existingBestTime === Infinity ? time : existingBestTime);
-    userUpdate[`unitStats.${unitId}.wrongQuestionIds`] = currentWrongs;
-    userUpdate[`unitStats.${unitId}.totalCorrect`] = FieldValue.increment(safeCorrectQuestions.length);
-    userUpdate[`unitStats.${unitId}.updatedAt`] = dateStr;
+    // unitStatsの構築 (各単元ごとの統計を更新)
+    const unitStats = userSnap.data()?.unitStats || {};
+    const existingUnitStat = unitStats[unitId] || {};
+    
+    unitStats[unitId] = {
+      ...existingUnitStat,
+      maxScore: isHighScore ? score : (existingUnitStat.maxScore || 0),
+      bestTime: isHighScore ? time : (existingUnitStat.bestTime || Infinity),
+      wrongQuestionIds: currentWrongs,
+      totalCorrect: (existingUnitStat.totalCorrect || 0) + safeCorrectQuestions.length,
+      updatedAt: dateStr
+    };
+    
+    userUpdate.unitStats = unitStats;
 
     transaction.set(userRef, userUpdate, { merge: true });
 

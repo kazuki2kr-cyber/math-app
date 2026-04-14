@@ -102,17 +102,32 @@ export default function Home() {
           const ud = userSnap.data();
           
           if (ud.unitStats) {
-            Object.keys(ud.unitStats).forEach(unitId => {
-              const stat = ud.unitStats[unitId];
-              if (stat.maxScore !== undefined) {
-                newScores[unitId] = {
-                  unitId,
+            // Helper to get nested value from object using dot-notated key
+            const getNestedValue = (obj: any, path: string) => {
+              if (obj[path]) return obj[path];
+              const parts = path.split('.');
+              let current = obj;
+              for (const part of parts) {
+                if (current && typeof current === 'object' && part in current) {
+                  current = current[part];
+                } else {
+                  return undefined;
+                }
+              }
+              return current;
+            };
+
+            unitsData.forEach(unit => {
+              const stat = getNestedValue(ud.unitStats, unit.id);
+              if (stat && stat.maxScore !== undefined) {
+                newScores[unit.id] = {
+                  unitId: unit.id,
                   maxScore: stat.maxScore,
                   bestTime: stat.bestTime || Infinity,
                 };
-              }
-              if (stat.wrongQuestionIds && stat.wrongQuestionIds.length > 0) {
-                newWrongAnswers[unitId] = stat.wrongQuestionIds.length;
+                if (stat.wrongQuestionIds && stat.wrongQuestionIds.length > 0) {
+                  newWrongAnswers[unit.id] = stat.wrongQuestionIds.length;
+                }
               }
             });
           }
@@ -359,7 +374,7 @@ export default function Home() {
                     .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
                     .map((unit) => {
                       const myScore = scores[unit.id];
-                      const totalQ = unit.questions?.length || 0;
+                      const totalQ = unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
                       const hasPlayed = !!myScore;
                       // "単元 " プレフィックスを削除してスッキリ表示
                       const displayTitle = unit.title.replace(/^単元\s*/, '');

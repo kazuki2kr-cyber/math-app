@@ -60,7 +60,7 @@ export default function DrillPage() {
           let fetchedQuestions: Question[] = rawUnit.questions || [];
           if (!rawUnit.questions || rawUnit.questions.length === 0) {
             const qSnap = await getDocs(query(collection(db, 'units', unitId, 'questions'), orderBy('order', 'asc')));
-            fetchedQuestions = qSnap.docs.map(d => d.data() as Question);
+            fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as Question));
           }
 
           rawUnit.questions = fetchedQuestions.map(q => ({

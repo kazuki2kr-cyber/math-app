@@ -139,19 +139,15 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
     try {
         // --- 2. トランザクションによるデータ更新 ---
         const result = await db.runTransaction(async (transaction) => {
-            var _a, _b, _c, _d;
+            var _a, _b;
             const userRef = db.doc(`users/${uid}`);
-            const scoreRef = db.doc(`scores/${uid}_${unitId}`);
             const statsRef = db.doc(`units/${unitId}/stats/questions`);
             const globalStatsRef = db.doc("stats/global");
-            const wrongDocRef = db.doc(`users/${uid}/wrong_answers/${unitId}`);
             // Idempotency: attemptIdを使ってすでに記録が存在するか確認
             const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
             const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
-            const [userSnap, scoreSnap, wrongSnap, attemptSnap] = await Promise.all([
+            const [userSnap, attemptSnap] = await Promise.all([
                 transaction.get(userRef),
-                transaction.get(scoreRef),
-                transaction.get(wrongDocRef),
                 transaction.get(attemptRef)
             ]);
             if (attemptSnap.exists) {
@@ -175,9 +171,9 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             // 2-1. XP / レベル計算
             const finalXpGain = (xpDetails === null || xpDetails === void 0 ? void 0 : xpDetails.finalXp) || 0;
             const newTotalXp = currentXp + finalXpGain;
-            // フロントエンド (src/lib/xp.ts) のロジックと完全に同期
+            // XPとレベル、称号、進捗の計算
             const MAX_LEVEL = 100;
-            const getLevelFromXp = (totalXp) => {
+            const calculateLevelAndProgress = (totalXp) => {
                 let level = 1;
                 let accumulatedXp = 0;
                 while (level < MAX_LEVEL) {
@@ -187,59 +183,99 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                         level++;
                     }
                     else {
-                        break;
+                        const xpIntoCurrentLevel = totalXp - accumulatedXp;
+                        const progressPercent = Math.min(100, Math.max(0, (xpIntoCurrentLevel / xpForNext) * 100));
+                        return { level, currentLevelXp: xpIntoCurrentLevel, nextLevelXp: xpForNext, progressPercent };
                     }
                 }
-                return level;
+                return { level: MAX_LEVEL, currentLevelXp: 0, nextLevelXp: 0, progressPercent: 100 };
             };
-            const oldLevel = getLevelFromXp(currentXp);
-            const newLevel = getLevelFromXp(newTotalXp);
+            const getTitleForLevel = (level) => {
+                if (level >= 100)
+                    return 'Grandmaster';
+                if (level >= 90)
+                    return '次世代のオイラー';
+                if (level >= 80)
+                    return '数学の覇者';
+                if (level >= 70)
+                    return '数学マスター';
+                if (level >= 60)
+                    return '数学の賢者';
+                if (level >= 50)
+                    return '芝浦の数理ハンター';
+                if (level >= 40)
+                    return '数学のひらめき';
+                if (level >= 30)
+                    return '論理の探求者';
+                if (level >= 20)
+                    return '計算の達人';
+                if (level >= 10)
+                    return '数学ビギナー';
+                return '算数卒業生';
+            };
+            const oldLevelData = calculateLevelAndProgress(currentXp);
+            const newLevelData = calculateLevelAndProgress(newTotalXp);
+            const oldLevel = oldLevelData.level;
+            const newLevel = newLevelData.level;
             const isLevelUp = newLevel > oldLevel;
-            // 2-2. スコア更新判定 (High Score)
+            // 2-2. スコア更新判定 (High Score) と unitStats マージ
+            // 従来の scores コレクションを置き換えるため、userSnap から取得
+            const existingUnitStats = userSnap.exists ? (((_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.unitStats) || {}) : {};
+            const existingUnitData = existingUnitStats[unitId] || {};
+            const existingMaxScore = existingUnitData.maxScore || 0;
+            const existingBestTime = existingUnitData.bestTime || Infinity;
             let isHighScore = false;
-            const existingMaxScore = scoreSnap.exists ? (((_a = scoreSnap.data()) === null || _a === void 0 ? void 0 : _a.maxScore) || 0) : 0;
-            if (scoreSnap.exists) {
-                const sData = scoreSnap.data();
-                if (score > (sData === null || sData === void 0 ? void 0 : sData.maxScore) || (score === (sData === null || sData === void 0 ? void 0 : sData.maxScore) && time < (sData === null || sData === void 0 ? void 0 : sData.bestTime))) {
+            if (existingUnitData.maxScore === undefined) {
+                isHighScore = true;
+            }
+            else {
+                if (score > existingMaxScore || (score === existingMaxScore && time < existingBestTime)) {
                     isHighScore = true;
                 }
             }
-            else {
-                isHighScore = true;
-            }
             // --- 各種書き込み実行 ---
-            // User Update (XP + totalScore)
+            // User Update (XP, totalScore, unitStats, level details)
             const userUpdate = {
                 xp: newTotalXp,
+                level: newLevel,
+                title: getTitleForLevel(newLevel),
+                progressPercent: newLevelData.progressPercent,
+                currentLevelXp: newLevelData.currentLevelXp,
+                nextLevelXp: newLevelData.nextLevelXp,
                 updatedAt: dateStr,
-                ...(userSnap.exists ? {} : { icon: "📐" })
+                ...(userSnap.exists && currentIcon !== "📐" ? {} : { icon: "📐" })
             };
             // ハイスコア更新時に totalScore を差分更新
             if (isHighScore) {
                 const scoreDiff = score - existingMaxScore;
                 userUpdate.totalScore = firestore_1.FieldValue.increment(scoreDiff);
             }
+            // unitStatsの構築 (scoresとwrong_answersを内包)
+            // Wrong Answers List (間違えた問題のID配列を保持)
+            let currentWrongs = existingUnitData.wrongQuestionIds || [];
+            const newlyCorrectIds = safeCorrectQuestions.map((q) => q.id);
+            const newlyWrongIds = safeWrongQuestions.map((q) => q.id);
+            currentWrongs = currentWrongs.filter((id) => !newlyCorrectIds.includes(id));
+            newlyWrongIds.forEach((id) => { if (!currentWrongs.includes(id))
+                currentWrongs.push(id); });
+            // unitStatsの構築 (各単元ごとの統計を更新)
+            const unitStats = ((_b = userSnap.data()) === null || _b === void 0 ? void 0 : _b.unitStats) || {};
+            const existingUnitStat = unitStats[unitId] || {};
+            unitStats[unitId] = {
+                ...existingUnitStat,
+                maxScore: isHighScore ? score : (existingUnitStat.maxScore || 0),
+                bestTime: isHighScore ? time : (existingUnitStat.bestTime || Infinity),
+                wrongQuestionIds: currentWrongs,
+                totalCorrect: (existingUnitStat.totalCorrect || 0) + safeCorrectQuestions.length,
+                updatedAt: dateStr
+            };
+            userUpdate.unitStats = unitStats;
             transaction.set(userRef, userUpdate, { merge: true });
-            // Score Update (Denormalized)
-            // 努力量ランキング用に totalCorrect (実際の正解数) を毎回加算する
-            // maxScore/bestTime/icon/level はハイスコアまたはレベルアップ時のみ更新
-            transaction.set(scoreRef, {
-                uid,
-                userName,
-                unitId,
-                totalCorrect: firestore_1.FieldValue.increment(safeCorrectQuestions.length),
-                updatedAt: dateStr,
-                ...(isHighScore || isLevelUp ? {
-                    maxScore: isHighScore ? score : (scoreSnap.exists ? (_b = scoreSnap.data()) === null || _b === void 0 ? void 0 : _b.maxScore : score),
-                    bestTime: isHighScore ? time : (scoreSnap.exists ? (_c = scoreSnap.data()) === null || _c === void 0 ? void 0 : _c.bestTime : time),
-                    icon: currentIcon,
-                    level: newLevel
-                } : {})
-            }, { merge: true });
             // Attempts (Subcollection) - トランザクション内で事前作成した attemptRef を使用
             // TTL用 expireAt: 90日後に自動削除対象
             const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
             transaction.set(attemptRef, {
+                uid, userName, // Admin画面でAttemptsベースの集計をするためにuid/userNameを保存
                 unitId, unitTitle, score, time, date: dateStr,
                 expireAt: firestore_1.Timestamp.fromDate(expireAt),
                 details: [
@@ -257,16 +293,6 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                 statsUpdate[`${q.id}.total`] = firestore_1.FieldValue.increment(1);
             });
             transaction.set(statsRef, statsUpdate, { merge: true });
-            // Wrong Answers List
-            let currentWrongs = wrongSnap.exists ? (((_d = wrongSnap.data()) === null || _d === void 0 ? void 0 : _d.wrongQuestionIds) || []) : [];
-            const newlyCorrectIds = safeCorrectQuestions.map((q) => q.id);
-            const newlyWrongIds = safeWrongQuestions.map((q) => q.id);
-            currentWrongs = currentWrongs.filter(id => !newlyCorrectIds.includes(id));
-            newlyWrongIds.forEach(id => { if (!currentWrongs.includes(id))
-                currentWrongs.push(id); });
-            transaction.set(wrongDocRef, {
-                unitId, wrongQuestionIds: currentWrongs, lastUpdated: dateStr
-            }, { merge: true });
             // Global Stats (管理画面用の集計データ)
             const globalStatsUpdate = {
                 totalDrills: firestore_1.FieldValue.increment(1),

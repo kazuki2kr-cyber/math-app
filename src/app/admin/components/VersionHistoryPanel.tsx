@@ -131,55 +131,6 @@ export function VersionHistoryPanel() {
     }
   };
 
-  const handleMigration = async () => {
-    if (!window.confirm('全テストデータのquestionsプロパティを抽出し、サブコレクションへ移行します。よろしいですか？')) return;
-    
-    setSaving(true);
-    try {
-      const dbSnap = await getDocs(collection(db, 'units'));
-      const writes: Array<{ ref: any, data: any, type: string }> = [];
-
-      dbSnap.forEach(uDoc => {
-        const u = uDoc.data();
-        if (u.questions && Array.isArray(u.questions) && u.questions.length > 0) {
-          
-          u.questions.forEach((q: any, i: number) => {
-             writes.push({ 
-               type: 'set',
-               ref: doc(collection(db, 'units', uDoc.id, 'questions'), q.id || `q_${i}`), 
-               data: { ...q, order: q.order ?? i } 
-             });
-          });
-
-          // Delete `questions` from the unit Doc and set `totalQuestions`
-          writes.push({ 
-            type: 'set',
-            ref: doc(db, 'units', uDoc.id), 
-            data: { _legacy_questions: u.questions, totalQuestions: u.questions.length, questions: null } 
-          });
-        }
-      });
-
-      if (writes.length === 0) {
-        alert('移行するデータが見つかりませんでした (既に移行済み、またはデータがありません)。');
-        return;
-      }
-
-      for (let i = 0; i < writes.length; i += 400) {
-        const batch = writeBatch(db);
-        writes.slice(i, i + 400).forEach(w => batch.set(w.ref, w.data, { merge: true }));
-        await batch.commit();
-      }
-
-      alert(`マイグレーションが完了しました。(${writes.length}件の書き込み)`);
-    } catch (err) {
-      console.error('Migration failed:', err);
-      alert('マイグレーションに失敗しました。');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (loading && logs.length === 0) {
     return (
       <div className="flex items-center justify-center p-12">
@@ -370,22 +321,7 @@ export function VersionHistoryPanel() {
         )}
       </div>
 
-      <Card className="border-red-200 shadow-sm bg-red-50/30 mt-12">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-md text-red-700 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            開発者向け機能
-          </CardTitle>
-          <CardDescription>
-            既存の問題データを最適化するマイグレーションスクリプト。1度だけ実行してください。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-100" onClick={handleMigration} disabled={saving}>
-             {saving ? '処理中...' : '問題データのサブコレクション化マイグレーションを実行'}
-          </Button>
-        </CardContent>
-      </Card>
+
 
     </div>
   );

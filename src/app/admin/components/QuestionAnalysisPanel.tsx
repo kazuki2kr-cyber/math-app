@@ -114,8 +114,8 @@ export default function QuestionAnalysisPanel({
                 <CardTitle className="text-sm font-bold text-gray-800">正答率分布</CardTitle>
               </CardHeader>
               <CardContent>
-                <div style={{ width: '100%', height: 180 }}>
-                  <ResponsiveContainer>
+                <div className="min-h-[180px]" style={{ width: '100%', height: 180 }}>
+                  <ResponsiveContainer width="100%" height="100%" debounce={100}>
                     <BarChart data={distribution} margin={{ top: 5, right: 10, left: -25, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="range" fontSize={10} />
@@ -140,8 +140,8 @@ export default function QuestionAnalysisPanel({
                 <CardTitle className="text-sm font-bold text-gray-800">難易度構成</CardTitle>
               </CardHeader>
               <CardContent>
-                <div style={{ width: '100%', height: 180 }}>
-                  <ResponsiveContainer>
+                <div className="min-h-[180px]" style={{ width: '100%', height: 180 }}>
+                  <ResponsiveContainer width="100%" height="100%" debounce={100}>
                     <PieChart>
                       <Pie
                         data={difficultyData}

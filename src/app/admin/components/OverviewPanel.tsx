@@ -166,8 +166,8 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <div style={{ width: '100%', height: Math.max(metrics.categoryAccuracies.length * 45, 150) }}>
-              <ResponsiveContainer>
+            <div className="min-h-[150px]" style={{ width: '100%', height: Math.max(metrics.categoryAccuracies.length * 45, 150) }}>
+              <ResponsiveContainer width="100%" height="100%" debounce={100}>
                 <BarChart
                   data={metrics.categoryAccuracies}
                   layout="vertical"
@@ -214,8 +214,8 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div style={{ width: '100%', height: Math.max(chartData.length * 40, 200) }}>
-              <ResponsiveContainer>
+            <div className="min-h-[200px]" style={{ width: '100%', height: Math.max(chartData.length * 40, 200) }}>
+              <ResponsiveContainer width="100%" height="100%" debounce={100}>
                 <BarChart
                    data={chartData}
                   layout="vertical"
