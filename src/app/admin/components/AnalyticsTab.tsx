@@ -15,13 +15,16 @@ import {
   calculateStudentRankings,
   type OverviewMetrics,
 } from '@/lib/analytics';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface AnalyticsTabProps {
   units: any[];
   scores: any[];
+  globalStats: any;
   selectedUnitForStats: string;
   setSelectedUnitForStats: (unitId: string) => void;
+  onResetAllData: () => Promise<void>;
 }
 
 type SubTab = 'overview' | 'questions' | 'correlation';
@@ -29,8 +32,10 @@ type SubTab = 'overview' | 'questions' | 'correlation';
 export default function AnalyticsTab({
   units,
   scores,
+  globalStats,
   selectedUnitForStats,
   setSelectedUnitForStats,
+  onResetAllData,
 }: AnalyticsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('overview');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
@@ -207,11 +212,25 @@ export default function AnalyticsTab({
 
       {/* 概要パネル */}
       {activeSubTab === 'overview' && (
-        <OverviewPanel 
-          metrics={overviewMetrics} 
-          scoresCount={filteredScores.length} 
-          currentSubject={subjectFilter === 'all' ? '全教科' : subjectFilter}
-        />
+        <>
+          <OverviewPanel 
+            metrics={overviewMetrics} 
+            scoresCount={globalStats?.totalDrills ?? filteredScores.length} 
+            currentSubject={subjectFilter === 'all' ? '全教科' : subjectFilter}
+          />
+          {/* データリセットボタン */}
+          <div className="mt-6 pt-6 border-t border-dashed border-gray-300">
+            <Button
+              variant="outline"
+              className="text-xs text-red-500 border-red-300 hover:bg-red-50"
+              onClick={onResetAllData}
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+              全プレイデータをリセット
+            </Button>
+            <p className="text-[10px] text-muted-foreground mt-1">※ ユーザーのXP・スコア・ランキング・統計がすべて0になります</p>
+          </div>
+        </>
       )}
 
       {/* 問題分析パネル */}

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, increment } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,7 @@ export default function AdminPage() {
   
   // Analytics
   const [selectedUnitForStats, setSelectedUnitForStats] = useState<string>('');
+  const [globalStats, setGlobalStats] = useState<any>(null);
 
   const [importSubject, setImportSubject] = useState<string>('math');
   const [unitFilterSubject, setUnitFilterSubject] = useState<string>('all');
@@ -96,6 +97,16 @@ export default function AdminPage() {
           statsMap[unitId] = sDoc.data();
         }
       });
+
+      // stats/global を取得（総プレイ回数など）
+      try {
+        const globalStatsDoc = await getDoc(doc(db, 'stats', 'global'));
+        if (globalStatsDoc.exists()) {
+          setGlobalStats(globalStatsDoc.data());
+        }
+      } catch {
+        console.warn('stats/global の取得に失敗しました');
+      }
 
       const arr = await Promise.all(unitsArray.map(async unit => {
         // 各単元の問題をサブコレクションから取得
@@ -251,6 +262,57 @@ export default function AdminPage() {
     setLoading(false);
   };
 
+  // --- Stats デクリメント（Attempt削除時にstatsカウンターを連動） ---
+  const decrementStatsForAttempts = async (attempts: any[]) => {
+    // unitId ごとに集計
+    const unitDecrements: Record<string, { totalDec: number; correctDec: number; perQuestion: Record<string, { total: number; correct: number }> }> = {};
+    let globalDrillsDec = 0;
+    let globalCorrectDec = 0;
+    let globalAnsweredDec = 0;
+
+    for (const att of attempts) {
+      if (!att.unitId || !att.details || !Array.isArray(att.details)) continue;
+      if (!unitDecrements[att.unitId]) {
+        unitDecrements[att.unitId] = { totalDec: 0, correctDec: 0, perQuestion: {} };
+      }
+      const ud = unitDecrements[att.unitId];
+      globalDrillsDec++;
+      for (const d of att.details) {
+        if (!d.qId) continue;
+        if (!ud.perQuestion[d.qId]) ud.perQuestion[d.qId] = { total: 0, correct: 0 };
+        ud.perQuestion[d.qId].total++;
+        ud.totalDec++;
+        globalAnsweredDec++;
+        if (d.isCorrect) {
+          ud.perQuestion[d.qId].correct++;
+          ud.correctDec++;
+          globalCorrectDec++;
+        }
+      }
+    }
+
+    // バッチで stats を更新
+    const batch = writeBatch(db);
+    for (const [unitId, ud] of Object.entries(unitDecrements)) {
+      const statsRef = doc(db, 'units', unitId, 'stats', 'questions');
+      const updates: Record<string, any> = {};
+      for (const [qId, qd] of Object.entries(ud.perQuestion)) {
+        updates[`${qId}.total`] = increment(-qd.total);
+        if (qd.correct > 0) updates[`${qId}.correct`] = increment(-qd.correct);
+      }
+      batch.update(statsRef, updates);
+    }
+    // stats/global を更新
+    if (globalDrillsDec > 0) {
+      batch.update(doc(db, 'stats', 'global'), {
+        totalDrills: increment(-globalDrillsDec),
+        totalCorrect: increment(-globalCorrectDec),
+        totalAnswered: increment(-globalAnsweredDec),
+      });
+    }
+    await batch.commit();
+  };
+
   const handleDeleteScore = async (s: any) => {
     if (!window.confirm('この得点データ(Attempt)を削除しますか？')) return;
     setLoading(true);
@@ -258,10 +320,15 @@ export default function AdminPage() {
       if (s.path) {
         await deleteDoc(doc(db, s.path));
       } else if (s.uid && s.docId) {
-        // Fallback for older approach if missing
         await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
       } else {
         throw new Error('Missing path or uid/docId');
+      }
+      // stats カウンターを連動デクリメント
+      try {
+        await decrementStatsForAttempts([s]);
+      } catch (statsErr) {
+        console.warn('Stats decrement failed (non-critical):', statsErr);
       }
       setScores(scores.filter(score => score.docId !== s.docId));
       setMessage('得点データを削除しました。');
@@ -292,7 +359,7 @@ export default function AdminPage() {
 
   const handleBatchDeleteScores = async () => {
     if (selectedScoreIds.size === 0) return;
-    if (!window.confirm(`選択した ${selectedScoreIds.size} 件のデータを一括削除しますか？\n（Attemptsのみが削除されます）`)) return;
+    if (!window.confirm(`選択した ${selectedScoreIds.size} 件のデータを一括削除しますか？\n（統計カウンターも連動して更新されます）`)) return;
 
     setLoading(true);
     try {
@@ -313,12 +380,108 @@ export default function AdminPage() {
         await batch.commit();
       }
 
+      // stats カウンターを連動デクリメント
+      try {
+        await decrementStatsForAttempts(selectedItems);
+      } catch (statsErr) {
+        console.warn('Stats decrement failed (non-critical):', statsErr);
+      }
+
       setScores(scores.filter(s => !selectedScoreIds.has(s.docId)));
       setSelectedScoreIds(new Set());
       setMessage(`${actuallyDeleted}件の得点データを削除しました。`);
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
+    }
+    setLoading(false);
+  };
+
+  // --- 全データリセット ---
+  const handleResetAllData = async () => {
+    if (!window.confirm('⚠️ すべてのプレイデータをリセットしますか？\n\n対象: ユーザーのXP・スコア・ランキング・統計データ\nこの操作は取り消せません。')) return;
+    if (!window.confirm('最終確認: すべてのユーザーのスコア、XP、ランキングが0にリセットされます。本当に実行しますか？')) return;
+
+    setLoading(true);
+    setMessage('リセット処理中...');
+
+    try {
+      // 1. 全 attempts を削除
+      const attemptsSnap = await getDocs(collectionGroup(db, 'attempts'));
+      for (let i = 0; i < attemptsSnap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        attemptsSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      // 2. stats/global をリセット
+      await setDoc(doc(db, 'stats', 'global'), {
+        totalDrills: 0,
+        totalCorrect: 0,
+        totalAnswered: 0,
+        totalParticipants: 0,
+        updatedAt: new Date().toISOString()
+      });
+
+      // 3. 各単元の stats/questions をリセット
+      const statsSnap = await getDocs(collectionGroup(db, 'stats'));
+      for (let i = 0; i < statsSnap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        statsSnap.docs.slice(i, i + 400).forEach(d => {
+          if (d.id === 'questions') {
+            batch.set(d.ref, {});
+          }
+        });
+        await batch.commit();
+      }
+
+      // 4. ユーザーデータをリセット（XP、スコア、unitStats）
+      const usersSnap = await getDocs(collection(db, 'users'));
+      for (let i = 0; i < usersSnap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        usersSnap.docs.slice(i, i + 400).forEach(d => {
+          batch.update(d.ref, {
+            xp: 0,
+            level: 1,
+            title: '算数卒業生',
+            progressPercent: 0,
+            currentLevelXp: 0,
+            nextLevelXp: 52,
+            totalScore: 0,
+            unitStats: {},
+          });
+        });
+        await batch.commit();
+      }
+
+      // 5. リーダーボードを削除
+      const lbSnap = await getDocs(collection(db, 'leaderboards'));
+      for (let i = 0; i < lbSnap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        lbSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      // 6. wrong_answers を削除
+      try {
+        const wrongSnap = await getDocs(collectionGroup(db, 'wrong_answers'));
+        for (let i = 0; i < wrongSnap.docs.length; i += 400) {
+          const batch = writeBatch(db);
+          wrongSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      } catch (e) {
+        console.warn('wrong_answers の削除に失敗しました (非致命的):', e);
+      }
+
+      setGlobalStats({ totalDrills: 0, totalCorrect: 0, totalAnswered: 0, totalParticipants: 0 });
+      setScores([]);
+      setMessage('✅ すべてのプレイデータをリセットしました。');
+      fetchUnits();
+      fetchUsers();
+    } catch (e) {
+      console.error(e);
+      setMessage('❌ リセットエラーが発生しました: ' + (e as Error).message);
     }
     setLoading(false);
   };
@@ -1020,8 +1183,10 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
         <AnalyticsTab
           units={units}
           scores={scores}
+          globalStats={globalStats}
           selectedUnitForStats={selectedUnitForStats}
           setSelectedUnitForStats={setSelectedUnitForStats}
+          onResetAllData={handleResetAllData}
         />
       )}
 
