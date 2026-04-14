@@ -148,7 +148,7 @@ export default function AdminPage() {
         snap.forEach(d => {
           const data = d.data();
           if (data) {
-            arr.push({ docId: d.id, ...data });
+            arr.push({ docId: d.id, path: d.ref.path, ...data });
           }
         });
         setScores(arr);
@@ -255,8 +255,14 @@ export default function AdminPage() {
     if (!window.confirm('この得点データ(Attempt)を削除しますか？')) return;
     setLoading(true);
     try {
-      if (!s.uid || !s.docId) throw new Error("Missing uid or docId");
-      await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
+      if (s.path) {
+        await deleteDoc(doc(db, s.path));
+      } else if (s.uid && s.docId) {
+        // Fallback for older approach if missing
+        await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
+      } else {
+        throw new Error('Missing path or uid/docId');
+      }
       setScores(scores.filter(score => score.docId !== s.docId));
       setMessage('得点データを削除しました。');
     } catch (e) {
@@ -291,12 +297,17 @@ export default function AdminPage() {
     setLoading(true);
     try {
       const selectedItems = scores.filter(s => selectedScoreIds.has(s.docId));
+      let actuallyDeleted = 0;
       
       for (let i = 0; i < selectedItems.length; i += 400) {
         const batch = writeBatch(db);
         selectedItems.slice(i, i + 400).forEach(s => {
-          if (s.uid && s.docId) {
+          if (s.path) {
+            batch.delete(doc(db, s.path));
+            actuallyDeleted++;
+          } else if (s.uid && s.docId) {
             batch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
+            actuallyDeleted++;
           }
         });
         await batch.commit();
@@ -304,7 +315,7 @@ export default function AdminPage() {
 
       setScores(scores.filter(s => !selectedScoreIds.has(s.docId)));
       setSelectedScoreIds(new Set());
-      setMessage(`${selectedItems.length}件の得点データを削除しました。`);
+      setMessage(`${actuallyDeleted}件の得点データを削除しました。`);
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
