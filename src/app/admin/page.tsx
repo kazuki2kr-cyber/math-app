@@ -23,6 +23,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
   
   const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles' | 'changelog'>('roles');
+  const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
   const [lastAttemptDoc, setLastAttemptDoc] = useState<any>(null);
@@ -213,7 +214,7 @@ export default function AdminPage() {
         try {
           const suspiciousSnap = await getDocs(query(collection(db, 'suspicious_activities'), orderBy('timestamp', 'desc'), limit(100)));
           const sArr: any[] = [];
-          suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data() }));
+          suspiciousSnap.forEach(d => sArr.push({ id: d.id, ...d.data(), isServer: true }));
           setSuspiciousActivities(sArr);
         } catch (err: any) {
           console.warn('Suspicious activities could not be fetched:', err);
@@ -356,27 +357,228 @@ export default function AdminPage() {
   };
 
   const handleDeleteScore = async (s: any) => {
-    if (!window.confirm('この得点データ(Attempt)を削除しますか？')) return;
+    if (!window.confirm('この得点データ(Attempt)を削除しますか？\n(獲得XPも差し引かれ、レベルが再計算される場合があります)')) return;
     setLoading(true);
     try {
+      // 1. XPの差し戻し
+      if (s.uid && s.xpGain > 0) {
+        const userRef = doc(db, 'users', s.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const uData = userSnap.data();
+          const oldXp = uData.xp || 0;
+          const newXp = Math.max(0, oldXp - s.xpGain);
+          
+          const newLvData = calculateLevelAndProgress(newXp);
+          await updateDoc(userRef, {
+            xp: newXp,
+            level: newLvData.level,
+            title: getTitleForLevel(newLvData.level),
+            progressPercent: newLvData.progressPercent,
+            currentLevelXp: newLvData.currentLevelXp,
+            nextLevelXp: newLvData.nextLevelXp,
+            updatedAt: new Date().toISOString()
+          });
+          
+          // ローカルのユーザーリストも更新
+          setUsers(users.map(u => u.docId === s.uid ? { 
+            ...u, 
+            xp: newXp,
+            level: newLvData.level
+          } : u));
+        }
+      }
+
+      // 2. ドキュメントの削除
       if (s.path) {
         await deleteDoc(doc(db, s.path));
       } else if (s.uid && s.docId) {
         await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
-      } else {
-        throw new Error('Missing path or uid/docId');
       }
-      // stats カウンターを連動デクリメント
+
+      // 3. 統計カウンターの更新
       try {
         await decrementStatsForAttempts([s]);
       } catch (statsErr) {
         console.warn('Stats decrement failed (non-critical):', statsErr);
       }
+
       setScores(scores.filter(score => score.docId !== s.docId));
-      setMessage('得点データを削除しました。');
+      // 不正疑惑リストからも消す
+      setSuspiciousActivities(prev => prev.filter(sa => sa.id !== s.id && sa.docId !== s.docId));
+      
+      setMessage('得点データを削除し、XPを差し戻しました。');
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
+    }
+    setLoading(false);
+  };
+
+  const handleIgnoreSuspicious = async (activityOrId: any) => {
+    setLoading(true);
+    try {
+      let activity = typeof activityOrId === 'string' 
+        ? suspiciousActivities.find(a => a.id === activityOrId)
+        : activityOrId;
+
+      if (!activity && typeof activityOrId === 'string') {
+        // scores (Auto) から探す
+        const score = scores.find(s => s.docId === activityOrId);
+        if (score) activity = { ...score, isServer: false, id: score.docId };
+      }
+
+      if (!activity) throw new Error('対象のデータが見つかりませんでした。');
+
+      if (!activity.isServer) {
+        // 自動検知（Attemptsベース）の場合は、Attemptsドキュメントを更新
+        // docId や path が確実に存在することを確認
+        const path = activity.path;
+        const uid = activity.uid;
+        const docId = activity.docId || activity.id;
+
+        let attemptRef;
+        if (path) {
+          attemptRef = doc(db, path);
+        } else if (uid && docId) {
+          attemptRef = doc(db, 'users', uid, 'attempts', docId);
+        }
+
+        if (attemptRef) {
+          await updateDoc(attemptRef, { ignoreFraud: true });
+        }
+      } else {
+        // サーバー検知（suspicious_activitiesベース）の場合は、そのアクティビティを削除
+        await deleteDoc(doc(db, 'suspicious_activities', activity.id));
+      }
+      
+      setSuspiciousActivities(prev => prev.filter(a => a.id !== (activity.id || activity.docId)));
+      setMessage('報告を無視リストに移動しました。');
+    } catch (e: any) {
+       console.error(e);
+       setMessage('無視処理に失敗しました: ' + e.message);
+    }
+    setLoading(false);
+  };
+
+  const handleBatchActionSuspicious = async (action: 'ignore' | 'delete') => {
+    if (selectedSuspiciousIds.size === 0) return;
+    const count = selectedSuspiciousIds.size;
+    if (action === 'delete' && !window.confirm(`${count}件のデータを一括削除しますか？\n(XPもすべて差し引かれます)`)) return;
+
+    setLoading(true);
+    try {
+      const QUESTIONS_PER_DRILL = 10;
+      const suspiciousScores = scores
+        .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
+        .map(s => {
+          const avgPerQ = s.time / QUESTIONS_PER_DRILL;
+          let flag: 'red' | 'yellow' | 'green' = 'green';
+          if (avgPerQ <= 3) flag = 'red';
+          else if (avgPerQ <= 5) flag = 'yellow';
+          return { ...s, flag, isServer: false, id: s.docId };
+        });
+      const serverSuspicious = suspiciousActivities.map(s => ({ ...s, isServer: true }));
+      const allSuspicious = [...serverSuspicious, ...suspiciousScores.filter(s => s.flag !== 'green')];
+      
+      const itemsToProcess = allSuspicious.filter(item => selectedSuspiciousIds.has(item.id || item.docId));
+
+      for (const item of itemsToProcess) {
+        if (action === 'delete') {
+          // handleDeleteScore と同等の処理が必要だが、バッチ化は複雑なので順次処理（件数が多くない想定）
+          await handleDeleteScore(item);
+        } else {
+          await handleIgnoreSuspicious(item);
+        }
+      }
+      
+      setSelectedSuspiciousIds(new Set());
+      setMessage(`${count}件の処理が完了しました。`);
+    } catch (e: any) {
+      console.error(e);
+      setMessage('一括処理エラー: ' + e.message);
+    }
+    setLoading(false);
+  };
+
+  const handleToggleSelectSuspicious = (id: string) => {
+    const newSet = new Set(selectedSuspiciousIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedSuspiciousIds(newSet);
+  };
+
+  const handleResetUserData = async (uid: string, displayName: string) => {
+    if (!window.confirm(`⚠️ 警告: ${displayName || uid} さんの全学習データをリセットしますか？\n\n獲得したXP、レベル、ハイスコア、アイコン、演習履歴がすべて消去され、初期状態に戻ります。この操作は取り消せません。`)) return;
+    if (!window.confirm(`【最終確認】${displayName || uid} さんのデータを本当にすべて削除しますか？`)) return;
+
+    setLoading(true);
+    setMessage('ユーザーデータリセット中...');
+
+    try {
+      // 1. ユーザーの全 attempts を取得
+      const attemptsSnap = await getDocs(collection(db, 'users', uid, 'attempts'));
+      const attemptsCount = attemptsSnap.size;
+
+      // 2. 統計カウンターのデクリメント
+      if (attemptsCount > 0) {
+        const attempts = attemptsSnap.docs.map(d => d.data());
+        await decrementStatsForAttempts(attempts);
+      }
+
+      // 3. Attempts サブコレクションの全削除
+      const batch = writeBatch(db);
+      attemptsSnap.forEach(d => batch.delete(d.ref));
+      
+      // 4. wrong_answers サブコレクションの削除
+      const wrongSnap = await getDocs(collection(db, 'users', uid, 'wrong_answers'));
+      wrongSnap.forEach(d => batch.delete(d.ref));
+
+      // 5. ユーザードキュメントの初期化
+      const userRef = doc(db, 'users', uid);
+      batch.update(userRef, {
+        xp: 0,
+        level: 1,
+        title: '算数卒業生',
+        totalScore: 0,
+        unitStats: {},
+        icon: '📐',
+        progressPercent: 0,
+        currentLevelXp: 0,
+        nextLevelXp: 52,
+        updatedAt: new Date().toISOString()
+      });
+
+      await batch.commit();
+
+      // 7. リーダーボード（配列形式）の更新
+      try {
+        const lbRef = doc(db, 'leaderboards', 'overall');
+        const lbSnap = await getDoc(lbRef);
+        if (lbSnap.exists()) {
+          const rankings = lbSnap.data().rankings || [];
+          const newRankings = rankings.filter((r: any) => r.uid !== uid);
+          if (rankings.length !== newRankings.length) {
+            await updateDoc(lbRef, { rankings: newRankings });
+          }
+        }
+      } catch (lbErr) {
+        console.warn('Leaderboard cleanup failed:', lbErr);
+      }
+
+      // ローカルステートの更新
+      setUsers(users.map(u => u.docId === uid ? {
+        ...u,
+        xp: 0,
+        level: 1,
+        totalScore: 0,
+        icon: '📐'
+      } : u));
+
+      setMessage(`✅ ${displayName || uid} さんのデータを初期化しました。`);
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`❌ エラーが発生しました: ${e.message}`);
     }
     setLoading(false);
   };
@@ -486,6 +688,7 @@ export default function AdminPage() {
             xp: 0,
             level: 1,
             title: '算数卒業生',
+            icon: '📐',
             progressPercent: 0,
             currentLevelXp: 0,
             nextLevelXp: 52,
@@ -663,7 +866,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
           className={`px-4 py-2 font-medium ${activeTab === 'xp' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <Zap className="inline w-4 h-4 mr-2" />
-          経験値管理
+          経験値・スコア管理
         </button>
         <button 
           onClick={() => setActiveTab('suspicious')} 
@@ -960,15 +1163,15 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">ユーザー名</th>
                   <th className="px-4 py-3">メール</th>
-                  <th className="px-4 py-3">Lv</th>
+                  <th className="px-4 py-3">レベル</th>
                   <th className="px-4 py-3">称号</th>
-                  <th className="px-4 py-3">XP</th>
+                  <th className="px-4 py-3">経験値</th>
                   <th className="px-4 py-3">アイコン</th>
-                  <th className="px-4 py-3">操作</th>
+                  <th className="px-4 py-3 text-center">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y text-gray-600">
-                {users.slice(0, displayUsersCount).map((u, idx) => {
+                {users.map((u, idx) => {
                   const lvData = calculateLevelAndProgress(u.xp || 0);
                   const title = getTitleForLevel(lvData.level);
                   const isEditing = editingXp[u.docId] !== undefined;
@@ -1008,9 +1211,19 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                             </Button>
                           </div>
                         ) : (
-                          <Button variant="ghost" size="sm" className="text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setEditingXp(prev => ({ ...prev, [u.docId]: String(u.xp || 0) }))}>
-                            編集
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm" className="text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setEditingXp(prev => ({ ...prev, [u.docId]: String(u.xp || 0) }))}>
+                              編集
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="text-red-500 hover:text-white hover:bg-red-500 transition-colors"
+                              onClick={() => handleResetUserData(u.docId, u.displayName)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -1051,6 +1264,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                 else if (avgPerQ <= 5) flag = 'yellow';
                 return { 
                   ...s, 
+                  id: s.docId,
                   avgPerQ, 
                   flag,
                   isServer: false,
@@ -1061,6 +1275,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
 
             // 2. サーバー側（Cloud Functions）での検知
             const serverSuspicious = suspiciousActivities.map(s => ({
+              id: s.id,
               docId: s.id,
               uid: s.uid,
               userName: s.userName || '不明なユーザー',
@@ -1088,21 +1303,39 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
               return true;
             });
 
-            const redCount = allSuspicious.filter(s => s.flag === 'red').length;
-            const yellowCount = allSuspicious.filter(s => s.flag === 'yellow').length;
-
             return (
               <>
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
-                  <div className="flex gap-4">
-                    <div className="flex items-center gap-1.5 bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200 shadow-sm">
-                      <AlertTriangle className="w-4 h-4" /> 致命的: {redCount}件
-                    </div>
-                    <div className="flex items-center gap-1.5 bg-yellow-50 text-yellow-700 px-3 py-1.5 rounded-lg border border-yellow-200 shadow-sm">
-                      <AlertTriangle className="w-4 h-4" /> 要注意: {yellowCount}件
-                    </div>
-                  </div>
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    {selectedSuspiciousIds.size > 0 && (
+                      <div className="flex items-center gap-1 bg-slate-900 text-white px-2 py-1 rounded-lg animate-in slide-in-from-right-4">
+                        <span className="text-[10px] font-bold px-2">{selectedSuspiciousIds.size}件選択中</span>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-7 text-[10px] text-white hover:bg-white/10"
+                          onClick={() => handleBatchActionSuspicious('ignore')}
+                        >
+                          一括無視
+                        </Button>
+                        <Button 
+                          variant="destructive" 
+                          size="sm" 
+                          className="h-7 text-[10px] bg-red-500 hover:bg-red-600"
+                          onClick={() => handleBatchActionSuspicious('delete')}
+                        >
+                          一括削除
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-7 text-[10px] text-gray-400"
+                          onClick={() => setSelectedSuspiciousIds(new Set())}
+                        >
+                          キャンセル
+                        </Button>
+                      </div>
+                    )}
                     <select
                       value={suspiciousFilter}
                       onChange={(e) => setSuspiciousFilter(e.target.value as any)}
@@ -1118,10 +1351,20 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl shadow-md overflow-hidden border">
+                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                   <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 text-gray-600 border-b">
+                    <thead className="bg-gray-50 border-b">
                       <tr>
+                        <th className="px-4 py-4 text-center">
+                          <input 
+                            type="checkbox" 
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedSuspiciousIds(new Set(filtered.map(f => f.id || f.docId)));
+                              else setSelectedSuspiciousIds(new Set());
+                            }}
+                            checked={filtered.length > 0 && selectedSuspiciousIds.size === filtered.length}
+                          />
+                        </th>
                         <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">判定</th>
                         <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">ユーザー / 単元</th>
                         <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">詳細・検知理由</th>
@@ -1129,9 +1372,16 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                         <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">操作</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y text-gray-700">
-                      {filtered.slice(0, displaySuspiciousCount).map((s, idx) => (
-                        <tr key={`${s.docId}-${idx}`} className={`hover:bg-gray-50/50 transition-colors ${s.flag === 'red' ? 'bg-red-50/20' : ''}`}>
+                    <tbody className="divide-y">
+                      {filtered.slice(0, displaySuspiciousCount).map((s: any) => (
+                        <tr key={s.docId} className="hover:bg-gray-50/50">
+                          <td className="px-4 py-4 text-center">
+                            <input 
+                              type="checkbox" 
+                              checked={selectedSuspiciousIds.has(s.id || s.docId)}
+                              onChange={() => handleToggleSelectSuspicious(s.id || s.docId)}
+                            />
+                          </td>
                           <td className="px-4 py-4 text-center">
                             <span className={`inline-block px-2 py-1 rounded text-[10px] font-black tracking-tighter uppercase shadow-sm ${s.isServer ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
                               {s.isServer ? 'SERVER' : 'AUTO'}
@@ -1181,6 +1431,14 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                               >
                                 分析
                               </Button>
+                               <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-7 text-[10px] font-bold px-2 hover:bg-gray-100"
+                                onClick={() => handleIgnoreSuspicious(s)}
+                              >
+                                無視
+                              </Button>
                               {!s.isServer && (
                                 <Button 
                                   variant="ghost" 
@@ -1197,7 +1455,7 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
                       ))}
                       {filtered.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-4 py-12 text-center text-gray-400 italic">
+                          <td colSpan={6} className="px-4 py-12 text-center text-gray-400 italic">
                             {suspiciousFilter === 'all' ? '検知されたデータはありません' : '該当するフィルター条件のデータはありません ✅'}
                           </td>
                         </tr>

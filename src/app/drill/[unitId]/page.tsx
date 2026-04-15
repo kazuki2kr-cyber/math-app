@@ -11,14 +11,23 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter }
 import { Clock, ArrowRight, XCircle } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 
-interface Question {
+// Firestore から取得する生データ（answer_index を含む）
+// answer_index は選択肢シャッフル処理のみに使用し、状態には保持しない
+interface RawQuestion {
   id: string;
   question_text: string;
   options: string[];
   answer_index: number;
   explanation: string;
   image_url: string | null;
-  user_selected_index?: number;
+}
+
+// 演習中に使う状態の型（answer_index を意図的に除外 → クライアントに正解位置を持たせない）
+interface Question {
+  id: string;
+  question_text: string;
+  options: string[]; // シャッフル済み
+  image_url: string | null;
 }
 
 interface Unit {
@@ -29,7 +38,6 @@ interface Unit {
 
 export default function DrillPage() {
   const params = useParams();
-  // Next.jsのparamsはURLエンコードされている場合があるためデコードする（とくに日本語の場合）
   const unitId = decodeURIComponent(params.unitId as string);
   const router = useRouter();
   const { user } = useAuth();
@@ -41,18 +49,17 @@ export default function DrillPage() {
   // Drill State
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [answers, setAnswers] = useState<boolean[]>([]); // true if correct, false if wrong
-  const [wrongQuestions, setWrongQuestions] = useState<Question[]>([]);
-  const [correctQuestions, setCorrectQuestions] = useState<Question[]>([]);
-  const [isCompleting, setIsCompleting] = useState(false); // 演習完了処理中フラグ（連打防止）
-  const isCompletingRef = useRef(false); // 同期的な連打防止用ref
-  // attemptId は演習開始時に一度だけ生成し、連打時も同じIDを使う（サーバー冪等性チェック用）
+  // 選択した選択肢テキストのみ記録（正誤はサーバーが判定）
+  const [submittedAnswers, setSubmittedAnswers] = useState<{ questionId: string; selectedOptionText: string }[]>([]);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const isCompletingRef = useRef(false);
+  // attemptId は演習開始時に一度だけ生成（連打時も同一IDでサーバー冪等性チェックが機能する）
   const attemptIdRef = useRef<string>(
     typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
       : Date.now().toString() + Math.random().toString(36).substring(2)
   );
-  
+
   // Timer State
   const [startTime, setStartTime] = useState<number>(0);
   const [elapsed, setElapsed] = useState<number>(0);
@@ -63,69 +70,56 @@ export default function DrillPage() {
       try {
         const snap = await getDoc(doc(db, 'units', unitId));
         if (snap.exists()) {
-          const rawUnit = snap.data() as Unit;
+          const rawUnit = snap.data();
 
-          let fetchedQuestions: Question[] = rawUnit.questions || [];
+          let fetchedQuestions: RawQuestion[] = (rawUnit.questions as RawQuestion[]) || [];
           if (!rawUnit.questions || rawUnit.questions.length === 0) {
             const qSnap = await getDocs(query(collection(db, 'units', unitId, 'questions'), orderBy('order', 'asc')));
-            fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+            fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as RawQuestion));
           }
 
-          rawUnit.questions = fetchedQuestions.map(q => ({
+          const parsedQuestions: RawQuestion[] = fetchedQuestions.map(q => ({
             ...q,
-            options: parseOptions(q.options as unknown as string)
+            options: parseOptions(q.options as unknown as string),
           }));
-          
-          let filteredQuestions = [...rawUnit.questions];
+
+          let filteredQuestions = [...parsedQuestions];
           const mode = new URLSearchParams(window.location.search).get('mode');
-          
+
           if (mode === 'wrong' && user) {
             const userDocRef = doc(db, 'users', user.uid);
             const userSnap = await getDoc(userDocRef);
-            if (userSnap.exists() && userSnap.data().unitStats && userSnap.data().unitStats[unitId]) {
+            if (userSnap.exists() && userSnap.data().unitStats?.[unitId]) {
               const wrongIds = userSnap.data().unitStats[unitId].wrongQuestionIds || [];
               filteredQuestions = filteredQuestions.filter(q => wrongIds.includes(q.id));
               if (filteredQuestions.length === 0) {
-                 setError('間違えた問題がありません。復習完了です！');
-                 setLoading(false);
-                 return;
+                setError('間違えた問題がありません。復習完了です！');
+                setLoading(false);
+                return;
               }
             } else {
-               setError('間違えた問題の履歴がありません。');
-               setLoading(false);
-               return;
+              setError('間違えた問題の履歴がありません。');
+              setLoading(false);
+              return;
             }
           }
-          
-          // 1. シャッフルして最大10問を抽出
-          let shuffledQuestions = filteredQuestions.sort(() => 0.5 - Math.random());
+
+          // 問題をシャッフルして最大10問を抽出
+          let shuffledQuestions = [...filteredQuestions].sort(() => 0.5 - Math.random());
           if (shuffledQuestions.length > 10) {
             shuffledQuestions = shuffledQuestions.slice(0, 10);
           }
-          
-          // 2. 各問題の選択肢もシャッフルし、正解インデックスを更新する
-          const finalQuestions = shuffledQuestions.map((q) => {
-            // 元の正解テキストを保持
-            const currentAnswerIndex = Number(q.answer_index);
-            const correctOptionText = q.options[currentAnswerIndex - 1]; 
-            
-            // 選択肢をシャッフル
-            const optionsWithOriginalObjects = q.options.map(text => ({ text }));
-            const shuffledOptionsObjs = optionsWithOriginalObjects.sort(() => 0.5 - Math.random());
-            
-            const newOptions = shuffledOptionsObjs.map(obj => obj.text);
-            // 新しい正解インデックス（1-based）を探す
-            const foundIndex = newOptions.indexOf(correctOptionText);
-            const newAnswerIndex = foundIndex !== -1 ? foundIndex + 1 : currentAnswerIndex;
-            
-            return {
-              ...q,
-              options: newOptions,
-              answer_index: newAnswerIndex
-            };
-          });
 
-          setUnit({ ...rawUnit, questions: finalQuestions });
+          // 選択肢をシャッフル（answer_index はここでのみ参照し、状態には含めない）
+          const finalQuestions: Question[] = shuffledQuestions.map((q) => ({
+            id: q.id,
+            question_text: q.question_text,
+            options: [...q.options].sort(() => 0.5 - Math.random()),
+            image_url: q.image_url ?? null,
+            // answer_index は意図的に除外
+          }));
+
+          setUnit({ id: unitId, title: rawUnit.title, questions: finalQuestions });
           setStartTime(Date.now());
         } else {
           setError('指定された単元が見つかりません。');
@@ -136,15 +130,13 @@ export default function DrillPage() {
         setLoading(false);
       }
     }
-    
-    // We only fetch when user is loaded (or user is null but we still want to try showing standard mode)
+
     if (user !== undefined) {
       fetchUnit();
     }
   }, [unitId, user]);
 
   useEffect(() => {
-    // Start interval
     if (unit && unit.questions && currentIndex < unit.questions.length) {
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startTime) / 1000));
@@ -164,79 +156,33 @@ export default function DrillPage() {
 
     const questions = unit.questions || [];
     const currentQ = questions[currentIndex];
-    // answer_index is 1-based in CSV
-    const isCorrect = selectedOption + 1 === currentQ.answer_index;
+    const selectedText = currentQ.options[selectedOption];
 
-    // Save answer result
-    setAnswers(prev => [...prev, isCorrect]);
-    if (isCorrect) {
-      setCorrectQuestions(prev => [...prev, currentQ]);
-    } else {
-      setWrongQuestions(prev => [...prev, { ...currentQ, user_selected_index: selectedOption + 1 }]);
-    }
+    // 選択した選択肢テキストを記録（正誤判定はしない）
+    const currentAnswer = { questionId: currentQ.id, selectedOptionText: selectedText };
+    const allAnswers = [...submittedAnswers, currentAnswer];
+    setSubmittedAnswers(allAnswers);
 
     if (currentIndex < (unit.questions?.length || 0) - 1) {
-      // Go to next question
       setSelectedOption(null);
       setCurrentIndex(currentIndex + 1);
     } else {
-      // Finish Drill — 連打防止: すでに完了処理中なら何もしない
+      // 最終問題 — 連打防止
       if (isCompletingRef.current) return;
       isCompletingRef.current = true;
       setIsCompleting(true);
 
       if (timerRef.current) clearInterval(timerRef.current);
       const finalTime = Math.floor((Date.now() - startTime) / 1000);
-      
-      const newAnswers = [...answers, isCorrect];
-      const newCorrect = isCorrect ? [...correctQuestions, currentQ] : correctQuestions;
-      const newWrong = !isCorrect ? [...wrongQuestions, { ...currentQ, user_selected_index: selectedOption + 1 }] : wrongQuestions;
-      
-      const finalScore = Math.floor((newCorrect.length / (unit.questions?.length || 1)) * 100);
 
-      // XP Calculation
-      let baseTotal = 0;
-      let comboTotal = 0;
-      let currentCombo = 0;
-
-      newAnswers.forEach(correct => {
-        if (correct) {
-          currentCombo++;
-          baseTotal += 10;
-          comboTotal += currentCombo; // +n bonus
-        } else {
-          currentCombo = 0;
-        }
-      });
-
-      const correctRatio = newCorrect.length / (unit.questions?.length || 1);
-      let multiplier = 0;
-      if (correctRatio === 1) multiplier = 1.5;
-      else if (correctRatio >= 0.7) multiplier = 1.0;
-      else if (correctRatio >= 0.5) multiplier = 0.5;
-      else multiplier = 0;
-
-      const preMultiplierXp = baseTotal + comboTotal;
-      const finalXp = Math.floor(preMultiplierXp * multiplier);
-      const multiplierBonus = finalXp - preMultiplierXp; 
-
-      // Save drill results to session storage so result page can pick it up
+      // サーバーに送るデータ（スコア・XP・正誤情報は一切含めない）
       const drillResult = {
         attemptId: attemptIdRef.current,
         unitId,
         unitTitle: unit.title,
         totalQuestions: unit.questions?.length || 0,
-        score: finalScore,
         time: finalTime,
-        correctQuestions: newCorrect,
-        wrongQuestions: newWrong,
-        xpDetails: {
-          base: baseTotal,
-          combo: comboTotal,
-          multiplier,
-          multiplierBonus,
-          finalXp
-        }
+        answers: allAnswers,
       };
 
       sessionStorage.setItem('drillResult', JSON.stringify(drillResult));
@@ -269,13 +215,12 @@ export default function DrillPage() {
 
   const questions = unit.questions || [];
   const currentQ = questions[currentIndex];
-  // Calculate progress safely
-  const progressPercent = ((currentIndex) / (questions.length || 1)) * 100;
+  const progressPercent = (currentIndex / (questions.length || 1)) * 100;
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">
       <div className="max-w-3xl mx-auto w-full space-y-6">
-        
+
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <Button variant="ghost" size="sm" onClick={cancelDrill} className="text-muted-foreground hover:text-destructive transition-colors">
@@ -289,8 +234,8 @@ export default function DrillPage() {
 
         {/* Progress Bar */}
         <div className="w-full bg-black/5 h-2.5 rounded-full overflow-hidden shadow-inner">
-          <div 
-            className="bg-primary h-full transition-all duration-500 ease-out" 
+          <div
+            className="bg-primary h-full transition-all duration-500 ease-out"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -321,8 +266,8 @@ export default function DrillPage() {
                     onClick={() => handleSelectOption(i)}
                     className={`
                       w-full text-left p-5 rounded-xl border-2 transition-all duration-200
-                      ${isSelected 
-                        ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20' 
+                      ${isSelected
+                        ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20'
                         : 'border-gray-200 bg-white hover:border-primary/50 hover:bg-gray-50 hover:shadow-sm'
                       }
                     `}
