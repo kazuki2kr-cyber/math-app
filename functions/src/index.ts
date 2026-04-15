@@ -70,13 +70,16 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { attemptId, unitId: rawUnitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
+  const { attemptId, unitId: rawUnitId, unitTitle, score: rawScore, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
   const unitId = (rawUnitId || "").replace(/\./g, "_"); // ID内のドットをアンダースコアに正規化
 
-  console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
-  console.log(`[processDrillResult] Data summary: score=${score}, time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
+  // スコアを 0〜100 の範囲に強制クランプ（クライアント改ざん・連打バグによる異常値を防止）
+  const score: number = Math.min(100, Math.max(0, Math.round(Number(rawScore) || 0)));
 
-  if (!unitId || score === undefined || time === undefined) {
+  console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
+  console.log(`[processDrillResult] Data summary: score=${score}(raw=${rawScore}), time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
+
+  if (!unitId || rawScore === undefined || time === undefined) {
     console.error("[processDrillResult] Missing required parameters", { unitId, score, time });
     throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
   }
@@ -117,7 +120,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       }
     }
 
-    if (score > 100) suspiciousReasons.push(`スコア不正: ${score}`);
+    if (Number(rawScore) > 100 || Number(rawScore) < 0) suspiciousReasons.push(`スコア不正(クランプ前): ${rawScore}`);
 
     if (suspiciousReasons.length > 0) {
       await db.collection("suspicious_activities").add({

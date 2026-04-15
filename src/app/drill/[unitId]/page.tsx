@@ -44,6 +44,14 @@ export default function DrillPage() {
   const [answers, setAnswers] = useState<boolean[]>([]); // true if correct, false if wrong
   const [wrongQuestions, setWrongQuestions] = useState<Question[]>([]);
   const [correctQuestions, setCorrectQuestions] = useState<Question[]>([]);
+  const [isCompleting, setIsCompleting] = useState(false); // 演習完了処理中フラグ（連打防止）
+  const isCompletingRef = useRef(false); // 同期的な連打防止用ref
+  // attemptId は演習開始時に一度だけ生成し、連打時も同じIDを使う（サーバー冪等性チェック用）
+  const attemptIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : Date.now().toString() + Math.random().toString(36).substring(2)
+  );
   
   // Timer State
   const [startTime, setStartTime] = useState<number>(0);
@@ -172,7 +180,11 @@ export default function DrillPage() {
       setSelectedOption(null);
       setCurrentIndex(currentIndex + 1);
     } else {
-      // Finish Drill
+      // Finish Drill — 連打防止: すでに完了処理中なら何もしない
+      if (isCompletingRef.current) return;
+      isCompletingRef.current = true;
+      setIsCompleting(true);
+
       if (timerRef.current) clearInterval(timerRef.current);
       const finalTime = Math.floor((Date.now() - startTime) / 1000);
       
@@ -210,7 +222,7 @@ export default function DrillPage() {
 
       // Save drill results to session storage so result page can pick it up
       const drillResult = {
-        attemptId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2),
+        attemptId: attemptIdRef.current,
         unitId,
         unitTitle: unit.title,
         totalQuestions: unit.questions?.length || 0,
@@ -329,13 +341,13 @@ export default function DrillPage() {
             </div>
           </CardContent>
           <CardFooter className="bg-gray-50/80 border-t p-6 flex justify-end">
-            <Button 
-              size="lg" 
-              disabled={selectedOption === null} 
+            <Button
+              size="lg"
+              disabled={selectedOption === null || isCompleting}
               onClick={handleNext}
               className="px-10 h-14 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
             >
-              {currentIndex < (unit.questions?.length || 0) - 1 ? '次の問題へ' : '演習を完了する'}
+              {currentIndex < (unit.questions?.length || 0) - 1 ? '次の問題へ' : (isCompleting ? '処理中...' : '演習を完了する')}
               <ArrowRight className="w-6 h-6 ml-3" />
             </Button>
           </CardFooter>
