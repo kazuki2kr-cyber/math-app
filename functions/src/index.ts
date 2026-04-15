@@ -73,14 +73,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const { attemptId, unitId: rawUnitId, unitTitle, score: rawScore, time, correctQuestions, wrongQuestions, xpDetails } = data as any;
   const unitId = (rawUnitId || "").replace(/\./g, "_"); // ID内のドットをアンダースコアに正規化
 
-  // スコアを 0〜100 の範囲に強制クランプ（クライアント改ざん・連打バグによる異常値を防止）
-  const score: number = Math.min(100, Math.max(0, Math.round(Number(rawScore) || 0)));
-
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
-  console.log(`[processDrillResult] Data summary: score=${score}(raw=${rawScore}), time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
+  console.log(`[processDrillResult] Data summary: rawScore=${rawScore}, time=${time}, correct=${correctQuestions?.length}, wrong=${wrongQuestions?.length}`);
 
   if (!unitId || rawScore === undefined || time === undefined) {
-    console.error("[processDrillResult] Missing required parameters", { unitId, score, time });
+    console.error("[processDrillResult] Missing required parameters", { unitId, rawScore, time });
     throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
   }
 
@@ -93,44 +90,95 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const now = Timestamp.now();
   const dateStr = now.toDate().toISOString();
 
-  // --- 1. 不審なアクティビティの検証 ---
-  const suspiciousReasons: string[] = [];
+  // ==========================================
+  // --- 1. サーバー側入力検証（改ざん防止）---
+  // 問題ID照合・スコア再計算・XP上限チェックをここで行い、不正があれば即拒否する
+  // ==========================================
+
+  // 1-1. 単元ドキュメント取得と問題ID一覧の構築
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  if (!unitDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "指定された単元が見つかりません。");
+  }
+  const unitData = unitDoc.data()!;
+  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
+  if (unitQuestions.length === 0) {
+    // 問題がサブコレクションに格納されている場合のフォールバック
+    const qSnap = await db.collection(`units/${unitId}/questions`).get();
+    unitQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  const validQuestionIds = new Set<string>(unitQuestions.map((q: any) => String(q.id)));
+
+  // 1-2. 問題ID照合：送信された全問題IDが当該単元に実在するか確認
+  const allSubmittedIds: string[] = [
+    ...safeCorrectQuestions.map((q: any) => String(q.id)),
+    ...safeWrongQuestions.map((q: any) => String(q.id)),
+  ];
+  const invalidIds = allSubmittedIds.filter(id => !validQuestionIds.has(id));
+  if (invalidIds.length > 0) {
+    console.warn(`[processDrillResult] Invalid question IDs from uid=${uid}:`, invalidIds);
+    await db.collection("suspicious_activities").add({
+      uid, userName, unitId,
+      reasons: [`不正な問題ID ${invalidIds.length}件`],
+      timestamp: now,
+      details: { rawScore, time, invalidIds },
+    });
+    throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
+  }
+
+  // 1-3. スコアをサーバー側で再計算（クライアント申告値は使用しない）
+  const totalAnswered = safeCorrectQuestions.length + safeWrongQuestions.length;
+  const serverScore: number = totalAnswered > 0
+    ? Math.floor(safeCorrectQuestions.length / totalAnswered * 100)
+    : 0;
+  if (serverScore !== Number(rawScore)) {
+    console.warn(`[processDrillResult] Score mismatch uid=${uid}: client=${rawScore}, server=${serverScore}`);
+  }
+
+  // 1-4. XP上限チェック：全問正解・全コンボ・最大倍率(1.5)での理論最大値を超えたら拒否
+  //   baseTotal  = totalAnswered × 10
+  //   comboTotal = 1+2+…+n = n×(n+1)/2
+  //   maxFinalXp = floor((baseTotal + comboTotal) × 1.5)
+  const maxPreMultiplierXp = totalAnswered * 10 + (totalAnswered * (totalAnswered + 1)) / 2;
+  const maxAllowedXp = Math.floor(maxPreMultiplierXp * 1.5);
+  const clientXpGain: number = Number(xpDetails?.finalXp) || 0;
+  if (clientXpGain > maxAllowedXp) {
+    console.warn(`[processDrillResult] XP exceeds max uid=${uid}: client=${clientXpGain}, max=${maxAllowedXp}`);
+    await db.collection("suspicious_activities").add({
+      uid, userName, unitId,
+      reasons: [`XP不正: ${clientXpGain} > 最大値 ${maxAllowedXp}`],
+      timestamp: now,
+      details: { rawScore, time, xpGain: clientXpGain, maxXp: maxAllowedXp },
+    });
+    throw new functions.https.HttpsError("invalid-argument", "XP値が最大値を超えています。");
+  }
+
+  // --- 2. 演習間隔チェック（不審アクティビティ検出、非クリティカル）---
   try {
-    const unitDoc = await db.doc(`units/${unitId}`).get();
-    if (!unitDoc.exists) {
-      suspiciousReasons.push(`ユニットが存在しません: ${unitId}`);
-    }
-    
-    // 演習間隔チェック
     const latestAttempt = await db.collection(`users/${uid}/attempts`)
       .where("unitId", "==", unitId)
       .orderBy("date", "desc")
       .limit(1)
       .get();
-
     if (!latestAttempt.empty) {
       const lastData = latestAttempt.docs[0].data();
       const lastDateStr = lastData?.date;
       if (lastDateStr) {
         const lastDateTime = new Date(lastDateStr).getTime();
         const diffSec = (now.toMillis() - lastDateTime) / 1000;
-        if (diffSec < 30 && (safeCorrectQuestions.length + safeWrongQuestions.length) >= 10) {
-          suspiciousReasons.push(`異常に短い演習間隔: ${Math.round(diffSec)}秒`);
+        if (diffSec < 30 && totalAnswered >= 10) {
+          console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${Math.round(diffSec)}s`);
+          await db.collection("suspicious_activities").add({
+            uid, userName, unitId,
+            reasons: [`異常に短い演習間隔: ${Math.round(diffSec)}秒`],
+            timestamp: now,
+            details: { score: serverScore, time, correctCount: safeCorrectQuestions.length },
+          });
         }
       }
     }
-
-    if (Number(rawScore) > 100 || Number(rawScore) < 0) suspiciousReasons.push(`スコア不正(クランプ前): ${rawScore}`);
-
-    if (suspiciousReasons.length > 0) {
-      await db.collection("suspicious_activities").add({
-        uid, userName, unitId, reasons: suspiciousReasons, timestamp: now,
-        details: { score, time, correctCount: safeCorrectQuestions.length }
-      });
-    }
-  } catch (e) { 
-    console.error("[processDrillResult] Validation error:", e); 
-    // バリデーションエラーで処理全体を止めない
+  } catch (e) {
+    console.error("[processDrillResult] Interval check error (non-critical):", e);
   }
 
   try {
@@ -169,8 +217,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       currentTotalScore = uData?.totalScore || 0;
     }
 
-    // 2-1. XP / レベル計算
-    const finalXpGain = xpDetails?.finalXp || 0;
+    // 2-1. XP / レベル計算（clientXpGain は検証済み）
+    const finalXpGain = clientXpGain;
     const newTotalXp = currentXp + finalXpGain;
     
     // XPとレベル、称号、進捗の計算
@@ -223,7 +271,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     if (existingUnitData.maxScore === undefined) {
       isHighScore = true;
     } else {
-      if (score > existingMaxScore || (score === existingMaxScore && time < existingBestTime)) {
+      if (serverScore > existingMaxScore || (serverScore === existingMaxScore && time < existingBestTime)) {
         isHighScore = true;
       }
     }
@@ -242,9 +290,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       ...(userSnap.exists && currentIcon !== "📐" ? {} : { icon: "📐" })
     };
     
-    // ハイスコア更新時に totalScore を差分更新
+    // ハイスコア更新時に totalScore を差分更新（serverScore を使用）
     if (isHighScore) {
-      const scoreDiff = score - existingMaxScore;
+      const scoreDiff = serverScore - existingMaxScore;
       userUpdate.totalScore = FieldValue.increment(scoreDiff);
     }
 
@@ -262,7 +310,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     
     unitStats[unitId] = {
       ...existingUnitStat,
-      maxScore: isHighScore ? score : (existingUnitStat.maxScore || 0),
+      maxScore: isHighScore ? serverScore : (existingUnitStat.maxScore || 0),
       bestTime: isHighScore ? time : (existingUnitStat.bestTime || Infinity),
       wrongQuestionIds: currentWrongs,
       totalCorrect: (existingUnitStat.totalCorrect || 0) + safeCorrectQuestions.length,
@@ -278,7 +326,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
     transaction.set(attemptRef, {
       uid, userName, // Admin画面でAttemptsベースの集計をするためにuid/userNameを保存
-      unitId, unitTitle, score, time, date: dateStr,
+      unitId, unitTitle, score: serverScore, time, date: dateStr,
       expireAt: Timestamp.fromDate(expireAt),
       details: [
         ...safeCorrectQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
