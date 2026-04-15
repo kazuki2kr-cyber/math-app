@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listAdmins = exports.processDrillResult = exports.setAdminClaim = void 0;
-const functions = __importStar(require("firebase-functions"));
+const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-admin/firestore");
 admin.initializeApp();
@@ -80,33 +80,135 @@ exports.setAdminClaim = functions.region("us-central1").https.onCall(async (data
 // ==========================================
 // 2. processDrillResult — 演習結果の統合処理
 // ==========================================
+// 選択肢をパース（Firestore の options フィールドが文字列の場合も対応）
+function parseOptionsServer(options) {
+    if (Array.isArray(options))
+        return options.map(String);
+    if (typeof options === "string") {
+        try {
+            const parsed = JSON.parse(options);
+            return Array.isArray(parsed) ? parsed.map(String) : [];
+        }
+        catch (_a) {
+            return options.trim() ? options.split(",").map((s) => s.trim()) : [];
+        }
+    }
+    return [];
+}
 exports.processDrillResult = functions.region("us-central1").https.onCall(async (data, context) => {
-    var _a, _b;
+    var _a, _b, _c;
     if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
     }
-    const { attemptId, unitId, unitTitle, score, time, correctQuestions, wrongQuestions, xpDetails } = data;
+    const { attemptId, unitId: rawUnitId, unitTitle, time, answers } = data;
+    const unitId = (rawUnitId || "").trim();
     console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
-    console.log(`[processDrillResult] Data summary: score=${score}, time=${time}, correct=${correctQuestions === null || correctQuestions === void 0 ? void 0 : correctQuestions.length}, wrong=${wrongQuestions === null || wrongQuestions === void 0 ? void 0 : wrongQuestions.length}`);
-    if (!unitId || score === undefined || time === undefined) {
-        console.error("[processDrillResult] Missing required parameters", { unitId, score, time });
+    console.log(`[processDrillResult] Data summary: time=${time}, answers=${answers === null || answers === void 0 ? void 0 : answers.length}`);
+    if (!unitId || time === undefined || !Array.isArray(answers)) {
+        console.error("[processDrillResult] Missing required parameters", { unitId, time, answers });
         throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
     }
-    // 配列が未定義の場合のフォールバック
-    const safeCorrectQuestions = Array.isArray(correctQuestions) ? correctQuestions : [];
-    const safeWrongQuestions = Array.isArray(wrongQuestions) ? wrongQuestions : [];
+    const safeAnswers = answers;
     const uid = context.auth.uid;
     const userName = ((_a = context.auth.token) === null || _a === void 0 ? void 0 : _a.name) || ((_b = context.auth.token) === null || _b === void 0 ? void 0 : _b.email) || "名無し";
     const now = firestore_1.Timestamp.now();
     const dateStr = now.toDate().toISOString();
-    // --- 1. 不審なアクティビティの検証 ---
-    const suspiciousReasons = [];
-    try {
-        const unitDoc = await db.doc(`units/${unitId}`).get();
-        if (!unitDoc.exists) {
-            suspiciousReasons.push(`ユニットが存在しません: ${unitId}`);
+    // ==========================================
+    // --- 1. サーバー側入力検証（改ざん防止）---
+    // 問題ID照合・正誤判定・スコア計算・XP計算をすべてサーバーで行う
+    // ==========================================
+    // 1-1. 単元ドキュメント取得と問題マップの構築
+    const unitDoc = await db.doc(`units/${unitId}`).get();
+    if (!unitDoc.exists) {
+        throw new functions.https.HttpsError("not-found", "指定された単元が見つかりません。");
+    }
+    const unitData = unitDoc.data();
+    let unitQuestions = Array.isArray(unitData.questions) ? unitData.questions : [];
+    if (unitQuestions.length === 0) {
+        // 問題がサブコレクションに格納されている場合のフォールバック
+        const qSnap = await db.collection(`units/${unitId}/questions`).get();
+        unitQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+    // 問題ID → 問題データ（parsedOptions 付き）のマップ
+    const unitQuestionMap = new Map();
+    for (const q of unitQuestions) {
+        unitQuestionMap.set(String(q.id), { ...q, parsedOptions: parseOptionsServer(q.options) });
+    }
+    // 1-2. 問題ID照合：送信された全問題IDが当該単元に実在するか確認
+    const invalidIds = safeAnswers
+        .map(a => String(a.questionId))
+        .filter(id => !unitQuestionMap.has(id));
+    if (invalidIds.length > 0) {
+        console.warn(`[processDrillResult] Invalid question IDs from uid=${uid}:`, invalidIds);
+        await db.collection("suspicious_activities").add({
+            uid, userName, unitId,
+            reasons: [`不正な問題ID ${invalidIds.length}件`],
+            timestamp: now,
+            details: { time, invalidIds },
+        });
+        throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
+    }
+    // 1-3. サーバー側で正誤判定・スコア計算・XP計算を実施
+    const safeCorrectQuestions = [];
+    const safeWrongQuestions = [];
+    const answerOrderForCombo = [];
+    for (const answer of safeAnswers) {
+        const q = unitQuestionMap.get(String(answer.questionId));
+        const answerIndex = Number(q.answer_index);
+        const correctOptionText = (_c = q.parsedOptions[answerIndex - 1]) !== null && _c !== void 0 ? _c : ""; // answer_index は 1-based
+        const isCorrect = String(answer.selectedOptionText) === String(correctOptionText);
+        answerOrderForCombo.push(isCorrect);
+        if (isCorrect) {
+            safeCorrectQuestions.push({ id: q.id, question_text: q.question_text });
         }
-        // 演習間隔チェック
+        else {
+            safeWrongQuestions.push({
+                id: q.id,
+                question_text: q.question_text,
+                selectedOptionText: answer.selectedOptionText,
+                correctOptionText,
+                explanation: q.explanation || "",
+                options: q.parsedOptions,
+            });
+        }
+    }
+    const totalAnswered = safeAnswers.length;
+    const serverScore = totalAnswered > 0
+        ? Math.floor(safeCorrectQuestions.length / totalAnswered * 100)
+        : 0;
+    // XP計算（正解順序によるコンボボーナスを含む）
+    let baseTotal = 0;
+    let comboTotal = 0;
+    let currentCombo = 0;
+    for (const isCorrect of answerOrderForCombo) {
+        if (isCorrect) {
+            currentCombo++;
+            baseTotal += 10;
+            comboTotal += currentCombo;
+        }
+        else {
+            currentCombo = 0;
+        }
+    }
+    const correctRatio = totalAnswered > 0 ? safeCorrectQuestions.length / totalAnswered : 0;
+    let multiplier = 0;
+    if (correctRatio === 1)
+        multiplier = 1.5;
+    else if (correctRatio >= 0.7)
+        multiplier = 1.0;
+    else if (correctRatio >= 0.5)
+        multiplier = 0.5;
+    const preMultiplierXp = baseTotal + comboTotal;
+    const finalXpGain = Math.floor(preMultiplierXp * multiplier);
+    const xpDetailsResult = {
+        base: baseTotal,
+        combo: comboTotal,
+        multiplier,
+        multiplierBonus: finalXpGain - preMultiplierXp,
+        finalXp: finalXpGain,
+    };
+    // --- 2. 演習間隔チェック（不審アクティビティ検出、非クリティカル）---
+    try {
         const latestAttempt = await db.collection(`users/${uid}/attempts`)
             .where("unitId", "==", unitId)
             .orderBy("date", "desc")
@@ -118,24 +220,28 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             if (lastDateStr) {
                 const lastDateTime = new Date(lastDateStr).getTime();
                 const diffSec = (now.toMillis() - lastDateTime) / 1000;
-                if (diffSec < 30 && (safeCorrectQuestions.length + safeWrongQuestions.length) >= 10) {
-                    suspiciousReasons.push(`異常に短い演習間隔: ${Math.round(diffSec)}秒`);
+                if (diffSec < 30 && totalAnswered >= 10) {
+                    console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${Math.round(diffSec)}s`);
+                    await db.collection("suspicious_activities").add({
+                        uid, userName, unitId,
+                        reasons: [`異常に短い演習間隔: ${Math.round(diffSec)}秒`],
+                        timestamp: now,
+                        details: { score: serverScore, time, correctCount: safeCorrectQuestions.length },
+                    });
                 }
             }
         }
-        if (score > 100)
-            suspiciousReasons.push(`スコア不正: ${score}`);
-        if (suspiciousReasons.length > 0) {
-            await db.collection("suspicious_activities").add({
-                uid, userName, unitId, reasons: suspiciousReasons, timestamp: now,
-                details: { score, time, correctCount: safeCorrectQuestions.length }
-            });
-        }
     }
     catch (e) {
-        console.error("[processDrillResult] Validation error:", e);
-        // バリデーションエラーで処理全体を止めない
+        console.error("[processDrillResult] Interval check error (non-critical):", e);
     }
+    // alreadyProcessed 時に返すための結果オブジェクト（問題の詳細を含む）
+    const questionResults = {
+        score: serverScore,
+        xpDetails: xpDetailsResult,
+        correctQuestions: safeCorrectQuestions,
+        wrongQuestions: safeWrongQuestions,
+    };
     try {
         // --- 2. トランザクションによるデータ更新 ---
         const result = await db.runTransaction(async (transaction) => {
@@ -156,7 +262,8 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                     success: true,
                     alreadyProcessed: true,
                     isHighScore: false,
-                    isLevelUp: false
+                    isLevelUp: false,
+                    ...questionResults,
                 };
             }
             let currentXp = 0;
@@ -168,8 +275,7 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                 currentIcon = (uData === null || uData === void 0 ? void 0 : uData.icon) || "📐";
                 currentTotalScore = (uData === null || uData === void 0 ? void 0 : uData.totalScore) || 0;
             }
-            // 2-1. XP / レベル計算
-            const finalXpGain = (xpDetails === null || xpDetails === void 0 ? void 0 : xpDetails.finalXp) || 0;
+            // 2-1. XP / レベル計算（サーバー側計算済みの finalXpGain を使用）
             const newTotalXp = currentXp + finalXpGain;
             // XPとレベル、称号、進捗の計算
             const MAX_LEVEL = 100;
@@ -229,7 +335,7 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                 isHighScore = true;
             }
             else {
-                if (score > existingMaxScore || (score === existingMaxScore && time < existingBestTime)) {
+                if (serverScore > existingMaxScore || (serverScore === existingMaxScore && time < existingBestTime)) {
                     isHighScore = true;
                 }
             }
@@ -245,9 +351,9 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                 updatedAt: dateStr,
                 ...(userSnap.exists && currentIcon !== "📐" ? {} : { icon: "📐" })
             };
-            // ハイスコア更新時に totalScore を差分更新
+            // ハイスコア更新時に totalScore を差分更新（serverScore を使用）
             if (isHighScore) {
-                const scoreDiff = score - existingMaxScore;
+                const scoreDiff = serverScore - existingMaxScore;
                 userUpdate.totalScore = firestore_1.FieldValue.increment(scoreDiff);
             }
             // unitStatsの構築 (scoresとwrong_answersを内包)
@@ -263,7 +369,7 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             const existingUnitStat = unitStats[unitId] || {};
             unitStats[unitId] = {
                 ...existingUnitStat,
-                maxScore: isHighScore ? score : (existingUnitStat.maxScore || 0),
+                maxScore: isHighScore ? serverScore : (existingUnitStat.maxScore || 0),
                 bestTime: isHighScore ? time : (existingUnitStat.bestTime || Infinity),
                 wrongQuestionIds: currentWrongs,
                 totalCorrect: (existingUnitStat.totalCorrect || 0) + safeCorrectQuestions.length,
@@ -276,7 +382,8 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
             transaction.set(attemptRef, {
                 uid, userName, // Admin画面でAttemptsベースの集計をするためにuid/userNameを保存
-                unitId, unitTitle, score, time, date: dateStr,
+                unitId, unitTitle, score: serverScore, time, date: dateStr,
+                xpGain: finalXpGain,
                 expireAt: firestore_1.Timestamp.fromDate(expireAt),
                 details: [
                     ...safeCorrectQuestions.map((q) => ({ qId: q.id, isCorrect: true })),
@@ -313,14 +420,16 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
                 newLevel,
                 xpGain: finalXpGain,
                 newTotalXp,
+                ...questionResults,
                 // リーダーボード更新に必要な情報を返す
                 _leaderboardUpdate: isHighScore ? { uid, userName, currentIcon, newLevel, newTotalXp } : null
             };
         });
         // --- 3. トランザクション後にリーダーボード更新（非同期・ベストエフォート） ---
-        if (result._leaderboardUpdate) {
+        const resultAny = result;
+        if (resultAny._leaderboardUpdate) {
             try {
-                await updateLeaderboard(result._leaderboardUpdate);
+                await updateLeaderboard(resultAny._leaderboardUpdate);
             }
             catch (leaderboardErr) {
                 console.error("[processDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
@@ -328,7 +437,7 @@ exports.processDrillResult = functions.region("us-central1").https.onCall(async 
             }
         }
         // _leaderboardUpdate はクライアントに返さない
-        const { _leaderboardUpdate, ...clientResult } = result;
+        const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
         return clientResult;
     }
     catch (error) {
