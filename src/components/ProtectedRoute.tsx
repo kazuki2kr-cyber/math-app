@@ -1,13 +1,37 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
+import { db } from '@/lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import MaintenancePage from './MaintenancePage';
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [maintenance, setMaintenance] = useState<{ enabled: boolean; message?: string; scheduledEnd?: string } | null>(null);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(true);
+
+  useEffect(() => {
+    // メンテナンス設定をリアルタイム監視
+    const unsubscribe = onSnapshot(doc(db, 'config', 'maintenance'), (snapshot) => {
+      if (snapshot.exists()) {
+        setMaintenance(snapshot.data() as any);
+      } else {
+        setMaintenance({ enabled: false });
+      }
+      setMaintenanceLoading(false);
+    }, (error) => {
+      console.error("Maintenance check failed:", error);
+      // エラー時は安全のためメンテナンス中とはみなさない（または管理者の判断に委ねる）
+      setMaintenance({ enabled: false });
+      setMaintenanceLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!loading && !user && pathname !== '/login') {
@@ -15,7 +39,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     }
   }, [user, loading, router, pathname]);
 
-  if (loading) {
+  if (loading || maintenanceLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full font-bold"></div>
@@ -23,10 +47,16 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     );
   }
 
-  // If not logged in and trying to access anything other than /login, don't render children
+  // メンテナンスモード有効時 (管理者はバイパス)
+  if (maintenance?.enabled && !isAdmin && pathname !== '/login') {
+    return <MaintenancePage message={maintenance.message} scheduledEnd={maintenance.scheduledEnd} />;
+  }
+
+  // ログインしていない状態で /login 以外にアクセスしようとしている場合は何も表示しない（useEffectで遷移させる）
   if (!user && pathname !== '/login') {
     return null;
   }
 
   return <>{children}</>;
 }
+

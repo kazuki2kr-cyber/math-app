@@ -132,5 +132,15 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow write: if isAdmin();
     }
+
+    // ------------------------------------------
+    // 7. システム設定 (メンテナンスモードなど)
+    // ------------------------------------------
+    match /config/maintenance {
+      // 全ユーザーが読み取り可能（非ログインユーザーもメンテナンス画面を見るため）
+      allow read: if true;
+      // 管理者のみ書き込み可能
+      allow write: if isAdmin();
+    }
   }
 }

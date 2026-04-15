@@ -50,6 +50,12 @@ export default function AdminPage() {
   const [adminList, setAdminList] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
   const [adminListLoading, setAdminListLoading] = useState(false);
 
+  // Maintenance mode state
+  const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
+  const [maintenanceEnd, setMaintenanceEnd] = useState('');
+  const [maintenanceUpdateLoading, setMaintenanceUpdateLoading] = useState(false);
+
   // Custom Claims ベース管理者チェック（AuthContext から取得）
 
   useEffect(() => {
@@ -57,8 +63,44 @@ export default function AdminPage() {
     if (activeTab === 'units' || activeTab === 'analytics') fetchUnits();
     if (activeTab === 'scores' || activeTab === 'suspicious' || activeTab === 'analytics') fetchScores();
     if (activeTab === 'xp') fetchUsers();
-    if (activeTab === 'roles') { fetchAdminList(); }
+    if (activeTab === 'roles') { 
+      fetchAdminList(); 
+      fetchMaintenanceStatus();
+    }
   }, [activeTab, isAdmin]);
+
+  const fetchMaintenanceStatus = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'config', 'maintenance'));
+      if (snap.exists()) {
+        const data = snap.data();
+        setMaintenanceEnabled(data.enabled || false);
+        setMaintenanceMessage(data.message || '');
+        setMaintenanceEnd(data.scheduledEnd || '');
+      }
+    } catch (err) {
+      console.error('Failed to fetch maintenance status:', err);
+    }
+  };
+
+  const handleUpdateMaintenance = async () => {
+    setMaintenanceUpdateLoading(true);
+    try {
+      await setDoc(doc(db, 'config', 'maintenance'), {
+        enabled: maintenanceEnabled,
+        message: maintenanceMessage,
+        scheduledEnd: maintenanceEnd,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.email
+      }, { merge: true });
+      setMessage(`✅ メンテナンスモードを${maintenanceEnabled ? '有効' : '無効'}に設定しました。`);
+    } catch (err: any) {
+      console.error('Failed to update maintenance status:', err);
+      setMessage(`エラー: ${err.message}`);
+    } finally {
+      setMaintenanceUpdateLoading(false);
+    }
+  };
 
 
   const fetchAdminList = async () => {
@@ -1190,9 +1232,84 @@ unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",
         />
       )}
 
-      {/* ========== TAB: ROLES ========== */}
+      {/* ========== TAB: ROLES & MAINTENANCE ========== */}
       {activeTab === 'roles' && (
-        <div className="space-y-6 mt-4">
+        <div className="space-y-6 mt-4 animate-in fade-in duration-500">
+          {/* メンテナンスモード設定 */}
+          <Card className={`border-t-4 ${maintenanceEnabled ? 'border-t-amber-500 shadow-amber-100' : 'border-t-slate-200'} shadow-md overflow-hidden transition-all duration-300`}>
+            <CardHeader className={`${maintenanceEnabled ? 'bg-amber-50/50' : 'bg-slate-50/50'} py-4`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-xl ${maintenanceEnabled ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-500'}`}>
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">メンテナンスモード設定</CardTitle>
+                    <CardDescription>
+                      {maintenanceEnabled 
+                        ? '現在メンテナンスモードが有効です。一般ユーザーはアクセスできません。' 
+                        : '現在通常稼働中です。'}
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 bg-white p-1.5 rounded-2xl border shadow-sm">
+                  <span className={`text-xs font-black px-3 ${maintenanceEnabled ? 'text-amber-600' : 'text-slate-400'}`}>
+                    {maintenanceEnabled ? '有効' : '無効'}
+                  </span>
+                  <button
+                    onClick={() => setMaintenanceEnabled(!maintenanceEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${maintenanceEnabled ? 'bg-amber-500' : 'bg-slate-200'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${maintenanceEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    表示メッセージ
+                  </label>
+                  <Input 
+                    placeholder="現在メンテナンス中です..." 
+                    value={maintenanceMessage}
+                    onChange={(e) => setMaintenanceMessage(e.target.value)}
+                    className="focus-visible:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">ユーザーに表示される説明文です。</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    終了予定時刻
+                  </label>
+                  <Input 
+                    type="datetime-local" 
+                    value={maintenanceEnd}
+                    onChange={(e) => setMaintenanceEnd(e.target.value)}
+                    className="focus-visible:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">任意設定。ユーザーに目安を表示します。</p>
+                </div>
+              </div>
+              <div className="flex justify-end pt-2 border-t border-slate-100">
+                <Button 
+                  onClick={handleUpdateMaintenance} 
+                  disabled={maintenanceUpdateLoading}
+                  className={`rounded-xl px-8 font-black ${maintenanceEnabled ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-slate-900 hover:bg-slate-800 text-white'}`}
+                >
+                  {maintenanceUpdateLoading ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  設定を保存して反映
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 管理者権限付与・剥奪 */}
           <Card className="shadow-sm">
             <CardHeader className="bg-gray-50 border-b">
               <CardTitle className="text-lg text-primary flex items-center gap-2">
