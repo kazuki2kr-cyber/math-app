@@ -8,7 +8,7 @@ import { doc, getDoc, collection, getDocs, query, orderBy } from 'firebase/fires
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
-import { Clock, ArrowRight, XCircle } from 'lucide-react';
+import { Clock, ArrowRight, XCircle, ChevronLeft } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 
 // Firestore から取得する生データ（answer_index を含む）
@@ -49,6 +49,8 @@ export default function DrillPage() {
   // Drill State
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  // 各問題インデックスに対して選択した選択肢インデックスを保持（「戻る」時の復元用）
+  const [questionSelections, setQuestionSelections] = useState<Record<number, number>>({});
   // 選択した選択肢テキストのみ記録（正誤はサーバーが判定）
   const [submittedAnswers, setSubmittedAnswers] = useState<{ questionId: string; selectedOptionText: string }[]>([]);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -156,6 +158,17 @@ export default function DrillPage() {
 
   const handleSelectOption = (index: number) => {
     setSelectedOption(index);
+    setQuestionSelections(prev => ({ ...prev, [currentIndex]: index }));
+  };
+
+  const handleBack = () => {
+    if (currentIndex === 0 || isCompleting) return;
+    const prevIndex = currentIndex - 1;
+    // 提出済み回答から最後のエントリを取り除く
+    setSubmittedAnswers(prev => prev.slice(0, -1));
+    // 前の問題の選択状態を復元
+    setSelectedOption(questionSelections[prevIndex] ?? null);
+    setCurrentIndex(prevIndex);
   };
 
   const handleNext = () => {
@@ -292,7 +305,17 @@ export default function DrillPage() {
               })}
             </div>
           </CardContent>
-          <CardFooter className="bg-gray-50/80 border-t p-6 flex justify-end">
+          <CardFooter className="bg-gray-50/80 border-t p-6 flex justify-between items-center">
+            <Button
+              variant="ghost"
+              size="lg"
+              disabled={currentIndex === 0 || isCompleting}
+              onClick={handleBack}
+              className="px-6 h-14 text-base font-medium text-muted-foreground hover:text-foreground disabled:opacity-30"
+            >
+              <ChevronLeft className="w-5 h-5 mr-1" />
+              前の問題へ
+            </Button>
             <Button
               size="lg"
               disabled={selectedOption === null || isCompleting}
