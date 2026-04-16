@@ -748,15 +748,15 @@ export default function AdminPage() {
 
           const unitsMap: Record<string, { unitDoc: any, questions: any[] }> = {};
 
-          data.forEach((row, index) => {
+          data.forEach((row) => {
             const { unit_id, question_text, options, answer_index, explanation, image_url, category } = row;
             if (!unit_id) return;
 
             if (!unitsMap[unit_id]) {
-              unitsMap[unit_id] = { 
+              unitsMap[unit_id] = {
                 unitDoc: {
-                  id: unit_id, 
-                  title: `単元 ${unit_id}`, 
+                  id: unit_id,
+                  title: `単元 ${unit_id}`,
                   subject: importSubject === 'math' ? '数学' : importSubject === 'english' ? '英語' : importSubject,
                   category: category || '1.正の数と負の数',
                   totalQuestions: 0
@@ -765,9 +765,12 @@ export default function AdminPage() {
               };
             }
 
+            // IDは単元内の連番で生成（全体行番号を使うと他単元の問題数に依存し、
+            // 再インポート時にIDがズレて wrongQuestionIds の追跡が壊れる）
+            const localIndex = unitsMap[unit_id].questions.length;
             unitsMap[unit_id].questions.push({
-              id: `q_${index}`,
-              order: unitsMap[unit_id].questions.length,
+              id: `q_${localIndex}`,
+              order: localIndex,
               question_text: question_text || '',
               options: parseOptions(options),
               answer_index: parseInt(answer_index) || 1,
@@ -816,11 +819,14 @@ export default function AdminPage() {
   }
 
   const handleDownloadTemplate = () => {
-    const csvContent = 
+    // unit_id がそのまま単元の表示名になります（例: "1.正負の数の加減" と入力すると画面にその名前で表示）
+    // answer_index は選択肢の番号（1始まり）。options の2番目が正解なら 2 と記入
+    // image_url は省略可（末尾のカンマだけ残して空欄にする）
+    const csvContent =
 `unit_id,category,question_text,options,answer_index,explanation,image_url
-unit_01,1.正の数と負の数,$1+1$は？,"[""1"",""2"",""3"",""4""]",2,1足す1は2です。,
-unit_01,1.正の数と負の数,$x^2=4$ を解け,"[""x=2"",""x=-2"",""x=\\pm 2"",""解なし""]",3,平方根をとります。,
-unit_02,2.文字の式,次の図形の面積を求めよ,"[""10"",""20"",""30"",""40""]",2,底辺×高さ÷2です。,https://example.com/image.png
+1.正負の数の加減,1.正の数と負の数,$1+1$は？,"[""1"",""2"",""3"",""4""]",2,1足す1は2です。,
+1.正負の数の加減,1.正の数と負の数,$x^2=4$ を解け,"[""x=2"",""x=-2"",""x=\\pm 2"",""解なし""]",3,平方根をとります。,
+2.文字と式,2.文字と式,次の図形の面積を求めよ,"[""10"",""20"",""30"",""40""]",2,底辺×高さ÷2です。,https://example.com/image.png
 `;
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
