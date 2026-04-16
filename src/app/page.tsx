@@ -149,10 +149,18 @@ export default function Home() {
 
         setWrongAnswers(newWrongAnswers);
         setDrillCounts(newDrillCounts);
+        // Sort units: Category ASC, then Title ASC
+        unitsData.sort((a, b) => {
+          const catA = a.category || 'その他';
+          const catB = b.category || 'その他';
+          if (catA !== catB) return catA.localeCompare(catB, 'ja', { numeric: true });
+          return a.title.localeCompare(b.title, 'ja', { numeric: true });
+        });
+
         setUnits(unitsData);
 
         // Extract available categories
-        const categories = Array.from(new Set(unitsData.map(u => u.category || 'その他'))).sort();
+        const categories = Array.from(new Set(unitsData.map(u => u.category || 'その他'))).sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
         setAvailableCategories(categories);
 
         setScores(newScores);
@@ -410,9 +418,15 @@ export default function Home() {
                           key={unit.id}
                           className="flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 group bg-white border-transparent hover:border-primary/20"
                         >
-                          <CardHeader className="pb-3 border-b bg-gray-50/50 group-hover:bg-primary/5 transition-colors">
-                            <CardTitle className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">{displayTitle}</CardTitle>
-                            <CardDescription className="font-mono text-xs">総問題数: {totalQ}問</CardDescription>
+                          <CardHeader className="pb-4 border-b bg-gray-50/50 group-hover:bg-primary/5 transition-colors">
+                            <div className="space-y-1">
+                              <div className="text-[10px] font-black text-primary/60 uppercase tracking-widest transition-colors group-hover:text-primary/80">
+                                {unit.category || 'その他'}
+                              </div>
+                              <CardTitle className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors leading-tight">
+                                {displayTitle}
+                              </CardTitle>
+                            </div>
                           </CardHeader>
                           <CardContent className="flex-1 pt-4 pb-5">
                             {hasPlayed ? (
