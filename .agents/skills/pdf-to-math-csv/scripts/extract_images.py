@@ -1,3 +1,5 @@
+from PIL import Image
+import io
 import fitz  # PyMuPDF
 import sys
 import os
@@ -21,17 +23,25 @@ def extract_images_from_pdf(pdf_path, output_dir):
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
-                image_ext = base_image["ext"]
                 
-                # Generate unique filename based on page and image index
-                filename = f"image_p{page_index + 1}_{img_index + 1}.{image_ext}"
-                filepath = os.path.join(output_dir, filename)
-                
-                # Save the image
-                with open(filepath, "wb") as f:
-                    f.write(image_bytes)
-                
-                extracted_files.append(filepath)
+                # Convert to WebP using Pillow
+                try:
+                    img_data = Image.open(io.BytesIO(image_bytes))
+                    filename = f"image_p{page_index + 1}_{img_index + 1}.webp"
+                    filepath = os.path.join(output_dir, filename)
+                    
+                    # Save as WebP with optimized quality
+                    img_data.save(filepath, "WEBP", quality=80, method=6)
+                    extracted_files.append(filepath)
+                except Exception as e:
+                    print(f"Warning: Could not convert image {img_index} on page {page_index+1} to WebP: {e}")
+                    # Fallback to original if conversion fails
+                    image_ext = base_image["ext"]
+                    filename = f"image_p{page_index + 1}_{img_index + 1}.{image_ext}"
+                    filepath = os.path.join(output_dir, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(image_bytes)
+                    extracted_files.append(filepath)
                 
         if extracted_files:
             print(f"Extraction complete. Found {len(extracted_files)} images.")
