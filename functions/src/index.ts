@@ -445,7 +445,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       xpDetails: xpDetailsResult,
       ...questionResults,
       // リーダーボード更新に必要な情報を返す
-      _leaderboardUpdate: isHighScore ? { uid, userName, currentIcon, newLevel, newTotalXp } : null
+      // isHighScore（スコア更新）または finalXpGain > 0（XP増加）の場合に更新する。
+      // 11回目以降でXP増加もハイスコアもない場合は無駄な書き込みを避けるためスキップ。
+      _leaderboardUpdate: (isHighScore || finalXpGain > 0)
+        ? { uid, userName, currentIcon, newLevel, newTotalXp }
+        : null
     };
   });
 
@@ -492,6 +496,9 @@ async function updateLeaderboard(info: {
 
   const totalScore = userData.totalScore || 0;
   const xp = userData.xp || 0;
+  // icon と level もユーザードキュメントから最新値を取得（アイコン変更の反映遅延を防ぐ）
+  const icon = userData.icon || info.currentIcon;
+  const level = userData.level || info.newLevel;
 
   const leaderboardSnap = await leaderboardRef.get();
   let rankings: any[] = [];
@@ -507,8 +514,8 @@ async function updateLeaderboard(info: {
     name: info.userName,
     totalScore,
     xp,
-    icon: info.currentIcon,
-    level: info.newLevel,
+    icon,
+    level,
   };
 
   if (existingIdx >= 0) {
