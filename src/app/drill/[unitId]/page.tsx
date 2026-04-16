@@ -104,17 +104,24 @@ export default function DrillPage() {
             }
           }
 
+          // Fisher-Yates シャッフル（.sort(() => Math.random() - 0.5) は重複が生じる既知のバグのため使用しない）
+          const fisherYatesShuffle = <T,>(arr: T[]): T[] => {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+          };
+
           // 問題をシャッフルして最大10問を抽出
-          let shuffledQuestions = [...filteredQuestions].sort(() => 0.5 - Math.random());
-          if (shuffledQuestions.length > 10) {
-            shuffledQuestions = shuffledQuestions.slice(0, 10);
-          }
+          const shuffledQuestions = fisherYatesShuffle(filteredQuestions).slice(0, 10);
 
           // 選択肢をシャッフル（answer_index はここでのみ参照し、状態には含めない）
           const finalQuestions: Question[] = shuffledQuestions.map((q) => ({
             id: q.id,
             question_text: q.question_text,
-            options: [...q.options].sort(() => 0.5 - Math.random()),
+            options: fisherYatesShuffle(q.options),
             image_url: q.image_url ?? null,
             // answer_index は意図的に除外
           }));
