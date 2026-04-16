@@ -430,9 +430,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       xpDetails: xpDetailsResult,
       ...questionResults,
       // リーダーボード更新に必要な情報を返す
-      // isHighScore（スコア更新）または finalXpGain > 0（XP増加）の場合に更新する。
-      // 11回目以降でXP増加もハイスコアもない場合は無駄な書き込みを避けるためスキップ。
-      _leaderboardUpdate: (isHighScore || finalXpGain > 0)
+      // isHighScore（スコア更新）またはレベルアップ時のみ更新する。
+      // XP増加のみで順位・レベルに変化がない場合は書き込みを節約するためスキップ。
+      _leaderboardUpdate: (isHighScore || isLevelUp)
         ? { uid, userName, currentIcon, newLevel, newTotalXp }
         : null,
       _rapidSubmission: _rapidSubmissionSec,
@@ -456,7 +456,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }
   }
 
-  // リーダーボード更新（isHighScore または XP増加がある場合のみ）
+  // リーダーボード更新（isHighScore またはレベルアップ時のみ）
   if (resultAny._leaderboardUpdate) {
     try {
       await updateLeaderboard(resultAny._leaderboardUpdate);

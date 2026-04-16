@@ -107,7 +107,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (finalUserData.xp === undefined) finalUserData.xp = 0;
             if (finalUserData.icon === undefined) finalUserData.icon = '📐';
             if (finalUserData.hasAgreedToTerms === undefined) finalUserData.hasAgreedToTerms = false;
-            await setDoc(userRef, { lastLoginAt: userData.lastLoginAt }, { merge: true });
+            const lastLogin = finalUserData.lastLoginAt ? new Date(finalUserData.lastLoginAt).getTime() : 0;
+            if (Date.now() - lastLogin > 3_600_000) {
+              await setDoc(userRef, { lastLoginAt: userData.lastLoginAt }, { merge: true });
+            }
           }
 
           // Check admin custom claim

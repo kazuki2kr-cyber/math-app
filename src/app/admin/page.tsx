@@ -5,16 +5,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, increment } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import Papa from 'papaparse';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Trash2, RefreshCw, FileText, Database, UserCheck, Shield, Zap, AlertTriangle, Save, X, BarChart, Users, Upload, Package, History } from 'lucide-react';
-import { MathDisplay } from '@/components/MathDisplay';
-import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
+import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
+import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
 import { VersionHistoryPanel } from './components/VersionHistoryPanel';
+import ImportTab from './components/ImportTab';
+import UnitsTab from './components/UnitsTab';
+import ScoresTab from './components/ScoresTab';
+import XpTab from './components/XpTab';
+import SuspiciousTab from './components/SuspiciousTab';
+import RolesTab from './components/RolesTab';
 import 'katex/dist/katex.min.css';
 
 export default function AdminPage() {
@@ -47,7 +48,6 @@ export default function AdminPage() {
 
   // Role management state
   const [roleEmail, setRoleEmail] = useState('');
-  const [roleLoading, setRoleLoading] = useState(false);
   const [adminList, setAdminList] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
   const [adminListLoading, setAdminListLoading] = useState(false);
 
@@ -61,11 +61,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    if (activeTab === 'units' || activeTab === 'analytics') fetchUnits();
-    if (activeTab === 'scores' || activeTab === 'suspicious' || activeTab === 'analytics') fetchScores();
+    if (activeTab === 'units') fetchUnits();
+    if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
     if (activeTab === 'xp') fetchUsers();
-    if (activeTab === 'roles') { 
-      fetchAdminList(); 
+    if (activeTab === 'roles') {
+      fetchAdminList();
       fetchMaintenanceStatus();
     }
   }, [activeTab, isAdmin]);
@@ -738,7 +738,7 @@ export default function AdminPage() {
     setLoading(true);
     setMessage('CSVを解析中...');
 
-    Papa.parse(file, {
+    import('papaparse').then(({ default: Papa }) => Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
@@ -807,7 +807,7 @@ export default function AdminPage() {
         setMessage(`CSV解析エラー: ${error.message}`);
         setLoading(false);
       }
-    });
+    }));
   };
 
   if (!isAdmin && user) {
@@ -912,578 +912,80 @@ export default function AdminPage() {
 
       {/* ========== TAB: IMPORT ========== */}
       {activeTab === 'import' && (
-        <Card className="border-t-4 border-t-primary shadow-sm mt-4">
-          <CardHeader>
-            <CardTitle>一括問題インポート (CSV)</CardTitle>
-            <CardDescription>
-              StudyAid等で作成したCSVデータをアップロードし、Firestoreへ一括登録します。同名の単元は上書きされます。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col gap-2 mb-4 bg-gray-50 border p-4 rounded-xl">
-              <label className="text-sm font-bold text-gray-700 flex items-center">
-                <Database className="w-4 h-4 mr-1" />
-                対象教科の選択
-              </label>
-              <select 
-                value={importSubject} 
-                onChange={(e) => setImportSubject(e.target.value)}
-                className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white font-medium focus:border-primary outline-none"
-              >
-                <option value="math">数学</option>
-                <option value="english">英語</option>
-              </select>
-              <p className="text-xs text-muted-foreground mt-1">
-                ※アップロードするCSVデータすべてにこの教科が設定されます。
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Input 
-                type="file" 
-                accept=".csv" 
-                onChange={handleFileUpload} 
-                disabled={loading}
-                className="flex-1"
-              />
-              <Button variant="outline" onClick={handleDownloadTemplate} type="button">
-                テンプレートをダウンロード
-              </Button>
-            </div>
-            
-            <div className="text-sm text-gray-500 bg-gray-50 p-4 rounded mt-4">
-              <p className="font-semibold mb-2 text-gray-700">要求フォーマット</p>
-              <ul className="list-disc list-inside space-y-2">
-                <li>必須カラム: <code className="bg-white px-1 py-0.5 border rounded">unit_id</code>, <code className="bg-white px-1 py-0.5 border rounded">question_text</code>, <code className="bg-white px-1 py-0.5 border rounded">options</code>, <code className="bg-white px-1 py-0.5 border rounded">answer_index</code></li>
-                <li>任意カラム: <code className="bg-white px-1 py-0.5 border rounded">category</code> (分野。空の場合は「1.正の数と負の数」として登録されます)</li>
-                <li><code className="bg-white px-1 py-0.5 border rounded">question_text</code> や解説はLaTeX記述（$数式$など）対応。</li>
-                <li><code className="bg-white px-1 py-0.5 border rounded">options</code> は <code>["選択1", "選択2"]</code> のJSON形式を推奨（カンマ区切りも可）。</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
+        <ImportTab
+          loading={loading}
+          importSubject={importSubject}
+          setImportSubject={setImportSubject}
+          onFileUpload={handleFileUpload}
+          onDownloadTemplate={handleDownloadTemplate}
+        />
       )}
 
       {/* ========== TAB: UNITS ========== */}
       {activeTab === 'units' && (
-        <div className="space-y-6 mt-4">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gray-50 p-4 rounded-xl border">
-            <div className="flex flex-wrap gap-4 items-center">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-gray-500">教科フィルタ</label>
-                <select 
-                  value={unitFilterSubject} 
-                  onChange={(e) => { setUnitFilterSubject(e.target.value); setUnitFilterCategory('all'); }}
-                  className="text-sm border rounded-md px-3 py-1.5 bg-white font-medium focus:border-primary outline-none"
-                >
-                  <option value="all">すべての教科</option>
-                  <option value="数学">数学</option>
-                  <option value="英語">英語</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-gray-500">分野フィルタ</label>
-                <select 
-                  value={unitFilterCategory} 
-                  onChange={(e) => setUnitFilterCategory(e.target.value)}
-                  className="text-sm border rounded-md px-3 py-1.5 bg-white font-medium focus:border-primary outline-none min-w-[150px]"
-                >
-                  <option value="all">すべての分野</option>
-                  {Array.from(new Set(units
-                    .filter(u => unitFilterSubject === 'all' || u.subject === unitFilterSubject)
-                    .map(u => u.category || 'その他')))
-                    .sort()
-                    .map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <p className="text-sm text-gray-500">
-                表示中: {
-                  units.filter(u => {
-                    const sMatch = unitFilterSubject === 'all' || u.subject === unitFilterSubject;
-                    const cMatch = unitFilterCategory === 'all' || (u.category || 'その他') === unitFilterCategory;
-                    return sMatch && cMatch;
-                  }).length
-                } / {units.length} 単元
-              </p>
-              <Button variant="outline" size="sm" onClick={fetchUnits} disabled={loading}>
-                <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
-              </Button>
-            </div>
-          </div>
-          
-          {units
-            .filter(u => {
-              const sMatch = unitFilterSubject === 'all' || u.subject === unitFilterSubject;
-              const cMatch = unitFilterCategory === 'all' || (u.category || 'その他') === unitFilterCategory;
-              return sMatch && cMatch;
-            })
-            .map(unit => (
-            <Card key={unit.id} className="shadow-sm">
-              <CardHeader className="bg-gray-50 border-b flex flex-row items-center justify-between py-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded uppercase">
-                      {unit.subject || '不明'}
-                    </span>
-                    <span className="text-xs text-muted-foreground font-medium">
-                      分野: {unit.category || 'その他'}
-                    </span>
-                  </div>
-                  <CardTitle className="text-lg text-primary">{unit.title} (ID: {unit.id})</CardTitle>
-                  <CardDescription>問題数: {unit.totalQuestions || 0}問</CardDescription>
-                </div>
-                <Button variant="destructive" size="sm" onClick={() => handleDeleteUnit(unit.id)}>
-                  <Trash2 className="w-4 h-4 mr-2" /> 単元を削除
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0 divide-y max-h-[400px] overflow-y-auto">
-                {unit.questions?.map((q: any, i: number) => (
-                  <div key={q.id} className="p-4 hover:bg-gray-50/50 flex flex-col md:flex-row md:items-start justify-between gap-4">
-                    <div className="flex-1 space-y-2">
-                      <div className="font-semibold text-sm text-gray-500">Q{i + 1}</div>
-                      <div className="text-sm">
-                        <MathDisplay math={q.question_text || '問題文なし'} />
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        {q.options?.map((opt: string, oi: number) => (
-                          <span key={oi} className={`px-2 py-1 rounded border ${oi + 1 === q.answer_index ? 'bg-green-100 border-green-300 text-green-800 font-bold' : 'bg-white text-gray-500'}`}>
-                            {oi + 1}: <MathDisplay math={opt} />
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteQuestion(unit.id, q.id)}>
-                      削除
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <UnitsTab
+          units={units}
+          loading={loading}
+          unitFilterSubject={unitFilterSubject}
+          setUnitFilterSubject={setUnitFilterSubject}
+          unitFilterCategory={unitFilterCategory}
+          setUnitFilterCategory={setUnitFilterCategory}
+          onDeleteUnit={handleDeleteUnit}
+          onDeleteQuestion={handleDeleteQuestion}
+          onRefresh={fetchUnits}
+        />
       )}
 
       {/* ========== TAB: SCORES ========== */}
       {activeTab === 'scores' && (
-        <div className="space-y-4 mt-4">
-          <div className="flex justify-between items-center border-b pb-2">
-             <div className="flex items-center gap-4">
-                <p className="text-sm text-gray-500">総プレイデータ（Attempts）</p>
-                {selectedScoreIds.size > 0 && (
-                  <Button variant="destructive" size="sm" onClick={handleBatchDeleteScores} disabled={loading}>
-                    <Trash2 className="w-4 h-4 mr-2" /> 選択した項目を削除 ({selectedScoreIds.size}件)
-                  </Button>
-                )}
-             </div>
-             <Button variant="outline" size="sm" onClick={() => fetchScores(false)} disabled={loading}>
-              <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
-            </Button>
-          </div>
-          
-          <div className="bg-white rounded-md shadow overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-600 border-b">
-                <tr>
-                  <th className="px-4 py-3">
-                    <input type="checkbox" onChange={handleSelectAllScores} checked={scores.length > 0 && selectedScoreIds.size === scores.length} />
-                  </th>
-                  <th className="px-4 py-3">日時</th>
-                  <th className="px-4 py-3">ユーザー名</th>
-                  <th className="px-4 py-3">単元ID</th>
-                  <th className="px-4 py-3">スコア</th>
-                  <th className="px-4 py-3">時間</th>
-                  <th className="px-4 py-3">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y text-gray-600">
-                {scores.map(s => (
-                  <tr key={s.docId} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3">
-                      <input type="checkbox" checked={selectedScoreIds.has(s.docId)} onChange={() => handleToggleSelectScore(s.docId)} />
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {s.date ? new Date(s.date).toLocaleString() : '-'}
-                    </td>
-                    <td className="px-4 py-3">{s.userName || s.uid || '-'}</td>
-                    <td className="px-4 py-3 font-medium text-primary">{s.unitId}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-bold ${(s.maxScore ?? s.score ?? 0) >= 80 ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>
-                        {s.maxScore ?? s.score ?? '-'}点
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {(() => {
-                        const t = s.bestTime ?? s.time;
-                        const numT = Number(t);
-                        if (t != null && !isNaN(numT)) {
-                          return `${Math.floor(numT / 60)}分${numT % 60}秒`;
-                        }
-                        return '-';
-                      })()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteScore(s)}>
-                        データ削除
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-                {scores.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">データがありません</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {scores.length > displayScoresCount && (
-            <Button 
-              variant="outline" 
-              className="w-full text-xs h-9 text-muted-foreground border-dashed"
-              onClick={() => setDisplayScoresCount(prev => prev + 100)}
-            >
-              もっと見る (+100)
-            </Button>
-          )}
-        </div>
+        <ScoresTab
+          scores={scores}
+          loading={loading}
+          displayScoresCount={displayScoresCount}
+          setDisplayScoresCount={setDisplayScoresCount}
+          selectedScoreIds={selectedScoreIds}
+          onToggleSelect={handleToggleSelectScore}
+          onSelectAll={handleSelectAllScores}
+          onBatchDelete={handleBatchDeleteScores}
+          onDeleteScore={handleDeleteScore}
+          onRefresh={() => fetchScores(false)}
+        />
       )}
 
       {/* ========== TAB: XP MANAGEMENT ========== */}
       {activeTab === 'xp' && (
-        <div className="space-y-4 mt-4">
-          <div className="flex justify-between items-center border-b pb-2">
-            <p className="text-sm text-gray-500">登録ユーザー数: {users.length}</p>
-            <Button variant="outline" size="sm" onClick={fetchUsers} disabled={loading}>
-              <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
-            </Button>
-          </div>
-          
-          <div className="bg-white rounded-md shadow overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-600 border-b">
-                <tr>
-                  <th className="px-4 py-3">#</th>
-                  <th className="px-4 py-3">ユーザー名</th>
-                  <th className="px-4 py-3">メール</th>
-                  <th className="px-4 py-3">レベル</th>
-                  <th className="px-4 py-3">称号</th>
-                  <th className="px-4 py-3">経験値</th>
-                  <th className="px-4 py-3">アイコン</th>
-                  <th className="px-4 py-3 text-center">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y text-gray-600">
-                {users.map((u, idx) => {
-                  const lvData = calculateLevelAndProgress(u.xp || 0);
-                  const title = getTitleForLevel(lvData.level);
-                  const isEditing = editingXp[u.docId] !== undefined;
-                  return (
-                    <tr key={u.docId} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-3 text-gray-400 font-mono">{idx + 1}</td>
-                      <td className="px-4 py-3 font-medium">{u.displayName || '-'}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">{u.email || '-'}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
-                           Lv.{lvData.level}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs font-medium text-amber-700">{title}</td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <Input
-                            type="number"
-                            min="0"
-                            value={editingXp[u.docId]}
-                            onChange={(e) => setEditingXp(prev => ({ ...prev, [u.docId]: e.target.value }))}
-                            className="w-24 h-8 text-sm"
-                          />
-                        ) : (
-                          <span className="font-mono font-bold text-primary">{u.xp?.toLocaleString() || 0}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-2xl">{u.icon || '📐'}</td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" className="text-green-600 hover:text-green-800 hover:bg-green-50" onClick={() => handleUpdateXp(u.docId, editingXp[u.docId])}>
-                              <Save className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" className="text-gray-500 hover:text-gray-700" onClick={() => setEditingXp(prev => { const n = { ...prev }; delete n[u.docId]; return n; })}>
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="sm" className="text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setEditingXp(prev => ({ ...prev, [u.docId]: String(u.xp || 0) }))}>
-                              編集
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="text-red-500 hover:text-white hover:bg-red-500 transition-colors"
-                              onClick={() => handleResetUserData(u.docId, u.displayName)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {users.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">ユーザーデータがありません</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {users.length > displayUsersCount && (
-            <Button 
-              variant="outline" 
-              className="w-full text-xs h-9 text-muted-foreground border-dashed"
-              onClick={() => setDisplayUsersCount(prev => prev + 100)}
-            >
-              もっと見る (+100)
-            </Button>
-          )}
-        </div>
+        <XpTab
+          users={users}
+          loading={loading}
+          displayUsersCount={displayUsersCount}
+          setDisplayUsersCount={setDisplayUsersCount}
+          editingXp={editingXp}
+          setEditingXp={setEditingXp}
+          onUpdateXp={handleUpdateXp}
+          onResetUserData={handleResetUserData}
+          onRefresh={fetchUsers}
+        />
       )}
-
       {/* ========== TAB: SUSPICIOUS ========== */}
       {activeTab === 'suspicious' && (
-        <div className="space-y-4 mt-4">
-          {(() => {
-            // 1. クライアント側（解答時間）での検知
-            const QUESTIONS_PER_DRILL = 10;
-            const suspiciousScores = scores
-              .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
-              .map(s => {
-                const avgPerQ = s.time / QUESTIONS_PER_DRILL;
-                let flag: 'red' | 'yellow' | 'green' = 'green';
-                if (avgPerQ <= 3) flag = 'red';
-                else if (avgPerQ <= 5) flag = 'yellow';
-                return { 
-                  ...s, 
-                  id: s.docId,
-                  avgPerQ, 
-                  flag,
-                  isServer: false,
-                  updatedAtTime: s.date ? new Date(s.date).getTime() : 0,
-                  updatedAt: s.date ? new Date(s.date).toISOString() : new Date().toISOString()
-                };
-              });
-
-            // 2. サーバー側（Cloud Functions）での検知
-            const serverSuspicious = suspiciousActivities.map(s => ({
-              id: s.id,
-              docId: s.id,
-              uid: s.uid,
-              userName: s.userName || '不明なユーザー',
-              unitId: s.unitId,
-              reasons: s.reasons || [],
-              updatedAt: s.timestamp?.toDate ? s.timestamp.toDate().toISOString() : new Date().toISOString(),
-              updatedAtTime: s.timestamp?.toDate ? s.timestamp.toDate().getTime() : Date.now(),
-              isServer: true,
-              flag: 'red' as const, // サーバー検知は重要度高
-              avgPerQ: 0,
-              time: 0,
-              score: 0
-            }));
-
-            // 3. 統合
-            const allSuspicious = [
-              ...serverSuspicious, 
-              ...suspiciousScores.filter(s => s.flag !== 'green')
-            ].sort((a, b) => b.updatedAtTime - a.updatedAtTime);
-            
-            // フィルタリング
-            const filtered = allSuspicious.filter(item => {
-              if (suspiciousFilter === 'red') return item.flag === 'red';
-              if (suspiciousFilter === 'yellow') return item.flag === 'red' || item.flag === 'yellow';
-              return true;
-            });
-
-            return (
-              <>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {selectedSuspiciousIds.size > 0 && (
-                      <div className="flex items-center gap-1 bg-slate-900 text-white px-2 py-1 rounded-lg animate-in slide-in-from-right-4">
-                        <span className="text-[10px] font-bold px-2">{selectedSuspiciousIds.size}件選択中</span>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-7 text-[10px] text-white hover:bg-white/10"
-                          onClick={() => handleBatchActionSuspicious('ignore')}
-                        >
-                          一括無視
-                        </Button>
-                        <Button 
-                          variant="destructive" 
-                          size="sm" 
-                          className="h-7 text-[10px] bg-red-500 hover:bg-red-600"
-                          onClick={() => handleBatchActionSuspicious('delete')}
-                        >
-                          一括削除
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-7 text-[10px] text-gray-400"
-                          onClick={() => setSelectedSuspiciousIds(new Set())}
-                        >
-                          キャンセル
-                        </Button>
-                      </div>
-                    )}
-                    <select
-                      value={suspiciousFilter}
-                      onChange={(e) => setSuspiciousFilter(e.target.value as any)}
-                      className="text-sm border rounded-md px-3 py-1.5 bg-white shadow-sm font-medium"
-                    >
-                      <option value="red">🚨 致命的のみ (Server / ≤3s)</option>
-                      <option value="yellow">⚠️ 要注意以上 (≤5s)</option>
-                      <option value="all">全件表示</option>
-                    </select>
-                    <Button variant="outline" size="sm" onClick={() => fetchScores(false)} disabled={loading} className="shadow-sm">
-                      <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> 更新
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 border-b">
-                      <tr>
-                        <th className="px-4 py-4 text-center">
-                          <input 
-                            type="checkbox" 
-                            onChange={(e) => {
-                              if (e.target.checked) setSelectedSuspiciousIds(new Set(filtered.map(f => f.id || f.docId)));
-                              else setSelectedSuspiciousIds(new Set());
-                            }}
-                            checked={filtered.length > 0 && selectedSuspiciousIds.size === filtered.length}
-                          />
-                        </th>
-                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">判定</th>
-                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">ユーザー / 単元</th>
-                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">詳細・検知理由</th>
-                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">日時</th>
-                        <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {filtered.slice(0, displaySuspiciousCount).map((s: any) => (
-                        <tr key={s.docId} className="hover:bg-gray-50/50">
-                          <td className="px-4 py-4 text-center">
-                            <input 
-                              type="checkbox" 
-                              checked={selectedSuspiciousIds.has(s.id || s.docId)}
-                              onChange={() => handleToggleSelectSuspicious(s.id || s.docId)}
-                            />
-                          </td>
-                          <td className="px-4 py-4 text-center">
-                            <span className={`inline-block px-2 py-1 rounded text-[10px] font-black tracking-tighter uppercase shadow-sm ${s.isServer ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
-                              {s.isServer ? 'SERVER' : 'AUTO'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-bold text-gray-900 flex items-center gap-1.5">
-                              {s.userName}
-                              {s.flag === 'red' && <AlertTriangle className="w-3 h-3 text-red-500" />}
-                            </p>
-                            <p className="text-[10px] text-primary font-bold uppercase mt-0.5">{s.unitId}</p>
-                          </td>
-                          <td className="px-4 py-4">
-                            {s.isServer ? (
-                              <ul className="text-xs text-red-800 space-y-0.5 font-medium">
-                                {s.reasons.map((r: string, rIdx: number) => (
-                                  <li key={rIdx} className="flex items-start gap-1">
-                                    <span className="opacity-50">•</span> {r}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div className="flex items-center gap-4">
-                                <div>
-                                  <p className="text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">平均解答時間</p>
-                                  <p className={`font-mono font-bold text-base leading-none ${s.flag === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
-                                    {s.avgPerQ.toFixed(1)}s/問
-                                  </p>
-                                </div>
-                                <div className="border-l pl-3">
-                                  <p className="text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">実績</p>
-                                  <p className="text-xs font-mono">{s.time}s / {s.score}点</p>
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-4 text-[10px] text-gray-400 font-mono whitespace-nowrap">
-                            {new Date(s.updatedAt).toLocaleString()}
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-1.5 justify-center">
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-7 text-[10px] font-bold px-2"
-                                onClick={() => { setSelectedUnitForStats(s.unitId); setActiveTab('analytics'); }}
-                              >
-                                分析
-                              </Button>
-                               <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-7 text-[10px] font-bold px-2 hover:bg-gray-100"
-                                onClick={() => handleIgnoreSuspicious(s)}
-                              >
-                                無視
-                              </Button>
-                              {!s.isServer && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  className="h-7 text-[10px] font-bold text-red-500 hover:bg-red-50 px-2"
-                                  onClick={() => handleDeleteScore(s)}
-                                >
-                                  削除
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {filtered.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-12 text-center text-gray-400 italic">
-                            {suspiciousFilter === 'all' ? '検知されたデータはありません' : '該当するフィルター条件のデータはありません ✅'}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {filtered.length > displaySuspiciousCount && (
-                  <Button 
-                    variant="outline" 
-                    className="w-full text-xs h-9 text-muted-foreground border-dashed"
-                    onClick={() => setDisplaySuspiciousCount(prev => prev + 50)}
-                  >
-                    もっと見る (+50)
-                  </Button>
-                )}
-              </>
-            );
-          })()}
-        </div>
+        <SuspiciousTab
+          scores={scores}
+          suspiciousActivities={suspiciousActivities}
+          loading={loading}
+          suspiciousFilter={suspiciousFilter}
+          setSuspiciousFilter={setSuspiciousFilter}
+          selectedSuspiciousIds={selectedSuspiciousIds}
+          setSelectedSuspiciousIds={setSelectedSuspiciousIds}
+          displaySuspiciousCount={displaySuspiciousCount}
+          setDisplaySuspiciousCount={setDisplaySuspiciousCount}
+          onDeleteScore={handleDeleteScore}
+          onIgnoreSuspicious={handleIgnoreSuspicious}
+          onBatchAction={handleBatchActionSuspicious}
+          onSetUnitForStats={setSelectedUnitForStats}
+          onSwitchToAnalytics={() => setActiveTab('analytics')}
+          onRefresh={() => fetchScores(false)}
+        />
       )}
-
       {/* ========== TAB: ANALYTICS ========== */}
       {activeTab === 'analytics' && (
         <AnalyticsTab
@@ -1493,201 +995,32 @@ export default function AdminPage() {
           selectedUnitForStats={selectedUnitForStats}
           setSelectedUnitForStats={setSelectedUnitForStats}
           onResetAllData={handleResetAllData}
+          onLoadData={async () => {
+            await fetchUnits();
+            await fetchScores();
+          }}
         />
       )}
 
       {/* ========== TAB: ROLES & MAINTENANCE ========== */}
       {activeTab === 'roles' && (
-        <div className="space-y-6 mt-4 animate-in fade-in duration-500">
-          {/* メンテナンスモード設定 */}
-          <Card className={`border-t-4 ${maintenanceEnabled ? 'border-t-amber-500 shadow-amber-100' : 'border-t-slate-200'} shadow-md overflow-hidden transition-all duration-300`}>
-            <CardHeader className={`${maintenanceEnabled ? 'bg-amber-50/50' : 'bg-slate-50/50'} py-4`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-xl ${maintenanceEnabled ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-500'}`}>
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-lg">メンテナンスモード設定</CardTitle>
-                    <CardDescription>
-                      {maintenanceEnabled 
-                        ? '現在メンテナンスモードが有効です。一般ユーザーはアクセスできません。' 
-                        : '現在通常稼働中です。'}
-                    </CardDescription>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4 bg-white p-1.5 rounded-2xl border shadow-sm">
-                  <span className={`text-xs font-black px-3 ${maintenanceEnabled ? 'text-amber-600' : 'text-slate-400'}`}>
-                    {maintenanceEnabled ? '有効' : '無効'}
-                  </span>
-                  <button
-                    onClick={() => setMaintenanceEnabled(!maintenanceEnabled)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${maintenanceEnabled ? 'bg-amber-500' : 'bg-slate-200'}`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${maintenanceEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                  </button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                    表示メッセージ
-                  </label>
-                  <Input 
-                    placeholder="現在メンテナンス中です..." 
-                    value={maintenanceMessage}
-                    onChange={(e) => setMaintenanceMessage(e.target.value)}
-                    className="focus-visible:ring-amber-500"
-                  />
-                  <p className="text-[10px] text-slate-400 font-medium">ユーザーに表示される説明文です。</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                    終了予定時刻
-                  </label>
-                  <Input 
-                    type="datetime-local" 
-                    value={maintenanceEnd}
-                    onChange={(e) => setMaintenanceEnd(e.target.value)}
-                    className="focus-visible:ring-amber-500"
-                  />
-                  <p className="text-[10px] text-slate-400 font-medium">任意設定。ユーザーに目安を表示します。</p>
-                </div>
-              </div>
-              <div className="flex justify-end pt-2 border-t border-slate-100">
-                <Button 
-                  onClick={handleUpdateMaintenance} 
-                  disabled={maintenanceUpdateLoading}
-                  className={`rounded-xl px-8 font-black ${maintenanceEnabled ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-slate-900 hover:bg-slate-800 text-white'}`}
-                >
-                  {maintenanceUpdateLoading ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4 mr-2" />
-                  )}
-                  設定を保存して反映
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 管理者権限付与・剥奪 */}
-          <Card className="shadow-sm">
-            <CardHeader className="bg-gray-50 border-b">
-              <CardTitle className="text-lg text-primary flex items-center gap-2">
-                <Shield className="w-5 h-5" /> 管理者権限の管理
-              </CardTitle>
-              <CardDescription>Custom Claims を使用して管理者権限を付与・剥奪します。</CardDescription>
-            </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-                <AlertTriangle className="inline w-4 h-4 mr-1" />
-                管理者権限を付与されたユーザーは、全生徒のデータ閲覧・編集・削除が可能になります。慎重に操作してください。
-              </div>
-              <div className="flex gap-3">
-                <Input
-                  type="email"
-                  placeholder="管理者に追加するメールアドレス"
-                  value={roleEmail}
-                  onChange={(e) => setRoleEmail(e.target.value)}
-                  className="flex-1"
-                />
-                <Button
-                  onClick={async () => {
-                    if (!roleEmail) return;
-                    setRoleLoading(true);
-                    setMessage('');
-                    try {
-                      const functions = getFunctions(undefined, 'us-central1');
-                      const setAdminClaim = httpsCallable(functions, 'setAdminClaim');
-                      const result: any = await setAdminClaim({ email: roleEmail, isAdmin: true });
-                      setMessage(`✅ ${result.data.message}`);
-                      setRoleEmail('');
-                      fetchAdminList();
-                    } catch (err: any) {
-                      setMessage(`エラー: ${err.message}`);
-                    } finally {
-                      setRoleLoading(false);
-                    }
-                  }}
-                  disabled={roleLoading || !roleEmail}
-                  className="bg-primary"
-                >
-                  <Shield className="w-4 h-4 mr-2" /> 権限付与
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={async () => {
-                    if (!roleEmail) return;
-                    setRoleLoading(true);
-                    setMessage('');
-                    try {
-                      const functions = getFunctions(undefined, 'us-central1');
-                      const setAdminClaim = httpsCallable(functions, 'setAdminClaim');
-                      const result: any = await setAdminClaim({ email: roleEmail, isAdmin: false });
-                      setMessage(`✅ ${result.data.message}`);
-                      setRoleEmail('');
-                      fetchAdminList();
-                    } catch (err: any) {
-                      setMessage(`エラー: ${err.message}`);
-                    } finally {
-                      setRoleLoading(false);
-                    }
-                  }}
-                  disabled={roleLoading || !roleEmail}
-                >
-                  <X className="w-4 h-4 mr-2" /> 権限剥奪
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">※ 権限変更後、対象ユーザーが次回ログインした際に反映されます。</p>
-            </CardContent>
-          </Card>
-
-          {/* 管理者一覧 */}
-          <Card className="shadow-sm">
-            <CardHeader className="bg-gray-50 border-b flex flex-row items-center justify-between py-4">
-              <div>
-                <CardTitle className="text-lg text-primary flex items-center gap-2">
-                  <Users className="w-5 h-5" /> 登録済み管理者一覧
-                </CardTitle>
-                <CardDescription>admin Custom Claim が付与されているユーザー</CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={fetchAdminList} disabled={adminListLoading}>
-                <RefreshCw className={`w-4 h-4 mr-2 ${adminListLoading ? 'animate-spin' : ''}`} /> 更新
-              </Button>
-            </CardHeader>
-            <CardContent className="p-0">
-              {adminListLoading ? (
-                <div className="flex justify-center p-8">
-                  <div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full"></div>
-                </div>
-              ) : adminList.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">管理者が見つかりません。</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-gray-50/50">
-                      <th className="text-left p-3 font-semibold text-gray-600">名前</th>
-                      <th className="text-left p-3 font-semibold text-gray-600">メールアドレス</th>
-                      <th className="text-left p-3 font-semibold text-gray-600">UID</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminList.map((a) => (
-                      <tr key={a.uid} className="border-b hover:bg-gray-50 transition-colors">
-                        <td className="p-3 font-medium">{a.displayName}</td>
-                        <td className="p-3 text-muted-foreground">{a.email}</td>
-                        <td className="p-3 font-mono text-xs text-muted-foreground">{a.uid.slice(0, 12)}...</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <RolesTab
+          maintenanceEnabled={maintenanceEnabled}
+          setMaintenanceEnabled={setMaintenanceEnabled}
+          maintenanceMessage={maintenanceMessage}
+          setMaintenanceMessage={setMaintenanceMessage}
+          maintenanceEnd={maintenanceEnd}
+          setMaintenanceEnd={setMaintenanceEnd}
+          maintenanceUpdateLoading={maintenanceUpdateLoading}
+          onUpdateMaintenance={handleUpdateMaintenance}
+          roleEmail={roleEmail}
+          setRoleEmail={setRoleEmail}
+          roleLoading={false}
+          adminList={adminList}
+          adminListLoading={adminListLoading}
+          onFetchAdminList={fetchAdminList}
+          onSetMessage={setMessage}
+        />
       )}
       
       {activeTab === 'changelog' && (

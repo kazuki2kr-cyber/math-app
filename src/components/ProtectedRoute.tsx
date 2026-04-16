@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import MaintenancePage from './MaintenancePage';
+
+const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, isAdmin } = useAuth();
@@ -13,24 +15,38 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const [maintenance, setMaintenance] = useState<{ enabled: boolean; message?: string; scheduledEnd?: string } | null>(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(true);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // メンテナンス設定をリアルタイム監視
-    const unsubscribe = onSnapshot(doc(db, 'config', 'maintenance'), (snapshot) => {
-      if (snapshot.exists()) {
-        setMaintenance(snapshot.data() as any);
-      } else {
+    const checkMaintenance = async () => {
+      try {
+        const snapshot = await getDoc(doc(db, 'config', 'maintenance'));
+        if (snapshot.exists()) {
+          setMaintenance(snapshot.data() as any);
+        } else {
+          setMaintenance({ enabled: false });
+        }
+      } catch (error) {
+        console.error("Maintenance check failed:", error);
         setMaintenance({ enabled: false });
+      } finally {
+        setMaintenanceLoading(false);
       }
-      setMaintenanceLoading(false);
-    }, (error) => {
-      console.error("Maintenance check failed:", error);
-      // エラー時は安全のためメンテナンス中とはみなさない（または管理者の判断に委ねる）
-      setMaintenance({ enabled: false });
-      setMaintenanceLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    checkMaintenance();
+
+    const scheduleNext = () => {
+      timerRef.current = setTimeout(() => {
+        checkMaintenance();
+        scheduleNext();
+      }, POLL_INTERVAL_MS);
+    };
+    scheduleNext();
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -52,11 +68,9 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     return <MaintenancePage message={maintenance.message} scheduledEnd={maintenance.scheduledEnd} />;
   }
 
-  // ログインしていない状態で /login 以外にアクセスしようとしている場合は何も表示しない（useEffectで遷移させる）
   if (!user && pathname !== '/login') {
     return null;
   }
 
   return <>{children}</>;
 }
-

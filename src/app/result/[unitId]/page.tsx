@@ -7,7 +7,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
-import confetti from 'canvas-confetti';
+const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
 import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
 
@@ -121,7 +121,7 @@ export default function ResultPage() {
           if (data.isHighScore) {
             setIsHighScore(true);
             if (!data.isLevelUp) {
-              confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
+              fireConfetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
             }
           }
 
@@ -134,7 +134,7 @@ export default function ResultPage() {
               icon: newlyUnlockedIcon,
               title: getTitleForLevel(data.newLevel)
             });
-            confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
+            fireConfetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
           }
         }
 
