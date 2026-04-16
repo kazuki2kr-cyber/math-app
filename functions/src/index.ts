@@ -204,34 +204,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const preMultiplierXp = baseTotal + comboTotal;
   // finalXpGain・xpDetails はトランザクション内で drillCount 参照後に確定
 
-  // --- 2. 演習間隔チェック（不審アクティビティ検出、非クリティカル）---
-  try {
-    const latestAttempt = await db.collection(`users/${uid}/attempts`)
-      .where("unitId", "==", unitId)
-      .orderBy("date", "desc")
-      .limit(1)
-      .get();
-    if (!latestAttempt.empty) {
-      const lastData = latestAttempt.docs[0].data();
-      const lastDateStr = lastData?.date;
-      if (lastDateStr) {
-        const lastDateTime = new Date(lastDateStr).getTime();
-        const diffSec = (now.toMillis() - lastDateTime) / 1000;
-        if (diffSec < 30 && totalAnswered >= 10) {
-          console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${Math.round(diffSec)}s`);
-          await db.collection("suspicious_activities").add({
-            uid, userName, unitId,
-            reasons: [`異常に短い演習間隔: ${Math.round(diffSec)}秒`],
-            timestamp: now,
-            details: { score: serverScore, time, correctCount: safeCorrectQuestions.length },
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.error("[processDrillResult] Interval check error (non-critical):", e);
-  }
-
   // alreadyProcessed 時に返すための結果オブジェクト（問題の詳細を含む）
   const questionResults = {
     score: serverScore,
@@ -263,8 +235,23 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
         isHighScore: false,
         isLevelUp: false,
         xpDetails: { base: 0, combo: 0, multiplier: 0, multiplierBonus: 0, finalXp: 0 },
+        _rapidSubmission: null,
         ...questionResults,
       };
+    }
+
+    // ③: lastAttemptTimes からインターバルチェック（subcollection クエリ不要・1読み取り削減）
+    let _rapidSubmissionSec: number | null = null;
+    const lastAttemptTimeStr: string | null = userSnap.exists
+      ? (userSnap.data()?.lastAttemptTimes?.[unitId] || null)
+      : null;
+    if (lastAttemptTimeStr) {
+      const lastDateTime = new Date(lastAttemptTimeStr).getTime();
+      const diffSec = (now.toMillis() - lastDateTime) / 1000;
+      if (diffSec < 30 && totalAnswered >= 10) {
+        _rapidSubmissionSec = Math.round(diffSec);
+        console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${_rapidSubmissionSec}s`);
+      }
     }
 
     let currentXp = 0;
@@ -278,8 +265,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }
 
     // 2-1. スコア更新判定 (High Score) と unitStats マージ
-    const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
-    const existingUnitData = existingUnitStats[unitId] || {};
+    // ⑥: existingUnitStats 全体ではなく対象単元のデータのみ参照
+    const existingUnitData = userSnap.exists ? ((userSnap.data()?.unitStats || {})[unitId] || {}) : {};
     const existingMaxScore = existingUnitData.maxScore || 0;
     const existingBestTime = existingUnitData.bestTime || Infinity;
 
@@ -379,20 +366,18 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     currentWrongs = currentWrongs.filter((id: string) => !newlyCorrectIds.includes(id));
     newlyWrongIds.forEach((id: string) => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
 
-    // unitStatsの構築 (各単元ごとの統計を更新)
-    const unitStats = existingUnitStats;
-
-    unitStats[unitId] = {
+    // ⑥: ドット記法で対象単元のみ更新（全 unitStats マップの読み書き不要）
+    userUpdate[`unitStats.${unitId}`] = {
       ...existingUnitData,
       maxScore: isHighScore ? serverScore : (existingUnitData.maxScore || 0),
-      bestTime: isHighScore ? time : (existingUnitData.bestTime || Infinity),
+      bestTime: isHighScore ? time : (existingUnitData.bestTime ?? null),
       wrongQuestionIds: currentWrongs,
       totalCorrect: (existingUnitData.totalCorrect || 0) + safeCorrectQuestions.length,
       drillCount: drillCount + 1,
       updatedAt: dateStr
     };
-    
-    userUpdate.unitStats = unitStats;
+    // ③: 次回の間隔チェック用に最終演習時刻を保存（ドット記法で他単元を上書きしない）
+    userUpdate[`lastAttemptTimes.${unitId}`] = dateStr;
 
     transaction.set(userRef, userUpdate, { merge: true });
 
@@ -449,23 +434,39 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       // 11回目以降でXP増加もハイスコアもない場合は無駄な書き込みを避けるためスキップ。
       _leaderboardUpdate: (isHighScore || finalXpGain > 0)
         ? { uid, userName, currentIcon, newLevel, newTotalXp }
-        : null
+        : null,
+      _rapidSubmission: _rapidSubmissionSec,
     };
   });
 
-  // --- 3. トランザクション後にリーダーボード更新（非同期・ベストエフォート） ---
+  // --- 3. トランザクション後の非クリティカル処理 ---
   const resultAny = result as any;
+
+  // 不審アクティビティ（短時間の連続演習）をログ記録
+  if (resultAny._rapidSubmission !== null && resultAny._rapidSubmission !== undefined) {
+    try {
+      await db.collection("suspicious_activities").add({
+        uid, userName, unitId,
+        reasons: [`異常に短い演習間隔: ${resultAny._rapidSubmission}秒`],
+        timestamp: now,
+        details: { score: serverScore, time, correctCount: safeCorrectQuestions.length },
+      });
+    } catch (e) {
+      console.error("[processDrillResult] Suspicious activity log error (non-critical):", e);
+    }
+  }
+
+  // リーダーボード更新（isHighScore または XP増加がある場合のみ）
   if (resultAny._leaderboardUpdate) {
     try {
       await updateLeaderboard(resultAny._leaderboardUpdate);
     } catch (leaderboardErr) {
       console.error("[processDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
-      // リーダーボード更新失敗はユーザーには影響しない
     }
   }
 
-  // _leaderboardUpdate はクライアントに返さない
-  const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
+  // 内部フィールドはクライアントに返さない
+  const { _leaderboardUpdate: _lb, _rapidSubmission: _rs, ...clientResult } = resultAny;
   return clientResult;
 
 } catch (error: any) {
