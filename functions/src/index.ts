@@ -84,16 +84,26 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
 
-  const { attemptId, unitId: rawUnitId, unitTitle, time, answers } = data as any;
+  // ドメイン制限: フロントエンドと同じルールをサーバーでも強制
+  const callerEmail = context.auth.token.email || "";
+  const isAllowedDomain = callerEmail.endsWith("@shibaurafzk.com");
+  const isIndividualAllowed = callerEmail === "kazuki2kr@gmail.com";
+  if (!isAllowedDomain && !isIndividualAllowed) {
+    throw new functions.https.HttpsError("permission-denied", "このサービスの対象外アカウントです。");
+  }
+
+  const { attemptId, unitId: rawUnitId, time: rawTime, answers } = data as any;
   const unitId = (rawUnitId || "").trim();
+
+  // time の検証: 1秒以上 86400秒以下（クライアント改ざん防止）
+  const time = Math.round(Number(rawTime));
+  if (!unitId || !Number.isFinite(time) || time < 1 || time > 86400 || !Array.isArray(answers)) {
+    console.error("[processDrillResult] Missing required parameters", { unitId, rawTime, answers });
+    throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
+  }
 
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
   console.log(`[processDrillResult] Data summary: time=${time}, answers=${answers?.length}`);
-
-  if (!unitId || time === undefined || !Array.isArray(answers)) {
-    console.error("[processDrillResult] Missing required parameters", { unitId, time, answers });
-    throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
-  }
 
   const safeAnswers: Array<{ questionId: string; selectedOptionText: string }> = answers;
 
@@ -113,6 +123,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("not-found", "指定された単元が見つかりません。");
   }
   const unitData = unitDoc.data()!;
+  // unitTitle はサーバー側の値を使用（クライアント送信値は信頼しない）
+  const unitTitle: string = unitData.title || unitId;
   let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
   if (unitQuestions.length === 0) {
     // 問題がサブコレクションに格納されている場合のフォールバック
@@ -455,7 +467,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 } catch (error: any) {
   console.error("[processDrillResult] Transaction failed:", error);
   console.error("[processDrillResult] Stack trace:", error.stack);
-  throw new functions.https.HttpsError("internal", error.message || "内部処理エラーが発生しました。");
+  // 内部エラー詳細はログのみ。クライアントには汎用メッセージを返す
+  if (error instanceof functions.https.HttpsError) throw error;
+  throw new functions.https.HttpsError("internal", "内部処理エラーが発生しました。");
 }
 });
 

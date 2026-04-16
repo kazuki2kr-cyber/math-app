@@ -22,12 +22,17 @@ service cloud.firestore {
     match /users/{userId} {
       // 本人または管理者のみ読み取り可能
       allow read: if isOwner(userId) || isAdmin();
-      
+
       // プロフィールの作成（新規登録時）
       allow create: if isOwner(userId) || isAdmin();
-      
-      // プロフィールの更新（管理者は全フィールド可。本人は許可されたフィールドのみ）
-      allow update: if isOwner(userId) || isAdmin();
+
+      // プロフィールの更新:
+      //   管理者 → 全フィールド可
+      //   本人   → icon / hasAgreedToTerms / lastLoginAt のみ（スコア・XP 等はサーバー経由のみ）
+      allow update: if isAdmin()
+        || (isOwner(userId)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['icon', 'hasAgreedToTerms', 'lastLoginAt']));
       
       // サブコレクション（attempts, wrong_answers）
       match /attempts/{attemptId} {
