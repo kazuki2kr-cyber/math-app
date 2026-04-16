@@ -30,6 +30,7 @@ interface AuthContextType {
   isAdmin: boolean;
   loginWithGoogle: () => Promise<void>;
   loginForEmulator?: () => Promise<void>;
+  loginForAdminEmulator?: () => Promise<void>;
   logout: () => Promise<void>;
   agreeToTerms: () => Promise<void>;
   error: string | null;
@@ -186,6 +187,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const loginForAdminEmulator = async () => {
+    if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') return;
+    setError(null);
+    setLoading(true);
+    try {
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
+      const adminEmail = 'admin@shibaurafzk.com';
+      const adminPass = 'admin-test-password';
+      try {
+        await signInWithEmailAndPassword(auth, adminEmail, adminPass);
+      } catch (err: any) {
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          await createUserWithEmailAndPassword(auth, adminEmail, adminPass);
+        } else {
+          throw err;
+        }
+      }
+      router.push('/');
+    } catch (err: any) {
+      console.error('Admin emulator login error:', err);
+      setError(err.message || '管理者ログインに失敗しました。');
+      setLoading(false);
+    }
+  };
+
   const logout = async () => {
     setLoading(true);
     await firebaseSignOut(auth);
@@ -206,7 +232,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin, loginWithGoogle, loginForEmulator, logout, agreeToTerms, error }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin, loginWithGoogle, loginForEmulator, loginForAdminEmulator, logout, agreeToTerms, error }}>
       {children}
     </AuthContext.Provider>
   );
