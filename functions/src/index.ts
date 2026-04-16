@@ -169,9 +169,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   }
 
   const totalAnswered = safeAnswers.length;
-  const serverScore: number = totalAnswered > 0
-    ? Math.floor(safeCorrectQuestions.length / totalAnswered * 100)
-    : 0;
+  const serverScore: number = Math.min(100, safeCorrectQuestions.length * 10);
 
   // XP計算（正解順序によるコンボボーナスを含む）
   let baseTotal = 0;
@@ -192,14 +190,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   else if (correctRatio >= 0.7) multiplier = 1.0;
   else if (correctRatio >= 0.5) multiplier = 0.5;
   const preMultiplierXp = baseTotal + comboTotal;
-  const finalXpGain = Math.floor(preMultiplierXp * multiplier);
-  const xpDetailsResult = {
-    base: baseTotal,
-    combo: comboTotal,
-    multiplier,
-    multiplierBonus: finalXpGain - preMultiplierXp,
-    finalXp: finalXpGain,
-  };
+  // finalXpGain・xpDetails はトランザクション内で drillCount 参照後に確定
 
   // --- 2. 演習間隔チェック（不審アクティビティ検出、非クリティカル）---
   try {
@@ -232,7 +223,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   // alreadyProcessed 時に返すための結果オブジェクト（問題の詳細を含む）
   const questionResults = {
     score: serverScore,
-    xpDetails: xpDetailsResult,
     correctQuestions: safeCorrectQuestions,
     wrongQuestions: safeWrongQuestions,
   };
@@ -260,6 +250,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
         alreadyProcessed: true,
         isHighScore: false,
         isLevelUp: false,
+        xpDetails: { base: 0, combo: 0, multiplier: 0, multiplierBonus: 0, finalXp: 0 },
         ...questionResults,
       };
     }
@@ -274,16 +265,48 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       currentTotalScore = uData?.totalScore || 0;
     }
 
-    // 2-1. XP / レベル計算（サーバー側計算済みの finalXpGain を使用）
+    // 2-1. スコア更新判定 (High Score) と unitStats マージ
+    const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
+    const existingUnitData = existingUnitStats[unitId] || {};
+    const existingMaxScore = existingUnitData.maxScore || 0;
+    const existingBestTime = existingUnitData.bestTime || Infinity;
+
+    let isHighScore = false;
+    if (existingUnitData.maxScore === undefined) {
+      isHighScore = true;
+    } else {
+      if (serverScore > existingMaxScore || (serverScore === existingMaxScore && time < existingBestTime)) {
+        isHighScore = true;
+      }
+    }
+
+    // 2-2. drillCount ベースの XP 逓減レート計算
+    const drillCount = existingUnitData.drillCount || 0;
+    const attemptNumber = drillCount + 1; // 1始まり
+    let xpRateMultiplier: number;
+    if (attemptNumber <= 3) xpRateMultiplier = 1.0;       // 1〜3回目:  100%
+    else if (attemptNumber <= 5) xpRateMultiplier = 0.7;  // 4〜5回目:   70%
+    else if (attemptNumber <= 10) xpRateMultiplier = 0.3; // 6〜10回目:  30%
+    else xpRateMultiplier = 0;                            // 11回目以降:   0%
+
+    const finalXpGain = Math.floor(preMultiplierXp * multiplier * xpRateMultiplier);
+    const xpDetailsResult = {
+      base: baseTotal,
+      combo: comboTotal,
+      multiplier,
+      multiplierBonus: finalXpGain - preMultiplierXp,
+      finalXp: finalXpGain,
+    };
+
+    // 2-3. XP / レベル計算
     const newTotalXp = currentXp + finalXpGain;
-    
-    // XPとレベル、称号、進捗の計算
+
     const MAX_LEVEL = 100;
     const calculateLevelAndProgress = (totalXp: number) => {
       let level = 1;
       let accumulatedXp = 0;
       while (level < MAX_LEVEL) {
-        const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50; 
+        const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50;
         if (totalXp >= accumulatedXp + xpForNext) {
           accumulatedXp += xpForNext;
           level++;
@@ -316,22 +339,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const newLevel = newLevelData.level;
     const isLevelUp = newLevel > oldLevel;
 
-    // 2-2. スコア更新判定 (High Score) と unitStats マージ
-    // 従来の scores コレクションを置き換えるため、userSnap から取得
-    const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
-    const existingUnitData = existingUnitStats[unitId] || {};
-    const existingMaxScore = existingUnitData.maxScore || 0;
-    const existingBestTime = existingUnitData.bestTime || Infinity;
-    
-    let isHighScore = false;
-    if (existingUnitData.maxScore === undefined) {
-      isHighScore = true;
-    } else {
-      if (serverScore > existingMaxScore || (serverScore === existingMaxScore && time < existingBestTime)) {
-        isHighScore = true;
-      }
-    }
-
     // --- 各種書き込み実行 ---
     
     // User Update (XP, totalScore, unitStats, level details)
@@ -361,15 +368,15 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     newlyWrongIds.forEach((id: string) => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
 
     // unitStatsの構築 (各単元ごとの統計を更新)
-    const unitStats = userSnap.data()?.unitStats || {};
-    const existingUnitStat = unitStats[unitId] || {};
-    
+    const unitStats = existingUnitStats;
+
     unitStats[unitId] = {
-      ...existingUnitStat,
-      maxScore: isHighScore ? serverScore : (existingUnitStat.maxScore || 0),
-      bestTime: isHighScore ? time : (existingUnitStat.bestTime || Infinity),
+      ...existingUnitData,
+      maxScore: isHighScore ? serverScore : (existingUnitData.maxScore || 0),
+      bestTime: isHighScore ? time : (existingUnitData.bestTime || Infinity),
       wrongQuestionIds: currentWrongs,
-      totalCorrect: (existingUnitStat.totalCorrect || 0) + safeCorrectQuestions.length,
+      totalCorrect: (existingUnitData.totalCorrect || 0) + safeCorrectQuestions.length,
+      drillCount: drillCount + 1,
       updatedAt: dateStr
     };
     
@@ -423,6 +430,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       newLevel,
       xpGain: finalXpGain,
       newTotalXp,
+      xpDetails: xpDetailsResult,
       ...questionResults,
       // リーダーボード更新に必要な情報を返す
       _leaderboardUpdate: isHighScore ? { uid, userName, currentIcon, newLevel, newTotalXp } : null

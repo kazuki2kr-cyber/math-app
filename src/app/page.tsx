@@ -50,6 +50,8 @@ export default function Home() {
   const [myRankInfo, setMyRankInfo] = useState<{ rank: number; data: OverallRank } | null>(null);
   const [loading, setLoading] = useState(true);
   const [wrongAnswers, setWrongAnswers] = useState<Record<string, number>>({});
+  const [drillCounts, setDrillCounts] = useState<Record<string, number>>({});
+  const [showXpInfo, setShowXpInfo] = useState(false);
   const [userData, setUserData] = useState<{ xp: number; icon: string; title: string; level: number; progress: number } | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -95,6 +97,7 @@ export default function Home() {
         // 2 & 3. Fetch user's stats and extract scores / wrong answers
         const newScores: Record<string, Score> = {};
         const newWrongAnswers: Record<string, number> = {};
+        const newDrillCounts: Record<string, number> = {};
 
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
@@ -128,6 +131,9 @@ export default function Home() {
                 if (stat.wrongQuestionIds && stat.wrongQuestionIds.length > 0) {
                   newWrongAnswers[unit.id] = stat.wrongQuestionIds.length;
                 }
+                if (stat.drillCount !== undefined) {
+                  newDrillCounts[unit.id] = stat.drillCount;
+                }
               }
             });
           }
@@ -142,6 +148,7 @@ export default function Home() {
         }
 
         setWrongAnswers(newWrongAnswers);
+        setDrillCounts(newDrillCounts);
         setUnits(unitsData);
 
         // Extract available categories
@@ -314,6 +321,25 @@ export default function Home() {
               </div>
             )}
 
+            {/* XP Rules Info */}
+            <div className="lg:col-span-3">
+              <button
+                onClick={() => setShowXpInfo(v => !v)}
+                className="flex items-center gap-2 text-xs text-muted-foreground/60 hover:text-primary transition-colors font-semibold tracking-wider uppercase mb-2"
+              >
+                <Database className="w-3.5 h-3.5" />
+                経験値(XP)の獲得ルール {showXpInfo ? '▲' : '▼'}
+              </button>
+              {showXpInfo && (
+                <div className="bg-white/80 rounded-xl border border-gray-100 shadow-sm p-4 text-xs text-gray-600 space-y-1.5 leading-relaxed">
+                  <p>・ 正解数に応じてベースXPが加算されます。</p>
+                  <p>・ <span className="font-semibold text-primary">連続正解</span>が続くほどコンボボーナスが積み上がります。</p>
+                  <p>・ <span className="font-semibold text-primary">正答率</span>が高いほど倍率ボーナスがかかります。</p>
+                  <p>・ 同じ単元への取り組み回数が増えるほど、獲得XPが段階的に減少します。</p>
+                </div>
+              )}
+            </div>
+
             {/* Units List (Left/Top) */}
             <div className="lg:col-span-2 space-y-6">
               <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
@@ -376,8 +402,8 @@ export default function Home() {
                       const myScore = scores[unit.id];
                       const totalQ = unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
                       const hasPlayed = !!myScore;
-                      // "単元 " プレフィックスを削除してスッキリ表示
                       const displayTitle = unit.title.replace(/^単元\s*/, '');
+                      const drillCount = drillCounts[unit.id];
 
                       return (
                         <Card
@@ -402,6 +428,11 @@ export default function Home() {
                                   <Clock className="w-3 h-3 mr-1" />
                                   Time: {myScore.bestTime}s
                                 </div>
+                                {drillCount !== undefined && (
+                                  <div className="mt-2 pt-2 border-t border-green-100">
+                                    <span className="text-xs text-gray-400 font-mono">演習回数: {drillCount}回</span>
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="space-y-2 mt-1 bg-gray-50/80 p-4 rounded-xl border border-gray-100 flex items-center justify-center min-h-[110px]">
@@ -483,7 +514,10 @@ export default function Home() {
                             <p className="text-xs font-bold text-amber-800 tracking-wider">
                               {myRankInfo.rank > 40 ? '41位以下' : 'あなたの現在の順位'}
                             </p>
-                            <p className="text-xl font-black text-amber-900 leading-none mt-0.5">{myRankInfo.data.totalScore} <span className="text-xs font-medium text-amber-800/70">点</span></p>
+                            <p className="text-xl font-black text-amber-900 leading-none mt-1 flex items-baseline gap-0.5">
+                              {myRankInfo.data.totalScore}
+                              <span className="text-xs font-bold opacity-70">点</span>
+                            </p>
                           </div>
                         </div>
                         <p className="text-[10px] text-amber-700/60 font-mono">{totalParticipants}名中</p>
@@ -525,9 +559,11 @@ export default function Home() {
                                 </div>
                               </div>
                               <div className="text-right flex-shrink-0 ml-4">
-                                <p className="text-lg font-black text-amber-600 leading-none">{rankUser.totalScore}</p>
+                                <p className="text-lg font-black text-amber-600 leading-none flex items-baseline justify-end gap-0.5">
+                                  {rankUser.totalScore}
+                                  <span className="text-[10px] font-bold opacity-70">点</span>
+                                </p>
                                 <p className="text-[10px] text-gray-400 font-mono mt-1">
-                                  <span className="text-[9px] mr-1 opacity-60">点</span>
                                   XP {rankUser.xp?.toLocaleString()}
                                 </p>
                               </div>
