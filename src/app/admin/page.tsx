@@ -41,6 +41,7 @@ export default function AdminPage() {
   // Analytics
   const [selectedUnitForStats, setSelectedUnitForStats] = useState<string>('');
   const [globalStats, setGlobalStats] = useState<any>(null);
+  const [analyticsAutoLoad, setAnalyticsAutoLoad] = useState(false);
 
   const [importSubject, setImportSubject] = useState<string>('math');
   const [unitFilterSubject, setUnitFilterSubject] = useState<string>('all');
@@ -68,6 +69,7 @@ export default function AdminPage() {
       fetchAdminList();
       fetchMaintenanceStatus();
     }
+    if (activeTab !== 'analytics') setAnalyticsAutoLoad(false);
   }, [activeTab, isAdmin]);
 
   const fetchMaintenanceStatus = async () => {
@@ -982,7 +984,7 @@ export default function AdminPage() {
           onIgnoreSuspicious={handleIgnoreSuspicious}
           onBatchAction={handleBatchActionSuspicious}
           onSetUnitForStats={setSelectedUnitForStats}
-          onSwitchToAnalytics={() => setActiveTab('analytics')}
+          onSwitchToAnalytics={() => { setAnalyticsAutoLoad(true); setActiveTab('analytics'); }}
           onRefresh={() => fetchScores(false)}
         />
       )}
@@ -999,6 +1001,7 @@ export default function AdminPage() {
             await fetchUnits();
             await fetchScores();
           }}
+          autoLoad={analyticsAutoLoad}
         />
       )}
 
@@ -1015,7 +1018,6 @@ export default function AdminPage() {
           onUpdateMaintenance={handleUpdateMaintenance}
           roleEmail={roleEmail}
           setRoleEmail={setRoleEmail}
-          roleLoading={false}
           adminList={adminList}
           adminListLoading={adminListLoading}
           onFetchAdminList={fetchAdminList}

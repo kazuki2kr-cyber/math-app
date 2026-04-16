@@ -26,6 +26,7 @@ interface AnalyticsTabProps {
   setSelectedUnitForStats: (unitId: string) => void;
   onResetAllData: () => Promise<void>;
   onLoadData: () => Promise<void>;
+  autoLoad?: boolean;
 }
 
 type SubTab = 'overview' | 'questions' | 'correlation';
@@ -38,15 +39,22 @@ export default function AnalyticsTab({
   setSelectedUnitForStats,
   onResetAllData,
   onLoadData,
+  autoLoad = false,
 }: AnalyticsTabProps) {
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<SubTab>(autoLoad ? 'questions' : 'overview');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [unitQuestionsData, setUnitQuestionsData] = useState<any[]>([]);
-  const [dataRequested, setDataRequested] = useState(false);
+  const [dataRequested, setDataRequested] = useState(autoLoad);
   const [loadingData, setLoadingData] = useState(false);
 
   const dataAvailable = units.length > 0 || scores.length > 0;
+
+  useEffect(() => {
+    if (autoLoad && !dataAvailable) {
+      handleLoadData();
+    }
+  }, [autoLoad]);
 
   const handleLoadData = async () => {
     setLoadingData(true);

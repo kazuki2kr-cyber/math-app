@@ -20,7 +20,6 @@ interface RolesTabProps {
   // Roles
   roleEmail: string;
   setRoleEmail: (v: string) => void;
-  roleLoading: boolean;
   adminList: Array<{ uid: string; email: string; displayName: string }>;
   adminListLoading: boolean;
   onFetchAdminList: () => void;
@@ -37,8 +36,11 @@ export default function RolesTab({
   adminList, adminListLoading,
   onFetchAdminList, onSetMessage,
 }: RolesTabProps) {
+  const [localRoleLoading, setLocalRoleLoading] = React.useState(false);
+
   const handleRoleAction = async (isAdmin: boolean) => {
-    if (!roleEmail) return;
+    if (!roleEmail || localRoleLoading) return;
+    setLocalRoleLoading(true);
     try {
       const functions = getFunctions(undefined, 'us-central1');
       const setAdminClaim = httpsCallable(functions, 'setAdminClaim');
@@ -48,6 +50,8 @@ export default function RolesTab({
       onFetchAdminList();
     } catch (err: any) {
       onSetMessage(`エラー: ${err.message}`);
+    } finally {
+      setLocalRoleLoading(false);
     }
   };
 
@@ -144,10 +148,10 @@ export default function RolesTab({
               onChange={(e) => setRoleEmail(e.target.value)}
               className="flex-1"
             />
-            <Button onClick={() => handleRoleAction(true)} disabled={roleLoading || !roleEmail} className="bg-primary">
+            <Button onClick={() => handleRoleAction(true)} disabled={localRoleLoading || !roleEmail} className="bg-primary">
               <Shield className="w-4 h-4 mr-2" /> 権限付与
             </Button>
-            <Button variant="destructive" onClick={() => handleRoleAction(false)} disabled={roleLoading || !roleEmail}>
+            <Button variant="destructive" onClick={() => handleRoleAction(false)} disabled={localRoleLoading || !roleEmail}>
               <X className="w-4 h-4 mr-2" /> 権限剥奪
             </Button>
           </div>
