@@ -63,7 +63,6 @@ export default function ResultPage() {
   const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
-  const [storedData, setStoredData] = useState<StoredDrillData | null>(null);
 
   const processResult = useCallback(async () => {
     if (!user) return;
