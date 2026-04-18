@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
 const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
-import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle } from 'lucide-react';
+import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
 
 // sessionStorage に保存されている演習データ（クライアントは正誤情報を持たない）
@@ -59,6 +59,7 @@ export default function ResultPage() {
 
   const [isHighScore, setIsHighScore] = useState(false);
   const [saving, setSaving] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
@@ -83,6 +84,8 @@ export default function ResultPage() {
       }
 
       setStoredData(parsed);
+      setError(null);
+      setSaving(true);
 
       // 連打防止（sessionStorage はリロード対応のため残す）
       if (processedRef.current) return;
@@ -92,13 +95,21 @@ export default function ResultPage() {
         const functions = getFunctions(undefined, 'us-central1');
         const process = httpsCallable(functions, 'processDrillResult');
 
-        const resultResponse = await process({
-          attemptId: parsed.attemptId,
-          unitId,
-          unitTitle: parsed.unitTitle,
-          time: parsed.time,
-          answers: parsed.answers,
-        });
+        // 15秒のタイムアウト処理
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+        );
+
+        const resultResponse = await Promise.race([
+          process({
+            attemptId: parsed.attemptId,
+            unitId,
+            unitTitle: parsed.unitTitle,
+            time: parsed.time,
+            answers: parsed.answers,
+          }),
+          timeoutPromise
+        ]) as any;
 
         const data = resultResponse.data as {
           success: boolean;
@@ -136,10 +147,18 @@ export default function ResultPage() {
             });
             fireConfetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
           }
+        } else {
+          setError('データの保存に失敗しました。');
         }
 
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to process drill result:', err);
+        processedRef.current = false; // 再試行を可能にする
+        if (err.message === 'TIMEOUT') {
+          setError('通信がタイムアウトしました。通信環境を確認して、再試行してください。');
+        } else {
+          setError('サーバーとの通信中にエラーが発生しました。');
+        }
       } finally {
         setSaving(false);
       }
@@ -189,8 +208,51 @@ ${wrongList || '（なし）'}
 
   if (saving || !storedData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
+        <div className="animate-spin h-10 w-10 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
+        <p className="text-gray-500 font-medium animate-pulse">演習結果を保存しています...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <Card className="max-w-md w-full border-0 shadow-2xl">
+          <CardHeader className="text-center pb-2">
+            <div className="flex justify-center mb-4">
+              <div className="bg-red-100 p-4 rounded-full">
+                <AlertCircle className="w-12 h-12 text-red-600" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-black text-gray-900">保存エラー</CardTitle>
+            <CardDescription className="text-base mt-2">
+              {error}
+            </CardDescription>
+          </CardHeader>
+          <CardFooter className="flex flex-col gap-3 pt-6 pb-8 px-8">
+            <Button 
+              size="lg"
+              className="w-full bg-primary hover:bg-primary/90 font-bold"
+              onClick={() => {
+                setError(null);
+                setSaving(true);
+                processedRef.current = false;
+                processResult();
+              }}
+            >
+              <RefreshCw className="w-5 h-5 mr-2" /> 再試行する
+            </Button>
+            <Button 
+              variant="outline" 
+              size="lg"
+              className="w-full font-bold"
+              onClick={() => router.push('/')}
+            >
+              ダッシュボードに戻る
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
     );
   }

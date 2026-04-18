@@ -49,6 +49,7 @@ export default function Home() {
   const [totalParticipants, setTotalParticipants] = useState(0);
   const [myRankInfo, setMyRankInfo] = useState<{ rank: number; data: OverallRank } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [wrongAnswers, setWrongAnswers] = useState<Record<string, number>>({});
   const [drillCounts, setDrillCounts] = useState<Record<string, number>>({});
   const [showXpInfo, setShowXpInfo] = useState(false);
@@ -70,6 +71,8 @@ export default function Home() {
   useEffect(() => {
     async function fetchData() {
       if (!user) return;
+      setLoading(true);
+      setError(null);
       try {
         // 1. Fetch units with caching
         const CACHE_KEY = 'math_units_cache';
@@ -166,6 +169,7 @@ export default function Home() {
         setScores(newScores);
       } catch (err) {
         console.error("Error fetching dashboard data:", err);
+        setError("データの読み込み中にエラーが発生しました。通信環境を確認して、ページを再読み込みしてください。");
       } finally {
         setLoading(false);
       }
@@ -273,6 +277,30 @@ export default function Home() {
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="animate-spin h-10 w-10 border-4 border-primary/20 border-t-primary rounded-full"></div>
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center py-20">
+            <Card className="max-w-md w-full border-0 shadow-xl">
+              <CardHeader className="text-center">
+                <div className="flex justify-center mb-4">
+                  <div className="bg-red-50 p-4 rounded-full">
+                    <Database className="w-10 h-10 text-red-500" />
+                  </div>
+                </div>
+                <CardTitle className="text-xl font-bold">データの読み込みに失敗しました</CardTitle>
+                <CardDescription className="text-sm mt-2">
+                  {error}
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="flex justify-center pb-8 p-6">
+                <Button 
+                  onClick={() => window.location.reload()}
+                  className="bg-primary hover:bg-primary/90 font-bold px-8 shadow-md"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" /> 再読み込み
+                </Button>
+              </CardFooter>
+            </Card>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
