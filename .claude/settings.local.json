@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py \"data/csv/1.正負の数/1.正負の数の加減.csv\")",
+      "Bash(python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py \"data/csv/1.正負の数/2.正負の数の乗除.csv\")",
+      "Bash(python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py \"data/csv/1.正負の数/3.正負の数の四則.csv\")",
+      "Bash(python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py \"data/csv/2.式の計算/1.文字式.csv\")",
+      "Bash(python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py \"data/csv/2.式の計算/2.多項式の計算.csv\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sys; [print\\(l.encode\\('utf-8', errors='replace'\\).decode\\('utf-8', errors='replace'\\)\\) for l in sys.stdin]\")",
+      "Bash(find *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

@@ -32,7 +32,6 @@ export default function RolesTab({
   maintenanceEnd, setMaintenanceEnd,
   maintenanceUpdateLoading, onUpdateMaintenance,
   roleEmail, setRoleEmail,
-  roleLoading,
   adminList, adminListLoading,
   onFetchAdminList, onSetMessage,
 }: RolesTabProps) {

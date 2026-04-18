@@ -107,7 +107,7 @@ describe('XP 逓減レート (getXpRateMultiplier)', () => {
     [10, 0,   '11回目'],
     [20, 0,   '21回目'],
     [99, 0,   '100回目'],
-  ] as const)('drillCount=%i → %d (%s)', (drillCount, expected) => {
+  ] as const)('drillCount=%i → %d (%s)', (drillCount, expected, _label) => {
     expect(getXpRateMultiplier(drillCount)).toBe(expected);
   });
 });
