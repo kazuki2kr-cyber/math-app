@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -63,109 +63,110 @@ export default function ResultPage() {
   const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
+  const [storedData, setStoredData] = useState<StoredDrillData | null>(null);
 
-  useEffect(() => {
-    async function processResult() {
-      if (!user) return;
+  const processResult = useCallback(async () => {
+    if (!user) return;
 
-      const stored = sessionStorage.getItem('drillResult');
-      if (!stored) {
-        router.push('/');
-        return;
-      }
-
-      const parsed: StoredDrillData = JSON.parse(stored);
-
-      // 旧形式（answers フィールドなし）のデータが残っていた場合は破棄してダッシュボードへ
-      if (!Array.isArray(parsed.answers)) {
-        sessionStorage.removeItem('drillResult');
-        router.push('/');
-        return;
-      }
-
-      setStoredData(parsed);
-      setError(null);
-      setSaving(true);
-
-      // 連打防止（sessionStorage はリロード対応のため残す）
-      if (processedRef.current) return;
-      processedRef.current = true;
-
-      try {
-        const functions = getFunctions(undefined, 'us-central1');
-        const process = httpsCallable(functions, 'processDrillResult');
-
-        // 15秒のタイムアウト処理
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('TIMEOUT')), 15000)
-        );
-
-        const resultResponse = await Promise.race([
-          process({
-            attemptId: parsed.attemptId,
-            unitId,
-            unitTitle: parsed.unitTitle,
-            time: parsed.time,
-            answers: parsed.answers,
-          }),
-          timeoutPromise
-        ]) as any;
-
-        const data = resultResponse.data as {
-          success: boolean;
-          isHighScore: boolean;
-          isLevelUp: boolean;
-          newLevel: number;
-          oldLevel: number;
-          score: number;
-          xpDetails: XpDetails;
-          correctQuestions: CorrectQuestion[];
-          wrongQuestions: WrongQuestion[];
-        };
-
-        if (data.success) {
-          setScore(data.score);
-          setXpDetails(data.xpDetails);
-          setCorrectQuestions(data.correctQuestions || []);
-          setWrongQuestions(data.wrongQuestions || []);
-
-          if (data.isHighScore) {
-            setIsHighScore(true);
-            if (!data.isLevelUp) {
-              fireConfetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
-            }
-          }
-
-          if (data.isLevelUp) {
-            const newIcons = getAvailableIcons(data.newLevel);
-            const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '🎓';
-            setLevelUpData({
-              oldLevel: data.oldLevel,
-              newLevel: data.newLevel,
-              icon: newlyUnlockedIcon,
-              title: getTitleForLevel(data.newLevel)
-            });
-            fireConfetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
-          }
-        } else {
-          setError('データの保存に失敗しました。');
-        }
-
-      } catch (err: any) {
-        console.error('Failed to process drill result:', err);
-        processedRef.current = false; // 再試行を可能にする
-        if (err.message === 'TIMEOUT') {
-          setError('通信がタイムアウトしました。通信環境を確認して、再試行してください。');
-        } else {
-          setError('サーバーとの通信中にエラーが発生しました。');
-        }
-      } finally {
-        setSaving(false);
-      }
+    const stored = sessionStorage.getItem('drillResult');
+    if (!stored) {
+      router.push('/');
+      return;
     }
 
+    const parsed: StoredDrillData = JSON.parse(stored);
+
+    // 旧形式（answers フィールドなし）のデータが残っていた場合は破棄してダッシュボードへ
+    if (!Array.isArray(parsed.answers)) {
+      sessionStorage.removeItem('drillResult');
+      router.push('/');
+      return;
+    }
+
+    setStoredData(parsed);
+    setError(null);
+    setSaving(true);
+
+    // 連打防止（sessionStorage はリロード対応のため残す）
+    if (processedRef.current) return;
+    processedRef.current = true;
+
+    try {
+      const functions = getFunctions(undefined, 'us-central1');
+      const process = httpsCallable(functions, 'processDrillResult');
+
+      // 15秒のタイムアウト処理
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+      );
+
+      const resultResponse = await Promise.race([
+        process({
+          attemptId: parsed.attemptId,
+          unitId,
+          unitTitle: parsed.unitTitle,
+          time: parsed.time,
+          answers: parsed.answers,
+        }),
+        timeoutPromise
+      ]) as any;
+
+      const data = resultResponse.data as {
+        success: boolean;
+        isHighScore: boolean;
+        isLevelUp: boolean;
+        newLevel: number;
+        oldLevel: number;
+        score: number;
+        xpDetails: XpDetails;
+        correctQuestions: CorrectQuestion[];
+        wrongQuestions: WrongQuestion[];
+      };
+
+      if (data.success) {
+        setScore(data.score);
+        setXpDetails(data.xpDetails);
+        setCorrectQuestions(data.correctQuestions || []);
+        setWrongQuestions(data.wrongQuestions || []);
+
+        if (data.isHighScore) {
+          setIsHighScore(true);
+          if (!data.isLevelUp) {
+            fireConfetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#22c55e', '#3b82f6', '#eab308'] });
+          }
+        }
+
+        if (data.isLevelUp) {
+          const newIcons = getAvailableIcons(data.newLevel);
+          const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '🎓';
+          setLevelUpData({
+            oldLevel: data.oldLevel,
+            newLevel: data.newLevel,
+            icon: newlyUnlockedIcon,
+            title: getTitleForLevel(data.newLevel)
+          });
+          fireConfetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ['#ffd700', '#ff0000', '#00ff00', '#0000ff'] });
+        }
+      } else {
+        setError('データの保存に失敗しました。');
+      }
+
+    } catch (err: any) {
+      console.error('Failed to process drill result:', err);
+      processedRef.current = false; // 再試行を可能にする
+      if (err.message === 'TIMEOUT') {
+        setError('通信がタイムアウトしました。通信環境を確認して、再試行してください。');
+      } else {
+        setError('サーバーとの通信中にエラーが発生しました。');
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [user, unitId, router, fireConfetti]);
+
+  useEffect(() => {
     processResult();
-  }, [user, unitId, router]);
+  }, [processResult]);
 
   const generatePrompt = () => {
     if (!storedData) return '';
