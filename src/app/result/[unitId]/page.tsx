@@ -128,6 +128,9 @@ export default function ResultPage() {
         setCorrectQuestions(data.correctQuestions || []);
         setWrongQuestions(data.wrongQuestions || []);
 
+        // 短期ロードマップ対応：演習完了時にユニットデータのキャッシュをクリアし、ダッシュボードでの最新反映を保証する
+        localStorage.removeItem('math_units_cache');
+
         if (data.isHighScore) {
           setIsHighScore(true);
           if (!data.isLevelUp) {
