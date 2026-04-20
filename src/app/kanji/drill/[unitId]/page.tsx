@@ -310,8 +310,8 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
         <div className="h-full bg-orange-600 transition-all duration-300" style={{ width: `${progress}%` }} />
       </div>
 
-      <main className="flex-1 flex flex-col items-center justify-center p-4">
-        <Card className="w-full max-w-lg overflow-hidden border-orange-900/20 shadow-xl bg-white">
+      <main className="flex-1 flex flex-col items-center justify-start p-4 overflow-y-auto">
+        <Card className="w-full max-w-xl border-orange-900/20 shadow-xl bg-white">
           <div className="p-8 text-center bg-orange-50/50 border-b border-orange-100 min-h-[140px] flex items-center justify-center flex-col">
             {/* 漢字問題のテキスト。問題によってはフリガナや対象文字をハイライトする処理を後で入れる想定 */}
             <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center"
@@ -327,7 +327,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             <p className="text-xs text-orange-900/60 font-bold mb-3 text-center">
               ※回答が複数文字の場合は、この枠内に「横書き」で書いてください。
             </p>
-            <div className="relative w-full max-w-[400px] aspect-[4/3] group shadow-inner rounded-xl border-2 border-dashed border-orange-200 bg-white">
+            <div className="relative w-full aspect-[2/1] group shadow-inner rounded-xl border-2 border-dashed border-orange-200 bg-white">
               {/* 十字線のガイド（漢字書き取りノート風） */}
               <div className="absolute inset-0 pointer-events-none border border-orange-100 flex items-center justify-center rounded-xl overflow-hidden">
                 <div className="w-full h-full absolute border-[0.5px] border-orange-900/10 top-1/2 -translate-y-1/2 border-dashed" />
