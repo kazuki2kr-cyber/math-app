@@ -10,6 +10,8 @@ const auth = admin.auth();
 // ==========================================
 // 1. setAdminClaim — 管理者権限の付与/剥奪
 // ==========================================
+export * from "./kanji";
+
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
   // 呼び出し元が管理者であることを確認
   if (!context.auth?.token?.admin) {
