@@ -328,9 +328,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center"
                 dangerouslySetInnerHTML={{ __html: text.replace(/([一-龠]+)/g, '<span class="text-orange-900 border-b-2 border-orange-400">$1</span>') }}
             />
-            {currentQ.explanation && (
-              <p className="text-sm text-gray-500 mt-4 tracking-wider">{currentQ.explanation}</p>
-            )}
+
           </div>
           
           <div className="p-4 md:p-6 flex flex-col items-center">
