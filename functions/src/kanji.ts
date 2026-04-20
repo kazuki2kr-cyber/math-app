@@ -56,7 +56,7 @@ export const recognizeKanjiBatch = functions
       throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
     }
 
-    const { unitId, composedImageBase64 } = data as { unitId: string, composedImageBase64: string };
+    const { unitId, composedImageBase64, questionIds } = data as { unitId: string, composedImageBase64: string, questionIds?: string[] };
     if (!unitId || !composedImageBase64) {
       throw new functions.https.HttpsError("invalid-argument", "unitId と画像のBase64データが必要です。");
     }
@@ -96,10 +96,18 @@ export const recognizeKanjiBatch = functions
         throw new functions.https.HttpsError("not-found", "単元が見つかりません。");
       }
       const unitData = unitDoc.data()!;
-      questions = Array.isArray(unitData.questions) ? unitData.questions : [];
-      if (questions.length === 0) {
+      let allQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
+      if (allQuestions.length === 0) {
         const qSnap = await db.collection(`units/${unitId}/questions`).get();
-        questions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        allQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+
+      // フロントで抽出・シャッフルしたquestionIdsが渡された場合はその順序で絞り込む
+      if (questionIds && Array.isArray(questionIds) && questionIds.length > 0) {
+        const questionMap = new Map(allQuestions.map((q: any) => [q.id, q]));
+        questions = questionIds.map(id => questionMap.get(id)).filter(Boolean);
+      } else {
+        questions = allQuestions;
       }
     }
 

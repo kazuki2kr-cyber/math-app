@@ -239,11 +239,12 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
           })),
         };
       } else {
-        const recognizeFn = httpsCallable<{ unitId: string; composedImageBase64: string }, any>(functions, 'recognizeKanjiBatch');
+        const recognizeFn = httpsCallable<{ unitId: string; composedImageBase64: string; questionIds: string[] }, any>(functions, 'recognizeKanjiBatch');
         const decodedUnitId = decodeURIComponent(unitId);
         const response = await recognizeFn({
           unitId: decodedUnitId,
-          composedImageBase64: composedImageBase64
+          composedImageBase64: composedImageBase64,
+          questionIds: questions.map(q => q.id)  // 出題した10問のIDを順番通りに渡す
         });
         resultData = response.data;
       }
