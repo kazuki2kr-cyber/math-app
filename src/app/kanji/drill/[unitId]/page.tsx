@@ -98,7 +98,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
 
         // Filtering for 'wrong' mode
         if (mode === 'wrong') {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const userDoc = await getDoc(doc(db, 'users', user!.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data();
             const wrongIds = userData.kanjiUnitStats?.[decodedUnitId]?.wrongQuestionIds || [];
