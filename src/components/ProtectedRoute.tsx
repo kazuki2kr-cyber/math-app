@@ -11,11 +11,13 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const targetConfig = pathname.startsWith('/kanji') ? 'maintenance_kanji' : 'maintenance';
   const [maintenance, setMaintenance] = useState<{ enabled: boolean; message?: string; scheduledEnd?: string } | null>(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'config', 'maintenance'), (snapshot) => {
+    setMaintenanceLoading(true);
+    const unsubscribe = onSnapshot(doc(db, 'config', targetConfig), (snapshot) => {
       if (snapshot.exists()) {
         setMaintenance(snapshot.data() as any);
       } else {
@@ -23,13 +25,13 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       }
       setMaintenanceLoading(false);
     }, (error) => {
-      console.error("Maintenance check failed:", error);
+      console.error(`Maintenance check failed for ${targetConfig}:`, error);
       setMaintenance({ enabled: false });
       setMaintenanceLoading(false);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [targetConfig]);
 
   useEffect(() => {
     if (!loading && !user && pathname !== '/login') {
