@@ -230,7 +230,7 @@ export default function KanjiDashboard() {
                     <div className="flex justify-between items-end border-b border-orange-100 pb-2">
                       <span className="text-xs text-orange-900/60 font-bold tracking-wider">称号 / レベル</span>
                       <div className="text-right">
-                        <span className="text-lg font-black text-orange-950 mr-2">{userData.kanjiTitle || '筆おろし'}</span>
+                        <span className="text-lg font-black text-orange-950 mr-2">{userData.kanjiTitle || 'ひらがなユーザー'}</span>
                         <span className="text-xl font-bold text-orange-600">Lv.{userData.kanjiLevel || 1}</span>
                       </div>
                     </div>
