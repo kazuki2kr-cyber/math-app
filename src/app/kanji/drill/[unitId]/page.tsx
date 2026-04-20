@@ -14,8 +14,9 @@ import { ArrowRight, Eraser, Check, Loader2, Undo2, X } from 'lucide-react';
 interface Question {
   id: string;
   question_text: string;
-  answer_index: number | string;
-  options: any;
+  answer: string;
+  answer_index?: number | string;
+  options?: any;
   explanation?: string;
   [key: string]: any;
 }
