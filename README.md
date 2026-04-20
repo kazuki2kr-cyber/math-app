@@ -12,6 +12,12 @@
 
 👉 **[GUIDELINES.md](file:///.agents/GUIDELINES.md)** (AIエージェント共通ルール)
 
+エージェント別の入口:
+
+- **Codex**: [AGENTS.md](./AGENTS.md)
+- **Claude Code**: [CLAUDE.md](./CLAUDE.md)
+- **Codex 用コマンド参照**: [`.codex/commands/README.md`](./.codex/commands/README.md)
+
 ## クイックスタート
 
 ```bash
