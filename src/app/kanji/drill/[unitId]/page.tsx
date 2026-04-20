@@ -223,8 +223,8 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
           isLevelUp: false,
           oldLevel: 1,
           newLevel: 1,
-          xpGain: correctCount * 10,
-          newTotalXp: correctCount * 10,
+          xpGain: correctCount * 60,
+          newTotalXp: correctCount * 60,
           correctQuestions: questions.slice(0, -1).map(q => ({ 
             id: q.id, 
             recognizedText: q.answer || '山', 

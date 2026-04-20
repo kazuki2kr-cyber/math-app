@@ -206,8 +206,8 @@ export const recognizeKanjiBatch = functions
 
     serverScore = questions.length > 0 ? Math.round((correctQuestions.length / questions.length) * 100) : 0;
 
-    // 5. XP・レベル計算 (1問正解10XP、コンボボーナス別途があれば入れる。今回はベースの10XPのみとする)
-    const baseTotal = correctQuestions.length * 10;
+    // 5. XP・レベル計算 (1問正解60XP、コンボボーナス別途があれば入れる。今回はベースの60XPのみとする)
+    const baseTotal = correctQuestions.length * 60;
     const finalXpGain = baseTotal;
 
     // 6. Firestore の書き込み (Users, Leaderboard etc)
