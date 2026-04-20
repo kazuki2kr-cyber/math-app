@@ -66,9 +66,6 @@ export default function KanjiUnitsTab({ units, loading, refreshUnits, setMessage
                     <div>
                       <h3 className="font-bold text-orange-950 text-lg">
                         {unit.title}
-                        <span className="ml-2 text-xs font-normal text-orange-900/60 bg-white border border-orange-100 px-2 py-0.5 rounded-full">
-                          {unit.category || 'カテゴリ未設定'}
-                        </span>
                       </h3>
                       <p className="text-xs text-orange-900/50 font-mono mt-1">ID: {unit.id}</p>
                     </div>

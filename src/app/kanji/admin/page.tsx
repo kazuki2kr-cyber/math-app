@@ -78,7 +78,7 @@ export default function KanjiAdminPage() {
 
   const fetchMaintenanceStatus = async () => {
     try {
-      const snap = await getDoc(doc(db, 'config', 'maintenance'));
+      const snap = await getDoc(doc(db, 'config', 'maintenance_kanji'));
       if (snap.exists()) {
         const data = snap.data();
         setMaintenanceEnabled(data.enabled || false);
@@ -93,7 +93,7 @@ export default function KanjiAdminPage() {
   const handleUpdateMaintenance = async () => {
     setMaintenanceUpdateLoading(true);
     try {
-      await setDoc(doc(db, 'config', 'maintenance'), {
+      await setDoc(doc(db, 'config', 'maintenance_kanji'), {
         enabled: maintenanceEnabled,
         message: maintenanceMessage,
         scheduledEnd: maintenanceEnd,
@@ -136,13 +136,9 @@ export default function KanjiAdminPage() {
           for (const [unitId, qs] of Object.entries(grouped)) {
             const first = qs[0];
             const title = first.title || `${unitId}`;
-            const category = first.category || 'その他';
-
-            const unitRef = doc(db, 'units', unitId);
             batch.set(unitRef, {
               id: unitId,
               title,
-              category,
               subject: 'kanji',
               totalQuestions: qs.length,
               createdAt: new Date().toISOString()
@@ -181,10 +177,10 @@ export default function KanjiAdminPage() {
 
   const handleDownloadTemplate = () => {
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" +
-      "unit_id,title,category,question_text,answer,explanation\n" +
-      "kanji-unit-1,一年生の漢字,漢字,高いやまに登る。,山,山（やま）という字です。\n" +
-      "kanji-unit-1,一年生の漢字,漢字,美しいかわが流れる。,川,川（かわ）という字です。\n" +
-      "kanji-multi-1,2語の漢字,漢字,やまかわに出かける。,山川,山川（やまかわ）となります。";
+      "unit_id,title,question_text,answer,explanation\n" +
+      "kanji-unit-1,一年生の漢字,高いやまに登る。,山,山（やま）という字です。\n" +
+      "kanji-unit-1,一年生の漢字,美しいかわが流れる。,川,川（かわ）という字です。\n" +
+      "kanji-multi-1,2語の漢字,やまかわに出かける。,山川,山川（やまかわ）となります。";
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);

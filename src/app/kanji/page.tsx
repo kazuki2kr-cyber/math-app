@@ -57,12 +57,7 @@ export default function KanjiDashboard() {
           ];
         }
 
-        kanjiUnits.sort((a, b) => {
-          const catA = a.category || 'その他';
-          const catB = b.category || 'その他';
-          if (catA !== catB) return catA.localeCompare(catB, 'ja', { numeric: true });
-          return a.title.localeCompare(b.title, 'ja', { numeric: true });
-        });
+        kanjiUnits.sort((a, b) => a.title.localeCompare(b.title, 'ja', { numeric: true }));
 
         setUnits(kanjiUnits);
       } catch (err) {
@@ -164,7 +159,6 @@ export default function KanjiDashboard() {
                       <Card key={unit.id} className="flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 group bg-white border-transparent hover:border-orange-900/20">
                         <CardHeader className="pb-4 border-b bg-orange-50/50 group-hover:bg-orange-100/50 transition-colors">
                           <div className="space-y-1">
-                            <div className="text-[10px] font-black text-orange-900/60 uppercase tracking-widest">{unit.category || 'その他'}</div>
                             <CardTitle className="text-lg font-bold text-orange-950 leading-tight">
                               {unit.title}
                             </CardTitle>

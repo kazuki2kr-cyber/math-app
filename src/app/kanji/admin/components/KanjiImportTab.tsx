@@ -38,7 +38,7 @@ export default function KanjiImportTab({ loading, onFileUpload, onDownloadTempla
           <p className="font-semibold mb-2 text-orange-950">要求フォーマット</p>
           <ul className="list-disc list-inside space-y-2">
             <li>必須カラム: <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">unit_id</code>, <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">question_text</code>, <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">answer</code></li>
-            <li>任意カラム: <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">title</code>, <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">category</code>, <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">explanation</code></li>
+            <li>任意カラム: <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">title</code>, <code className="bg-white px-1 py-0.5 border border-orange-200 rounded">explanation</code></li>
             <li><code className="bg-white px-1 py-0.5 border border-orange-200 rounded">answer</code> には複数文字（例: 「山川」など2文字以上）が入っても構いません。</li>
             <li><code className="bg-white px-1 py-0.5 border border-orange-200 rounded">unit_id</code> が同じものは1つの単元としてグループ化されます。</li>
           </ul>

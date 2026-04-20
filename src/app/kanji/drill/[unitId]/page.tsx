@@ -44,6 +44,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   const [answers, setAnswers] = useState<Record<string, string>>({}); // questionId -> dataURL
   const [startTime, setStartTime] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [hasStrokes, setHasStrokes] = useState(false);
 
   useEffect(() => {
@@ -129,7 +130,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   }, [user, unitId, router]);
 
   const handleNext = async () => {
-    if (!canvasRef.current || !hasStrokes || isSubmitting) return;
+    if (!canvasRef.current || !hasStrokes || isSubmitting || isSubmittingRef.current) return;
 
     const currentQ = questions[currentIndex];
     const dataURL = canvasRef.current.toDataURL();
@@ -198,6 +199,8 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   };
 
   const handleSubmit = async (currentAnswers: Record<string, string>) => {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     const timeSpentString = ((Date.now() - startTime) / 1000).toFixed(0);
     const timeSpent = parseInt(timeSpentString);
@@ -261,6 +264,13 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       alert(`提出中にエラーが発生しました: ${e.message || '不明なエラー'}`);
     } finally {
       setIsSubmitting(false);
+      isSubmittingRef.current = false;
+    }
+  };
+
+  const cancelDrill = () => {
+    if (confirm('演習を中断してダッシュボードに戻りますか？')) {
+      router.push('/kanji');
     }
   };
 
@@ -291,14 +301,14 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
         <div className="flex items-center gap-2 md:gap-3">
           <Button 
             variant="ghost" 
-            size="icon" 
-            onClick={() => router.push('/kanji')} 
-            title="演習を中止してダッシュボードに戻る" 
-            className="text-orange-900/50 hover:text-orange-900 hover:bg-orange-100 rounded-full w-8 h-8 flex-shrink-0"
+            size="sm" 
+            onClick={cancelDrill} 
+            className="text-orange-900/50 hover:text-red-600 hover:bg-red-50 transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 mr-1" />
+            <span className="font-bold">中断する</span>
           </Button>
-          <h1 className="text-lg font-bold text-orange-950 truncate max-w-[180px] md:max-w-md">{unitTitle}</h1>
+          <h1 className="text-lg font-bold text-orange-950 truncate max-w-[180px] md:max-w-md ml-2">{unitTitle}</h1>
         </div>
         <div className="text-sm font-bold text-orange-900/70">
           {currentIndex + 1} <span className="font-normal opacity-60">/ {questions.length}</span>
