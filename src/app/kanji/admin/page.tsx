@@ -136,6 +136,7 @@ export default function KanjiAdminPage() {
           for (const [unitId, qs] of Object.entries(grouped)) {
             const first = qs[0];
             const title = first.title || `${unitId}`;
+            const unitRef = doc(db, 'units', unitId);
             batch.set(unitRef, {
               id: unitId,
               title,
