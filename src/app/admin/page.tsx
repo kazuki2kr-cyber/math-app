@@ -8,6 +8,12 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
+import {
+  allDataResetEventId,
+  attemptDeletedEventId,
+  buildAllDataResetEvent,
+  buildAttemptDeletedEvent,
+} from '@/lib/analyticsEvents';
 import AnalyticsTab from './components/AnalyticsTab';
 import { VersionHistoryPanel } from './components/VersionHistoryPanel';
 import ImportTab from './components/ImportTab';
@@ -405,6 +411,20 @@ export default function AdminPage() {
         console.warn('Stats decrement failed (non-critical):', statsErr);
       }
 
+      if (s.uid && s.docId && s.unitId) {
+        await setDoc(
+          doc(db, 'analytics_events', attemptDeletedEventId(s.docId)),
+          buildAttemptDeletedEvent({
+            attemptId: s.docId,
+            uid: s.uid,
+            unitId: s.unitId,
+            deletedByUid: user?.uid || 'unknown-admin',
+            reason: 'admin_delete',
+          }),
+          { merge: true }
+        );
+      }
+
       setScores(scores.filter(score => score.docId !== s.docId));
       // 不正疑惑リストからも消す
       setSuspiciousActivities(prev => prev.filter(sa => sa.id !== s.id && sa.docId !== s.docId));
@@ -622,6 +642,19 @@ export default function AdminPage() {
             batch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
             actuallyDeleted++;
           }
+          if (s.uid && s.docId && s.unitId) {
+            batch.set(
+              doc(db, 'analytics_events', attemptDeletedEventId(s.docId)),
+              buildAttemptDeletedEvent({
+                attemptId: s.docId,
+                uid: s.uid,
+                unitId: s.unitId,
+                deletedByUid: user?.uid || 'unknown-admin',
+                reason: 'admin_delete',
+              }),
+              { merge: true }
+            );
+          }
         });
         await batch.commit();
       }
@@ -720,6 +753,14 @@ export default function AdminPage() {
       } catch (e) {
         console.warn('wrong_answers の削除に失敗しました (非致命的):', e);
       }
+
+      await setDoc(
+        doc(db, 'analytics_events', allDataResetEventId()),
+        buildAllDataResetEvent({
+          executedByUid: user?.uid || 'unknown-admin',
+          reason: 'admin_reset_all',
+        })
+      );
 
       setGlobalStats({ totalDrills: 0, totalCorrect: 0, totalAnswered: 0, totalParticipants: 0 });
       setScores([]);

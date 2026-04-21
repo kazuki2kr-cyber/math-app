@@ -1,5 +1,11 @@
 {
   "projects": {},
   "targets": {},
-  "etags": {}
+  "etags": {
+    "math-app-26c77": {
+      "extensionInstances": {
+        "firestore-bigquery-export": "c2bc0c7f1b4cfca5991204dec4eb831f1919539a5afad8b45af9d293d45767f4"
+      }
+    }
+  }
 }

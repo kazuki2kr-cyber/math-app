@@ -1,4 +1,4 @@
-import {
+﻿import {
   initializeTestEnvironment,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
@@ -348,4 +348,40 @@ describe('Firestore Security Rules', () => {
     const aliceRef = doc(adminContext.firestore(), 'users', aliceId);
     await expect(getDoc(aliceRef)).resolves.toBeDefined();
   });
+  test('analytics_events は一般ユーザー書き込み不可', async () => {
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'analytics_events', 'event1');
+    await expect(setDoc(ref, { eventType: 'ATTEMPT_DELETED' })).rejects.toThrow();
+  });
+
+  test('analytics_events は管理者書き込み可', async () => {
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const ref = doc(adminContext.firestore(), 'analytics_events', 'event1');
+    await expect(setDoc(ref, { eventType: 'ATTEMPT_DELETED' })).resolves.toBeUndefined();
+  });
+
+  test('analytics_serving は一般ユーザー読取不可', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'analytics_serving', 'current', 'overview', 'current'), {
+        totals: { totalAttempts: 10 },
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'analytics_serving', 'current', 'overview', 'current');
+    await expect(getDoc(ref)).rejects.toThrow();
+  });
+
+  test('analytics_serving は管理者読取可', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'analytics_serving', 'current', 'overview', 'current'), {
+        totals: { totalAttempts: 10 },
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const ref = doc(adminContext.firestore(), 'analytics_serving', 'current', 'overview', 'current');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+  });
 });
+

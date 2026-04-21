@@ -7,10 +7,60 @@ admin.initializeApp();
 const db = admin.firestore();
 const auth = admin.auth();
 
+type AttemptSubmittedQuestionResult = {
+  questionId: string;
+  questionOrder: number;
+  isCorrect: boolean;
+};
+
+function buildLogicalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildAttemptSubmittedAnalyticsEvent(params: {
+  now: admin.firestore.Timestamp;
+  attemptId: string;
+  uid: string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  correctCount: number;
+  answeredCount: number;
+  questionResults: AttemptSubmittedQuestionResult[];
+}) {
+  return {
+    eventType: "ATTEMPT_SUBMITTED",
+    eventVersion: 1,
+    occurredAt: params.now,
+    logicalDate: buildLogicalDate(params.now.toDate()),
+    attemptId: params.attemptId,
+    uid: params.uid,
+    unitId: params.unitId,
+    unitTitle: params.unitTitle,
+    subject: params.subject,
+    category: params.category,
+    score: params.score,
+    timeSec: params.timeSec,
+    xpGain: params.xpGain,
+    correctCount: params.correctCount,
+    answeredCount: params.answeredCount,
+    source: "processDrillResult",
+    questionResults: params.questionResults,
+  };
+}
+
+type AttemptSubmittedAnalyticsEventPayload = ReturnType<typeof buildAttemptSubmittedAnalyticsEvent>;
+
 // ==========================================
 // 1. setAdminClaim — 管理者権限の付与/剥奪
 // ==========================================
 export * from "./kanji";
+export * from "./analyticsAggregation";
+export * from "./cleanup";
 
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
   // 呼び出し元が管理者であることを確認
@@ -127,6 +177,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const unitData = unitDoc.data()!;
   // unitTitle はサーバー側の値を使用（クライアント送信値は信頼しない）
   const unitTitle: string = unitData.title || unitId;
+  const unitSubject: string = unitData.subject || "数学";
+  const unitCategory: string = unitData.category || "その他";
   let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
   if (unitQuestions.length === 0) {
     // 問題がサブコレクションに格納されている場合のフォールバック
@@ -159,14 +211,20 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const safeCorrectQuestions: any[] = [];
   const safeWrongQuestions: any[] = [];
   const answerOrderForCombo: boolean[] = [];
+  const questionResultsForAnalytics: AttemptSubmittedQuestionResult[] = [];
 
-  for (const answer of safeAnswers) {
+  for (const [index, answer] of safeAnswers.entries()) {
     const q = unitQuestionMap.get(String(answer.questionId))!;
     const answerIndex = Number(q.answer_index);
     const correctOptionText = q.parsedOptions[answerIndex - 1] ?? ""; // answer_index は 1-based
     const isCorrect = String(answer.selectedOptionText) === String(correctOptionText);
 
     answerOrderForCombo.push(isCorrect);
+    questionResultsForAnalytics.push({
+      questionId: String(q.id),
+      questionOrder: Number(q.order ?? index + 1),
+      isCorrect,
+    });
 
     if (isCorrect) {
       safeCorrectQuestions.push({ id: q.id, question_text: q.question_text });
@@ -237,6 +295,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
         isHighScore: false,
         isLevelUp: false,
         xpDetails: { base: 0, combo: 0, multiplier: 0, multiplierBonus: 0, finalXp: 0 },
+        _analyticsEventPayload: null,
         _rapidSubmission: null,
         ...questionResults,
       };
@@ -445,6 +504,21 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       xpGain: finalXpGain,
       newTotalXp,
       xpDetails: xpDetailsResult,
+      _analyticsEventPayload: buildAttemptSubmittedAnalyticsEvent({
+        now,
+        attemptId: attemptDocId,
+        uid,
+        unitId,
+        unitTitle,
+        subject: unitSubject,
+        category: unitCategory,
+        score: serverScore,
+        timeSec: time,
+        xpGain: finalXpGain,
+        correctCount: safeCorrectQuestions.length,
+        answeredCount: safeCorrectQuestions.length + safeWrongQuestions.length,
+        questionResults: questionResultsForAnalytics,
+      }) as AttemptSubmittedAnalyticsEventPayload,
       ...questionResults,
       // リーダーボード更新に必要な情報を返す
       // isHighScore（スコア更新）またはレベルアップ時のみ更新する。
@@ -458,6 +532,15 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
   // --- 3. トランザクション後の非クリティカル処理 ---
   const resultAny = result as any;
+
+  if (resultAny._analyticsEventPayload) {
+    try {
+      const analyticsPayload = resultAny._analyticsEventPayload as AttemptSubmittedAnalyticsEventPayload;
+      await db.collection("analytics_events").doc(`submit_${analyticsPayload.attemptId}`).set(analyticsPayload);
+    } catch (analyticsErr) {
+      console.error("[processDrillResult] Analytics event write failed (non-critical):", analyticsErr);
+    }
+  }
 
   // 不審アクティビティ（短時間の連続演習）をログ記録
   if (resultAny._rapidSubmission !== null && resultAny._rapidSubmission !== undefined) {
@@ -483,7 +566,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   }
 
   // 内部フィールドはクライアントに返さない
-  const { _leaderboardUpdate: _lb, _rapidSubmission: _rs, ...clientResult } = resultAny;
+  const { _leaderboardUpdate: _lb, _analyticsEventPayload: _aep, _rapidSubmission: _rs, ...clientResult } = resultAny;
   return clientResult;
 
 } catch (error: any) {

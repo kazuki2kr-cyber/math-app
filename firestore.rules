@@ -130,6 +130,18 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    match /analytics_events/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /analytics_serving/{docId} {
+      allow read, write: if isAdmin();
+
+      match /{subCollection}/{subDocId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
     // ------------------------------------------
     // 6. 更新履歴 (管理者のみ)
     // ------------------------------------------
