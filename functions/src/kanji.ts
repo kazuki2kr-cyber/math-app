@@ -70,7 +70,9 @@ export const recognizeKanjiBatch = functions
     // 1. Vision API 呼び出し
     let visionResult;
     try {
-      const [result] = await visionClient.documentTextDetection({
+      // documentTextDetection よりも構造解析を抑えた textDetection の方が、
+      // まばらな手書き文字を「見たまま」の座標で認識するのに適している。
+      const [result] = await visionClient.textDetection({
         image: { content: base64Data },
         imageContext: {
           languageHints: ["ja"],
@@ -111,45 +113,57 @@ export const recognizeKanjiBatch = functions
       }
     }
 
-    // 3. Vision APIのシンボルから文字を抽出し、座標の順番で並び替え
+    // 3. Vision APIの認識結果から文字を抽出
     const recognizedCharacters: { text: string; x: number; y: number }[] = [];
-    const pages = visionResult.fullTextAnnotation?.pages || [];
+    
+    // textDetection (textAnnotations) を使用
+    // textAnnotations[0] は画像全体のテキスト、[1]以降が個別の単語/断画
+    const annotations = visionResult.textAnnotations || [];
+    if (annotations.length > 1) {
+      for (let i = 1; i < annotations.length; i++) {
+        const annotation = annotations[i];
+        if (!annotation.description || !annotation.description.trim()) continue;
 
-    for (const page of pages) {
-      for (const block of page.blocks || []) {
-        for (const paragraph of block.paragraphs || []) {
-          for (const word of paragraph.words || []) {
-            for (const symbol of word.symbols || []) {
-              if (!symbol.text || !symbol.text.trim()) continue;
-              // BoundingBoxの中央の座標を計算
-              const vertices = symbol.boundingBox?.vertices || [];
-              if (vertices.length > 0) {
-                const xs = vertices.map(v => v.x || 0);
-                const ys = vertices.map(v => v.y || 0);
-                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
-                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+        const vertices = annotation.boundingPoly?.vertices || [];
+        if (vertices.length > 0) {
+          const xs = vertices.map(v => v.x || 0);
+          const ys = vertices.map(v => v.y || 0);
+          const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
+          const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
 
-                recognizedCharacters.push({
-                  text: symbol.text,
-                  x: avgX,
-                  y: avgY
-                });
-              }
+          // アノテーション（単語/文字）を1文字ずつに分割して保存
+          // textDetectionは複数の文字をまとめることがあるため
+          const text = annotation.description;
+          if (text.length > 1) {
+            // 文字列として認識された場合は、その中心座標を共有しつつ分割（簡易的な近似）
+            for (let j = 0; j < text.length; j++) {
+              recognizedCharacters.push({
+                text: text[j],
+                x: avgX, 
+                y: avgY
+              });
             }
+          } else {
+            recognizedCharacters.push({
+              text: text,
+              x: avgX,
+              y: avgY
+            });
           }
         }
       }
     }
 
-    // 列数 = 5 とする (フロントエンドと合わせる)
-    // 行でソートし、同じ行ならXでソートする（Y座標の許容誤差は CELL_SIZE/2 など適宜）
-    // 今回は安全のため、フロントエンドのCELL_SIZE (300) を前提に行インデックスを計算する
+    // フロントエンドの縦1列レイアウト (CELL_SIZE 300 + MARGIN 20) に基づいてソート
     const CELL_SIZE = 300;
+    const MARGIN = 20;
+    const ROW_HEIGHT = CELL_SIZE + MARGIN;
+
     const sortedChars = recognizedCharacters.sort((a, b) => {
-      const rowA = Math.floor(a.y / CELL_SIZE);
-      const rowB = Math.floor(b.y / CELL_SIZE);
+      const rowA = Math.floor(a.y / ROW_HEIGHT);
+      const rowB = Math.floor(b.y / ROW_HEIGHT);
       if (rowA !== rowB) return rowA - rowB;
-      return a.x - b.x;
+      return a.x - b.x; // 横書きを考慮し、同じ行内では左から右へ
     });
 
     // 4. 正誤判定の実行
@@ -160,16 +174,16 @@ export const recognizeKanjiBatch = functions
     let serverScore = 0;
 
     questions.forEach((q, index) => {
-      const col = index % 5;
-      const row = Math.floor(index / 5);
-      const expectedCenterX = col * CELL_SIZE + (CELL_SIZE / 2);
-      const expectedCenterY = row * CELL_SIZE + (CELL_SIZE / 2);
-      const ALLOWED_TOLERANCE = CELL_SIZE / 2; // 中心からセル幅の半分以内
+      // 縦1列レイアウトを想定
+      const expectedCenterX = CELL_SIZE / 2;
+      const expectedCenterY = index * ROW_HEIGHT + (CELL_SIZE / 2);
+      const ALLOWED_TOLERANCE_X = CELL_SIZE / 2 + 50; // 左右は少し余裕を持たせる
+      const ALLOWED_TOLERANCE_Y = CELL_SIZE / 2;
 
       // 該当セルの文字をすべて探し、左から右へ結合する
-      const matches = sortedChars.filter(c =>
-        Math.abs(c.x - expectedCenterX) < ALLOWED_TOLERANCE &&
-        Math.abs(c.y - expectedCenterY) < ALLOWED_TOLERANCE
+      const matches = recognizedCharacters.filter(c =>
+        Math.abs(c.x - expectedCenterX) < ALLOWED_TOLERANCE_X &&
+        Math.abs(c.y - expectedCenterY) < ALLOWED_TOLERANCE_Y
       );
 
       // 見つかった文字をX座標順（左から右）にソートして文字列にする

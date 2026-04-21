@@ -153,14 +153,15 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   };
 
   const synthesizeImages = async (currentAnswers: Record<string, string>): Promise<string> => {
-    // グリッド状の画像生成：ここでは例として横5列とする
-    const COLUMNS = 5;
-    const ROWS = Math.ceil(questions.length / COLUMNS);
-    const CELL_SIZE = 300; // 元のキャンバスサイズに近い解像度
+    // 認識精度向上のため、縦1列に並べ、各セルの間にマージンを設ける
+    const COLUMNS = 1;
+    const ROWS = questions.length;
+    const CELL_SIZE = 300; 
+    const MARGIN = 20; // セル間の余白
 
     const canvas = document.createElement('canvas');
-    canvas.width = COLUMNS * CELL_SIZE;
-    canvas.height = ROWS * CELL_SIZE;
+    canvas.width = CELL_SIZE;
+    canvas.height = ROWS * (CELL_SIZE + MARGIN);
     const ctx = canvas.getContext('2d');
     
     if (!ctx) return '';
@@ -177,22 +178,16 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       });
     };
 
-    // すべての解答画像と、マッピング用メタデータを一緒に埋め込むロジックも検討可能だが、
-    // ここでは純粋な画像合成のみを行う
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       const dataURL = currentAnswers[q.id];
       if (!dataURL) continue;
 
       const img = await loadImage(dataURL);
-      const x = (i % COLUMNS) * CELL_SIZE;
-      const y = Math.floor(i / COLUMNS) * CELL_SIZE;
+      const x = 0;
+      const y = i * (CELL_SIZE + MARGIN);
       
       ctx.drawImage(img, x, y, CELL_SIZE, CELL_SIZE);
-      
-      // デバッグまたはマッピング追跡のため、小さく枠をつけたりIDを埋め込んだりすることも可能
-      // ctx.strokeStyle = '#EEEEEE';
-      // ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
     }
 
     return canvas.toDataURL('image/jpeg', 0.85);
