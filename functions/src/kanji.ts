@@ -152,9 +152,9 @@ export const recognizeKanjiBatch = functions
       }
     }
 
-    // 2列N行の格子レイアウトを想定した相対座標判定
-    const COLUMNS = 2;
-    const ROWS = Math.ceil(questions.length / COLUMNS);
+    // 縦1列レイアウト (COLUMNS=1) に基づいた相対座標判定
+    const COLUMNS = 1;
+    const ROWS = questions.length;
     
     const sortedChars = recognizedCharacters.sort((a, b) => {
       const rowA = Math.floor(a.y * ROWS);

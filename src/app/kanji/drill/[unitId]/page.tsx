@@ -153,15 +153,16 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   };
 
   const synthesizeImages = async (currentAnswers: Record<string, string>): Promise<string> => {
-    // 2列×N行の格子レイアウト
-    const COLUMNS = 2;
-    const ROWS = Math.ceil(questions.length / COLUMNS);
+    // 境界判定のミスを防ぐため、縦1列 (COLUMNS=1) に戻す。
+    // その代わりセル間のマージンを 100px と大きく取り、上下の誤認を防ぐ。
+    const COLUMNS = 1;
+    const ROWS = questions.length;
     const CELL_WIDTH = 600; 
     const CELL_HEIGHT = 300;
-    const MARGIN = 40;
+    const MARGIN = 100; // 上下の回答が混じらないよう大きなマージンを設定
 
     const canvas = document.createElement('canvas');
-    canvas.width = COLUMNS * CELL_WIDTH + (COLUMNS - 1) * MARGIN;
+    canvas.width = CELL_WIDTH;
     canvas.height = ROWS * CELL_HEIGHT + (ROWS - 1) * MARGIN;
     const ctx = canvas.getContext('2d');
     
@@ -185,11 +186,8 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       if (!dataURL) continue;
 
       const img = await loadImage(dataURL);
-      const col = i % COLUMNS;
-      const row = Math.floor(i / COLUMNS);
-      
-      const targetX = col * (CELL_WIDTH + MARGIN);
-      const targetY = row * (CELL_HEIGHT + MARGIN);
+      const targetX = 0;
+      const targetY = i * (CELL_HEIGHT + MARGIN);
 
       // アスペクト比を維持して中央に配置 (contain相当)
       const scale = Math.min(CELL_WIDTH / img.width, CELL_HEIGHT / img.height);
@@ -201,7 +199,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       ctx.drawImage(img, targetX + offsetX, targetY + offsetY, drawWidth, drawHeight);
     }
 
-    return canvas.toDataURL('image/jpeg', 0.85);
+    return canvas.toDataURL('image/jpeg', 0.82);
   };
 
   const handleSubmit = async (currentAnswers: Record<string, string>) => {
