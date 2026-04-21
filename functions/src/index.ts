@@ -7,10 +7,58 @@ admin.initializeApp();
 const db = admin.firestore();
 const auth = admin.auth();
 
+type AttemptSubmittedQuestionResult = {
+  questionId: string;
+  questionOrder: number;
+  isCorrect: boolean;
+};
+
+function buildLogicalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildAttemptSubmittedAnalyticsEvent(params: {
+  now: admin.firestore.Timestamp;
+  attemptId: string;
+  uid: string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  correctCount: number;
+  answeredCount: number;
+  questionResults: AttemptSubmittedQuestionResult[];
+}) {
+  return {
+    eventType: "ATTEMPT_SUBMITTED",
+    eventVersion: 1,
+    occurredAt: params.now,
+    logicalDate: buildLogicalDate(params.now.toDate()),
+    attemptId: params.attemptId,
+    uid: params.uid,
+    unitId: params.unitId,
+    unitTitle: params.unitTitle,
+    subject: params.subject,
+    category: params.category,
+    score: params.score,
+    timeSec: params.timeSec,
+    xpGain: params.xpGain,
+    correctCount: params.correctCount,
+    answeredCount: params.answeredCount,
+    source: "processDrillResult",
+    questionResults: params.questionResults,
+  };
+}
+
 // ==========================================
 // 1. setAdminClaim — 管理者権限の付与/剥奪
 // ==========================================
 export * from "./kanji";
+export * from "./analyticsAggregation";
+export * from "./cleanup";
 
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
   // 呼び出し元が管理者であることを確認
@@ -127,6 +175,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const unitData = unitDoc.data()!;
   // unitTitle はサーバー側の値を使用（クライアント送信値は信頼しない）
   const unitTitle: string = unitData.title || unitId;
+  const unitSubject: string = unitData.subject || "数学";
+  const unitCategory: string = unitData.category || "その他";
   let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
   if (unitQuestions.length === 0) {
     // 問題がサブコレクションに格納されている場合のフォールバック
@@ -159,14 +209,20 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const safeCorrectQuestions: any[] = [];
   const safeWrongQuestions: any[] = [];
   const answerOrderForCombo: boolean[] = [];
+  const questionResultsForAnalytics: AttemptSubmittedQuestionResult[] = [];
 
-  for (const answer of safeAnswers) {
+  for (const [index, answer] of safeAnswers.entries()) {
     const q = unitQuestionMap.get(String(answer.questionId))!;
     const answerIndex = Number(q.answer_index);
     const correctOptionText = q.parsedOptions[answerIndex - 1] ?? ""; // answer_index は 1-based
     const isCorrect = String(answer.selectedOptionText) === String(correctOptionText);
 
     answerOrderForCombo.push(isCorrect);
+    questionResultsForAnalytics.push({
+      questionId: String(q.id),
+      questionOrder: Number(q.order ?? index + 1),
+      isCorrect,
+    });
 
     if (isCorrect) {
       safeCorrectQuestions.push({ id: q.id, question_text: q.question_text });
@@ -223,6 +279,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     // Idempotency: attemptIdを使ってすでに記録が存在するか確認
     const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
+    const analyticsEventRef = db.collection("analytics_events").doc(`submit_${attemptDocId}`);
 
     const [userSnap, attemptSnap] = await Promise.all([
       transaction.get(userRef),
@@ -435,6 +492,21 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       globalStatsUpdate.totalParticipants = FieldValue.increment(1);
     }
     transaction.set(globalStatsRef, globalStatsUpdate, { merge: true });
+    transaction.set(analyticsEventRef, buildAttemptSubmittedAnalyticsEvent({
+      now,
+      attemptId: attemptDocId,
+      uid,
+      unitId,
+      unitTitle,
+      subject: unitSubject,
+      category: unitCategory,
+      score: serverScore,
+      timeSec: time,
+      xpGain: finalXpGain,
+      correctCount: safeCorrectQuestions.length,
+      answeredCount: safeCorrectQuestions.length + safeWrongQuestions.length,
+      questionResults: questionResultsForAnalytics,
+    }));
 
     return {
       success: true,

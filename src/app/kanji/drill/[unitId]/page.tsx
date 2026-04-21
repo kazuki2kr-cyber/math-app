@@ -387,7 +387,9 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       const drawWidth = inkWidth * scale;
       const drawHeight = inkHeight * scale;
       const drawX = answerAreaX + (answerAreaWidth - drawWidth) / 2;
-      const drawY = answerAreaY + (answerAreaHeight - drawHeight) / 2;
+      const centeredDrawY = answerAreaY + (answerAreaHeight - drawHeight) / 2;
+      const upwardBias = Math.min(answerAreaHeight * 0.08, 16);
+      const drawY = Math.max(answerAreaY, centeredDrawY - upwardBias);
 
       ctx.drawImage(
         img,

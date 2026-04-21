@@ -10,6 +10,12 @@ interface RecognizedCharacter {
   text: string;
   x: number;
   y: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
 }
 
 interface OcrSlotLayout {
@@ -30,6 +36,22 @@ interface OcrQuestionLayout {
   slots: OcrSlotLayout[];
 }
 
+const KANJI_CONFUSION_GROUPS = [
+  ["一", "ー", "丨"],
+  ["口", "日", "目"],
+  ["土", "士"],
+  ["木", "本", "未", "末"],
+  ["人", "入"],
+  ["大", "犬", "太"],
+  ["傍", "防", "坊", "旁"],
+  ["観", "視", "見"],
+  ["俗", "浴", "谷"],
+  ["絶", "紹"],
+  ["叫", "叶"],
+  ["業", "寒"],
+  ["偉", "緯", "違"],
+];
+
 function normalizeKanjiText(text: string): string {
   return (text || "").normalize("NFKC").replace(/\s+/g, "");
 }
@@ -46,6 +68,66 @@ function isWithinBox(
     point.y >= box.y - marginY &&
     point.y <= box.y + box.height + marginY
   );
+}
+
+function getOverlapRatio(
+  char: Pick<RecognizedCharacter, "left" | "right" | "top" | "bottom">,
+  box: { x: number; y: number; width: number; height: number }
+): number {
+  const overlapWidth = Math.max(0, Math.min(char.right, box.x + box.width) - Math.max(char.left, box.x));
+  const overlapHeight = Math.max(0, Math.min(char.bottom, box.y + box.height) - Math.max(char.top, box.y));
+  const overlapArea = overlapWidth * overlapHeight;
+  const charArea = Math.max((char.right - char.left) * (char.bottom - char.top), 0.000001);
+  return overlapArea / charArea;
+}
+
+function getCharMatchBonus(recognized: string, expected: string): number {
+  if (!recognized || !expected) return 0;
+  if (normalizeKanjiText(recognized) === normalizeKanjiText(expected)) {
+    return 8;
+  }
+
+  for (const group of KANJI_CONFUSION_GROUPS) {
+    if (group.includes(recognized) && group.includes(expected)) {
+      return 3.5;
+    }
+  }
+
+  return 0;
+}
+
+function scoreCharForSlot(
+  char: RecognizedCharacter,
+  slot: { x: number; y: number; width: number; height: number },
+  expectedChar = ""
+): number {
+  const slotCenterX = slot.x + slot.width / 2;
+  const slotCenterY = slot.y + slot.height / 2;
+  const distance = Math.sqrt(distanceSquared(char, slotCenterX, slotCenterY));
+  const normalizedDistance = distance / Math.max(Math.max(slot.width, slot.height), 0.000001);
+  const overlapRatio = getOverlapRatio(char, slot);
+  const withinSlot = isWithinBox(char, slot, slot.width * 0.18, slot.height * 0.15);
+  const areaRatio = Math.min((char.width * char.height) / Math.max(slot.width * slot.height, 0.000001), 1);
+
+  return (
+    getCharMatchBonus(char.text, expectedChar) +
+    overlapRatio * 3 +
+    (withinSlot ? 1.5 : 0) +
+    areaRatio * 0.6 -
+    normalizedDistance * 1.8
+  );
+}
+
+function buildFallbackSlots(questionLayout: OcrQuestionLayout, charCount: number): OcrSlotLayout[] {
+  const slotCount = Math.max(1, charCount);
+  const slotWidth = questionLayout.width / slotCount;
+  return Array.from({ length: slotCount }, (_, index) => ({
+    index,
+    x: questionLayout.x + slotWidth * index,
+    y: questionLayout.y,
+    width: slotWidth,
+    height: questionLayout.height,
+  }));
 }
 
 function distanceSquared(point: { x: number; y: number }, targetX: number, targetY: number): number {
@@ -89,6 +171,82 @@ function buildRecognizedTextFromLayout(
     usedIndices.add(bestCandidate.index);
     return bestCandidate.char.text;
   }).join("");
+}
+
+function buildCorrectedTextFromAnswer(
+  questionChars: RecognizedCharacter[],
+  questionLayout: OcrQuestionLayout,
+  correctAnswer: string
+): string {
+  const normalizedAnswer = normalizeKanjiText(correctAnswer);
+  if (!normalizedAnswer) {
+    return buildRecognizedTextFromLayout(questionChars, questionLayout);
+  }
+
+  const answerChars = Array.from(normalizedAnswer);
+  const slots = (questionLayout.slots && questionLayout.slots.length > 0)
+    ? [...questionLayout.slots].sort((a, b) => a.index - b.index)
+    : buildFallbackSlots(questionLayout, answerChars.length);
+
+  const rawText = buildRecognizedTextFromLayout(questionChars, questionLayout);
+  const rawNormalized = normalizeKanjiText(rawText);
+  if (rawNormalized === normalizedAnswer) {
+    return normalizedAnswer;
+  }
+
+  const usedIndices = new Set<number>();
+  const correctedChars = answerChars.map((expectedChar, index) => {
+    const slot = slots[Math.min(index, slots.length - 1)] || {
+      x: questionLayout.x,
+      y: questionLayout.y,
+      width: questionLayout.width,
+      height: questionLayout.height,
+    };
+
+    const candidates = questionChars
+      .map((char, charIndex) => ({
+        char,
+        charIndex,
+        score: scoreCharForSlot(char, slot, expectedChar),
+      }))
+      .filter(({ score }) => score > -1.25)
+      .sort((a, b) => b.score - a.score);
+
+    const exactCandidate = candidates.find(({ char, charIndex }) =>
+      !usedIndices.has(charIndex) && normalizeKanjiText(char.text) === expectedChar
+    );
+    if (exactCandidate) {
+      usedIndices.add(exactCandidate.charIndex);
+      return exactCandidate.char.text;
+    }
+
+    const bestCandidate = candidates.find(({ charIndex }) => !usedIndices.has(charIndex));
+    if (!bestCandidate) {
+      return "";
+    }
+
+    const fallbackThreshold = getCharMatchBonus(bestCandidate.char.text, expectedChar) > 0 ? -3 : 2.1;
+    if (bestCandidate.score < fallbackThreshold) {
+      return "";
+    }
+
+    usedIndices.add(bestCandidate.charIndex);
+    return bestCandidate.char.text;
+  }).join("");
+
+  const correctedNormalized = normalizeKanjiText(correctedChars);
+  if (correctedNormalized === normalizedAnswer) {
+    return normalizedAnswer;
+  }
+
+  const exactCoverage = answerChars.every((expectedChar) =>
+    questionChars.some((char) => normalizeKanjiText(char.text) === expectedChar)
+  );
+  if (exactCoverage) {
+    return normalizedAnswer;
+  }
+
+  return correctedChars || rawText;
 }
 
 // ==========================================
@@ -226,6 +384,10 @@ export const recognizeKanjiBatch = functions
               if (vertices.length > 0) {
                 const xs = vertices.map(v => v.x || 0);
                 const ys = vertices.map(v => v.y || 0);
+                const minX = Math.min(...xs);
+                const maxX = Math.max(...xs);
+                const minY = Math.min(...ys);
+                const maxY = Math.max(...ys);
                 const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
                 const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
 
@@ -233,7 +395,13 @@ export const recognizeKanjiBatch = functions
                 recognizedCharacters.push({
                   text: char,
                   x: avgX / imgWidth,
-                  y: avgY / imgHeight
+                  y: avgY / imgHeight,
+                  left: minX / imgWidth,
+                  right: maxX / imgWidth,
+                  top: minY / imgHeight,
+                  bottom: maxY / imgHeight,
+                  width: Math.max((maxX - minX) / imgWidth, 0.000001),
+                  height: Math.max((maxY - minY) / imgHeight, 0.000001),
                 });
               }
             }
@@ -262,6 +430,13 @@ export const recognizeKanjiBatch = functions
     );
 
     questions.forEach((q, index) => {
+      let resolvedCorrectOptionText = "";
+      if (q.answer_index !== undefined && Array.isArray(q.options)) {
+        resolvedCorrectOptionText = q.options[q.answer_index - 1] || "";
+      } else if (typeof q.answer === "string") {
+        resolvedCorrectOptionText = q.answer;
+      }
+
       const questionLayout = layoutMap.get(q.id);
       const hasStructuredLayout = Boolean(questionLayout);
       let recognizedTextFromLayout = "";
@@ -270,7 +445,7 @@ export const recognizeKanjiBatch = functions
         const questionChars = recognizedCharacters
           .filter((char) => isWithinBox(char, questionLayout, 0.02, 0.025))
           .sort((a, b) => a.x - b.x);
-        recognizedTextFromLayout = buildRecognizedTextFromLayout(questionChars, questionLayout);
+        recognizedTextFromLayout = buildCorrectedTextFromAnswer(questionChars, questionLayout, resolvedCorrectOptionText);
       }
 
       // 割合ベースで期待される座標を計算
@@ -305,20 +480,20 @@ export const recognizeKanjiBatch = functions
         correctOptionText = q.answer; // 漢字の答えが直接入っているケース
       }
 
-      const isCorrect = normalizeKanjiText(recognizedText) === normalizeKanjiText(correctOptionText);
+      const isCorrect = normalizeKanjiText(recognizedText) === normalizeKanjiText(resolvedCorrectOptionText);
 
       if (isCorrect && recognizedText !== "") {
         correctQuestions.push({ 
           id: q.id, 
           recognizedText: recognizedText,
-          correctOptionText,
+          correctOptionText: resolvedCorrectOptionText,
           question_text: q.question_text
         });
       } else {
         wrongQuestions.push({
           id: q.id,
           recognizedText: recognizedText || "無回答",
-          correctOptionText,
+          correctOptionText: resolvedCorrectOptionText,
           question_text: q.question_text
         });
       }
