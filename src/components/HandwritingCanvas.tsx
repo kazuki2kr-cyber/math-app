@@ -169,7 +169,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
         const canvas = canvasRef.current;
         if (!canvas) return null;
         // image/jpeg で出力してデータサイズを抑える
-        return canvas.toDataURL('image/jpeg', 0.9);
+        return canvas.toDataURL('image/png');
       }
     }));
 

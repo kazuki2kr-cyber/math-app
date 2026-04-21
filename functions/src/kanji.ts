@@ -6,6 +6,91 @@ import vision from "@google-cloud/vision";
 const db = admin.firestore();
 const visionClient = new vision.ImageAnnotatorClient();
 
+interface RecognizedCharacter {
+  text: string;
+  x: number;
+  y: number;
+}
+
+interface OcrSlotLayout {
+  index: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface OcrQuestionLayout {
+  questionId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  expectedCharCount: number;
+  slots: OcrSlotLayout[];
+}
+
+function normalizeKanjiText(text: string): string {
+  return (text || "").normalize("NFKC").replace(/\s+/g, "");
+}
+
+function isWithinBox(
+  point: { x: number; y: number },
+  box: { x: number; y: number; width: number; height: number },
+  marginX = 0,
+  marginY = 0
+): boolean {
+  return (
+    point.x >= box.x - marginX &&
+    point.x <= box.x + box.width + marginX &&
+    point.y >= box.y - marginY &&
+    point.y <= box.y + box.height + marginY
+  );
+}
+
+function distanceSquared(point: { x: number; y: number }, targetX: number, targetY: number): number {
+  const dx = point.x - targetX;
+  const dy = point.y - targetY;
+  return dx * dx + dy * dy;
+}
+
+function buildRecognizedTextFromLayout(
+  questionChars: RecognizedCharacter[],
+  questionLayout: OcrQuestionLayout
+): string {
+  const sortedSlots = [...(questionLayout.slots || [])].sort((a, b) => a.index - b.index);
+  if (sortedSlots.length <= 1) {
+    if (questionChars.length === 0) return "";
+    const centerX = questionLayout.x + questionLayout.width / 2;
+    const centerY = questionLayout.y + questionLayout.height / 2;
+    const bestChar = [...questionChars].sort(
+      (a, b) => distanceSquared(a, centerX, centerY) - distanceSquared(b, centerX, centerY)
+    )[0];
+    return bestChar?.text || "";
+  }
+
+  const usedIndices = new Set<number>();
+
+  return sortedSlots.map((slot) => {
+    const slotCandidates = questionChars
+      .map((char, index) => ({ char, index }))
+      .filter(({ char, index }) => !usedIndices.has(index) && isWithinBox(char, slot, 0.015, 0.02));
+
+    if (slotCandidates.length === 0) {
+      return "";
+    }
+
+    const slotCenterX = slot.x + slot.width / 2;
+    const slotCenterY = slot.y + slot.height / 2;
+    const bestCandidate = slotCandidates.sort(
+      (a, b) => distanceSquared(a.char, slotCenterX, slotCenterY) - distanceSquared(b.char, slotCenterX, slotCenterY)
+    )[0];
+
+    usedIndices.add(bestCandidate.index);
+    return bestCandidate.char.text;
+  }).join("");
+}
+
 // ==========================================
 // 漢字のレベル計算ユーティリティ (literary themes)
 // ==========================================
@@ -56,7 +141,12 @@ export const recognizeKanjiBatch = functions
       throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
     }
 
-    const { unitId, composedImageBase64, questionIds } = data as { unitId: string, composedImageBase64: string, questionIds?: string[] };
+    const { unitId, composedImageBase64, questionIds, layout } = data as {
+      unitId: string;
+      composedImageBase64: string;
+      questionIds?: string[];
+      layout?: OcrQuestionLayout[];
+    };
     if (!unitId || !composedImageBase64) {
       throw new functions.https.HttpsError("invalid-argument", "unitId と画像のBase64データが必要です。");
     }
@@ -113,7 +203,7 @@ export const recognizeKanjiBatch = functions
     }
 
     // 3. Vision APIの認識結果から文字を抽出
-    const recognizedCharacters: { text: string; x: number; y: number }[] = [];
+    const recognizedCharacters: RecognizedCharacter[] = [];
     
     // 画像サイズを正規化のために取得
     const fullTextAnnotation = visionResult.fullTextAnnotation;
@@ -155,11 +245,9 @@ export const recognizeKanjiBatch = functions
     // 縦1列レイアウト (COLUMNS=1) に基づいた相対座標判定
     const COLUMNS = 1;
     const ROWS = questions.length;
-    
+
     const sortedChars = recognizedCharacters.sort((a, b) => {
-      const rowA = Math.floor(a.y * ROWS);
-      const rowB = Math.floor(b.y * ROWS);
-      if (rowA !== rowB) return rowA - rowB;
+      if (a.y !== b.y) return a.y - b.y;
       return a.x - b.x;
     });
 
@@ -169,8 +257,22 @@ export const recognizeKanjiBatch = functions
     const correctQuestions: any[] = [];
     const wrongQuestions: any[] = [];
     let serverScore = 0;
+    const layoutMap = new Map<string, OcrQuestionLayout>(
+      Array.isArray(layout) ? layout.map((item) => [item.questionId, item]) : []
+    );
 
     questions.forEach((q, index) => {
+      const questionLayout = layoutMap.get(q.id);
+      const hasStructuredLayout = Boolean(questionLayout);
+      let recognizedTextFromLayout = "";
+
+      if (questionLayout) {
+        const questionChars = recognizedCharacters
+          .filter((char) => isWithinBox(char, questionLayout, 0.02, 0.025))
+          .sort((a, b) => a.x - b.x);
+        recognizedTextFromLayout = buildRecognizedTextFromLayout(questionChars, questionLayout);
+      }
+
       // 割合ベースで期待される座標を計算
       const col = index % COLUMNS;
       const row = Math.floor(index / COLUMNS);
@@ -189,9 +291,11 @@ export const recognizeKanjiBatch = functions
       );
 
       // 見つかった文字をX座標順（左から右）にソートして文字列にする
-      const recognizedText = matches.length > 0 
-        ? matches.sort((a, b) => a.x - b.x).map(c => c.text).join("")
-        : "";
+      const recognizedText = hasStructuredLayout
+        ? recognizedTextFromLayout
+        : matches.length > 0
+          ? matches.sort((a, b) => a.x - b.x).map(c => c.text).join("")
+          : "";
 
       // options配列や answer_index を駆使して正解文字を取得
       let correctOptionText = "";
@@ -201,7 +305,7 @@ export const recognizeKanjiBatch = functions
         correctOptionText = q.answer; // 漢字の答えが直接入っているケース
       }
 
-      const isCorrect = recognizedText === correctOptionText;
+      const isCorrect = normalizeKanjiText(recognizedText) === normalizeKanjiText(correctOptionText);
 
       if (isCorrect && recognizedText !== "") {
         correctQuestions.push({ 
