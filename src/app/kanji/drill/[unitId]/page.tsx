@@ -153,15 +153,17 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   };
 
   const synthesizeImages = async (currentAnswers: Record<string, string>): Promise<string> => {
-    // 認識精度向上のため、縦1列に並べ、各セルの間にマージンを設ける
-    const COLUMNS = 1;
-    const ROWS = questions.length;
-    const CELL_SIZE = 300; 
-    const MARGIN = 20; // セル間の余白
+    // 2列×N行の格子レイアウトに変更。
+    // 解答エリアのアスペクト比 (2:1) を維持するため、横600px、縦300pxのセルを使用。
+    const COLUMNS = 2;
+    const ROWS = Math.ceil(questions.length / COLUMNS);
+    const CELL_WIDTH = 600; 
+    const CELL_HEIGHT = 300;
+    const MARGIN = 40; // 認識ミスを防ぐため広めのマージン
 
     const canvas = document.createElement('canvas');
-    canvas.width = CELL_SIZE;
-    canvas.height = ROWS * (CELL_SIZE + MARGIN);
+    canvas.width = COLUMNS * CELL_WIDTH + (COLUMNS - 1) * MARGIN;
+    canvas.height = ROWS * CELL_HEIGHT + (ROWS - 1) * MARGIN;
     const ctx = canvas.getContext('2d');
     
     if (!ctx) return '';
@@ -184,10 +186,14 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       if (!dataURL) continue;
 
       const img = await loadImage(dataURL);
-      const x = 0;
-      const y = i * (CELL_SIZE + MARGIN);
+      const col = i % COLUMNS;
+      const row = Math.floor(i / COLUMNS);
       
-      ctx.drawImage(img, x, y, CELL_SIZE, CELL_SIZE);
+      const x = col * (CELL_WIDTH + MARGIN);
+      const y = row * (CELL_HEIGHT + MARGIN);
+      
+      // アスペクト比を維持して描画（HandwritingCanvasが2:1であることを期待）
+      ctx.drawImage(img, x, y, CELL_WIDTH, CELL_HEIGHT);
     }
 
     return canvas.toDataURL('image/jpeg', 0.85);

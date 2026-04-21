@@ -116,13 +116,21 @@ export const recognizeKanjiBatch = functions
     // 3. Vision APIの認識結果から文字を抽出
     const recognizedCharacters: { text: string; x: number; y: number }[] = [];
     
-    // textDetection (textAnnotations) を使用
-    // textAnnotations[0] は画像全体のテキスト、[1]以降が個別の単語/断画
+    // 画像サイズを正規化のために取得
+    const fullText = visionResult.fullTextAnnotation;
+    const imgWidth = fullText?.pages?.[0]?.width || 1;
+    const imgHeight = fullText?.pages?.[0]?.height || 1;
+
     const annotations = visionResult.textAnnotations || [];
     if (annotations.length > 1) {
       for (let i = 1; i < annotations.length; i++) {
         const annotation = annotations[i];
-        if (!annotation.description || !annotation.description.trim()) continue;
+        if (!annotation.description) continue;
+
+        // 【カスタム指示の代替】日本語以外の不要な文字（英数字、一部の記号）を除去するフィルタ
+        // 漢字、ひらがな、カタカナ、および一部の日本語記号のみを許可
+        const cleanedText = annotation.description.replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g, "");
+        if (!cleanedText) continue;
 
         const vertices = annotation.boundingPoly?.vertices || [];
         if (vertices.length > 0) {
@@ -131,39 +139,30 @@ export const recognizeKanjiBatch = functions
           const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
           const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
 
-          // アノテーション（単語/文字）を1文字ずつに分割して保存
-          // textDetectionは複数の文字をまとめることがあるため
-          const text = annotation.description;
-          if (text.length > 1) {
-            // 文字列として認識された場合は、その中心座標を共有しつつ分割（簡易的な近似）
-            for (let j = 0; j < text.length; j++) {
-              recognizedCharacters.push({
-                text: text[j],
-                x: avgX, 
-                y: avgY
-              });
-            }
-          } else {
+          // 相対座標 (0.0 - 1.0) に変換
+          const relX = avgX / imgWidth;
+          const relY = avgY / imgHeight;
+
+          for (let j = 0; j < cleanedText.length; j++) {
             recognizedCharacters.push({
-              text: text,
-              x: avgX,
-              y: avgY
+              text: cleanedText[j],
+              x: relX,
+              y: relY
             });
           }
         }
       }
     }
 
-    // フロントエンドの縦1列レイアウト (CELL_SIZE 300 + MARGIN 20) に基づいてソート
-    const CELL_SIZE = 300;
-    const MARGIN = 20;
-    const ROW_HEIGHT = CELL_SIZE + MARGIN;
-
+    // 2列N行の格子レイアウトを想定した相対座標判定
+    const COLUMNS = 2;
+    const ROWS = Math.ceil(questions.length / COLUMNS);
+    
     const sortedChars = recognizedCharacters.sort((a, b) => {
-      const rowA = Math.floor(a.y / ROW_HEIGHT);
-      const rowB = Math.floor(b.y / ROW_HEIGHT);
+      const rowA = Math.floor(a.y * ROWS);
+      const rowB = Math.floor(b.y * ROWS);
       if (rowA !== rowB) return rowA - rowB;
-      return a.x - b.x; // 横書きを考慮し、同じ行内では左から右へ
+      return a.x - b.x;
     });
 
     // 4. 正誤判定の実行
@@ -174,16 +173,21 @@ export const recognizeKanjiBatch = functions
     let serverScore = 0;
 
     questions.forEach((q, index) => {
-      // 縦1列レイアウトを想定
-      const expectedCenterX = CELL_SIZE / 2;
-      const expectedCenterY = index * ROW_HEIGHT + (CELL_SIZE / 2);
-      const ALLOWED_TOLERANCE_X = CELL_SIZE / 2 + 50; // 左右は少し余裕を持たせる
-      const ALLOWED_TOLERANCE_Y = CELL_SIZE / 2;
+      // 割合ベースで期待される座標を計算
+      const col = index % COLUMNS;
+      const row = Math.floor(index / COLUMNS);
+      
+      const expectedRelCenterX = (col + 0.5) / COLUMNS;
+      const expectedRelCenterY = (row + 0.5) / ROWS;
+      
+      // 許容誤差を割合で設定 (セルの大きさの 55% 程度)
+      const TOLERANCE_X = 0.55 / COLUMNS;
+      const TOLERANCE_Y = 0.55 / ROWS;
 
-      // 該当セルの文字をすべて探し、左から右へ結合する
+      // 該当エリア内の文字を抽出し、X座標の割合順（左から右）に結合
       const matches = recognizedCharacters.filter(c =>
-        Math.abs(c.x - expectedCenterX) < ALLOWED_TOLERANCE_X &&
-        Math.abs(c.y - expectedCenterY) < ALLOWED_TOLERANCE_Y
+        Math.abs(c.x - expectedRelCenterX) < TOLERANCE_X &&
+        Math.abs(c.y - expectedRelCenterY) < TOLERANCE_Y
       );
 
       // 見つかった文字をX座標順（左から右）にソートして文字列にする
