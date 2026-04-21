@@ -93,7 +93,7 @@ export default function Home() {
         
         if (unitsData.length === 0) {
           const unitsSnap = await getDocs(collection(db, 'units'));
-          unitsData = unitsSnap.docs.map(doc => doc.data() as Unit);
+          unitsData = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
           localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
         }
 

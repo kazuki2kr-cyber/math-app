@@ -1,0 +1,40 @@
+﻿--- 邂玲焚繝ｪ繝ｼ繝繝ｼ繝懊・繝牙酔譛滄幕蟋・---
+繝ｦ繝ｼ繧ｶ繝ｼ繝・・繧ｿ繧貞叙蠕嶺ｸｭ...
+node : 閾ｴ蜻ｽ逧・↑繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: Error: Could not load the default credentials. Browse to https://cloud.google.com/docs
+/authentication/getting-started for more information.
+発生場所 行:1 文字:1
++ node scripts/sync-leaderboard.js 2>&1 | Out-File -FilePath scripts/sy ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (閾ｴ蜻ｽ逧・↑繧ｨ繝ｩ繝ｼ縺檎...re information.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    at GoogleAuth.getApplicationDefaultAsync (C:\Users\ichikawa\Desktop\math.app\node_modules\google-auth-library\build
+\src\auth\googleauth.js:287:15)
+    at async GoogleAuth._GoogleAuth_determineClient (C:\Users\ichikawa\Desktop\math.app\node_modules\google-auth-librar
+y\build\src\auth\googleauth.js:834:32)
+    at async GoogleAuth.getClient (C:\Users\ichikawa\Desktop\math.app\node_modules\google-auth-library\build\src\auth\g
+oogleauth.js:698:20)
+    at async GrpcClient._getCredentials (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\node_m
+odules\google-gax\build\src\grpc.js:145:24)
+    at async GrpcClient.createStub (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\node_module
+s\google-gax\build\src\grpc.js:318:23)
+Caused by: Error
+    at QueryUtil._getResponse (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\src\refere
+nce\query-util.js:44:23)
+    at Query._getResponse (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\src\reference\
+query.js:784:32)
+    at Query._get (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\src\reference\query.js
+:777:35)
+    at C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\src\reference\query.js:745:43
+    at C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\src\telemetry\enabled-trace-util.j
+s:110:30
+    at NoopContextManager.with (C:\Users\ichikawa\Desktop\math.app\node_modules\@opentelemetry\api\build\src\context\No
+opContextManager.js:14:19)
+    at ContextAPI.with (C:\Users\ichikawa\Desktop\math.app\node_modules\@opentelemetry\api\build\src\api\context.js:51:
+46)
+    at NoopTracer.startActiveSpan (C:\Users\ichikawa\Desktop\math.app\node_modules\@opentelemetry\api\build\src\trace\N
+oopTracer.js:54:31)
+    at ProxyTracer.startActiveSpan (C:\Users\ichikawa\Desktop\math.app\node_modules\@opentelemetry\api\build\src\trace\
+ProxyTracer.js:27:24)
+    at EnabledTraceUtil.startActiveSpan (C:\Users\ichikawa\Desktop\math.app\node_modules\@google-cloud\firestore\build\
+src\telemetry\enabled-trace-util.js:102:28)

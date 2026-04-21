@@ -267,8 +267,10 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }
 
     // 2-1. スコア更新判定 (High Score) と unitStats マージ
-    // ⑥: existingUnitStats 全体ではなく対象単元のデータのみ参照
-    const existingUnitData = userSnap.exists ? ((userSnap.data()?.unitStats || {})[unitId] || {}) : {};
+    // unitStats マップ全体を取得してマージ（ドット記法ではなくリテラルキーで保存するため）
+    const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
+    const existingLastAttemptTimes = userSnap.exists ? (userSnap.data()?.lastAttemptTimes || {}) : {};
+    const existingUnitData = existingUnitStats[unitId] || {};
     const existingMaxScore = existingUnitData.maxScore || 0;
     const existingBestTime = existingUnitData.bestTime || Infinity;
 
@@ -354,12 +356,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       ...(userSnap.exists && currentIcon !== "📐" ? {} : { icon: "📐" })
     };
     
-    // ハイスコア更新時に totalScore を差分更新（serverScore を使用）
-    if (isHighScore) {
-      const scoreDiff = serverScore - existingMaxScore;
-      userUpdate.totalScore = FieldValue.increment(scoreDiff);
-    }
-
     // unitStatsの構築 (scoresとwrong_answersを内包)
     // Wrong Answers List (間違えた問題のID配列を保持)
     let currentWrongs: string[] = existingUnitData.wrongQuestionIds || [];
@@ -368,9 +364,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     currentWrongs = currentWrongs.filter((id: string) => !newlyCorrectIds.includes(id));
     newlyWrongIds.forEach((id: string) => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
 
-    // ⑥: ドット記法で対象単元のみ更新（全 unitStats マップの読み書き不要）
-    userUpdate[`unitStats.${unitId}`] = {
-      ...existingUnitData,
+    // 修正: FieldPath オブジェクトを {} のキーに使うと "[object Object]" という文字列になってしまうため、
+    // 複数の FieldPath を含む更新には可変引数形式 (variadic) を使用する。
+    const statsPathValue = {
       maxScore: isHighScore ? serverScore : (existingUnitData.maxScore || 0),
       bestTime: isHighScore ? time : (existingUnitData.bestTime ?? null),
       wrongQuestionIds: currentWrongs,
@@ -378,10 +374,29 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       drillCount: drillCount + 1,
       updatedAt: dateStr
     };
-    // ③: 次回の間隔チェック用に最終演習時刻を保存（ドット記法で他単元を上書きしない）
-    userUpdate[`lastAttemptTimes.${unitId}`] = dateStr;
 
-    transaction.set(userRef, userUpdate, { merge: true });
+    // 2-4. totalScore の再計算 (自己修復ロジック)
+    // increment を使わず、全ての単元の maxScore を合計することで不整合を防ぐ
+    const updatedStatsForTotal = { ...existingUnitStats, [unitId]: statsPathValue };
+    const recalculatedTotalScore = Object.values(updatedStatsForTotal).reduce((acc: number, stat: any) => {
+      return acc + (stat.maxScore || 0);
+    }, 0);
+    userUpdate.totalScore = recalculatedTotalScore;
+
+    // 他の基本フィールドの更新
+    const baseUpdates: any = { ...userUpdate };
+    delete baseUpdates.unitStats;
+    delete baseUpdates.lastAttemptTimes;
+
+    const statsPath = new admin.firestore.FieldPath("unitStats", unitId);
+    const lastAttemptPath = new admin.firestore.FieldPath("lastAttemptTimes", unitId);
+
+    // 修正: この SDK バージョンの Transaction.update () は引数を最大3つまでしか受け取らない
+    //（docRef, data オブジェクト）または（docRef, fieldPath, value）形式。
+    // そのため、複数の FieldPath を更新する場合は個別に呼び出す必要がある。
+    transaction.update(userRef, baseUpdates);
+    transaction.update(userRef, statsPath, statsPathValue);
+    transaction.update(userRef, lastAttemptPath, dateStr);
 
     // Attempts (Subcollection) - トランザクション内で事前作成した attemptRef を使用
     // TTL用 expireAt: 90日後に自動削除対象
@@ -586,3 +601,4 @@ export const listAdmins = functions.region("us-central1").https.onCall(async (da
 
   return { admins };
 });
+

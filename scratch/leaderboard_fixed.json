@@ -1,0 +1,326 @@
+{
+  "rankings": [
+    {
+      "uid": "3npB0Xn95kcRk4gMzn5vMH1EA8q1",
+      "name": "杉森一喜",
+      "totalScore": 700,
+      "xp": 7193,
+      "icon": "💻",
+      "level": 20
+    },
+    {
+      "uid": "mZYmoEhniqTAvsrH7CGHMCirJ253",
+      "name": "村岡樹",
+      "totalScore": 700,
+      "xp": 2969,
+      "icon": "🧭",
+      "level": 15
+    },
+    {
+      "uid": "h1eBv2tcnjgwGFZMW4FM7HkmPER2",
+      "name": "小松悠悟",
+      "totalScore": 700,
+      "xp": 2298,
+      "icon": "⚙️",
+      "level": 13
+    },
+    {
+      "uid": "aCrNE9l2KYdyZcZCu8EOvIukyUI2",
+      "name": "安藤蒼",
+      "totalScore": 510,
+      "xp": 1664,
+      "icon": "🧭",
+      "level": 12
+    },
+    {
+      "uid": "RDQXZXizrLVyKZDwPcSakaSS7lK2",
+      "name": "浅田悠史",
+      "totalScore": 500,
+      "xp": 1728,
+      "icon": "📖",
+      "level": 12
+    },
+    {
+      "uid": "jf6gqGjfjOddP1v7wsOELcvPR0K2",
+      "name": "宇陀瑛人",
+      "totalScore": 490,
+      "xp": 1422,
+      "icon": "🖋️",
+      "level": 11
+    },
+    {
+      "uid": "SQH38WriecUIQUwB5OEQRXG8qRm1",
+      "name": "本間悠真",
+      "totalScore": 460,
+      "xp": 1011,
+      "icon": "🔍",
+      "level": 9
+    },
+    {
+      "uid": "1YIywvQ6uINQingsAo3RjQPVZ8c2",
+      "name": "松本カレン",
+      "totalScore": 400,
+      "xp": 1806,
+      "icon": "📐",
+      "level": 12
+    },
+    {
+      "uid": "jkv7EL6Ex8U0sIudxc6vkF87a5j2",
+      "name": "宮澤陽人",
+      "totalScore": 400,
+      "xp": 1315,
+      "icon": "📐",
+      "level": 10
+    },
+    {
+      "uid": "aUgWwBkwHkhmY9S1XTmx1OspqaC3",
+      "name": "永井悠真",
+      "totalScore": 400,
+      "xp": 1061,
+      "icon": "📐",
+      "level": 9
+    },
+    {
+      "uid": "du8CAhocStT7OrqJTB5itvoTlg33",
+      "name": "下之薗蓮",
+      "totalScore": 390,
+      "xp": 1279,
+      "icon": "📐",
+      "level": 10
+    },
+    {
+      "uid": "H4lgDTrsuDcfBup9EmWKc5Oy0da2",
+      "name": "門司空桜",
+      "totalScore": 390,
+      "xp": 839,
+      "icon": "🖋️",
+      "level": 8
+    },
+    {
+      "uid": "htAj93BrOcYB7zZMTFPTTFIfUUB2",
+      "name": "櫻井陽斗",
+      "totalScore": 390,
+      "xp": 829,
+      "icon": "🖋️",
+      "level": 8
+    },
+    {
+      "uid": "STcdzlYGmLN8vXF8zty34QhKNR42",
+      "name": "渡部陽智",
+      "totalScore": 380,
+      "xp": 2661,
+      "icon": "🔧",
+      "level": 14
+    },
+    {
+      "uid": "YwZztLptrLZ09KOFbMnGiFPqBfz1",
+      "name": "林碧花",
+      "totalScore": 380,
+      "xp": 2316,
+      "icon": "📐",
+      "level": 13
+    },
+    {
+      "uid": "Os9TPQpl5OZgmEc46Jq3ISr45YH2",
+      "name": "三井大馳",
+      "totalScore": 380,
+      "xp": 2184,
+      "icon": "🔍",
+      "level": 13
+    },
+    {
+      "uid": "hndRxW5Ujdcf069IlavQdFnnuNC3",
+      "name": "加藤竜樹",
+      "totalScore": 380,
+      "xp": 1828,
+      "icon": "🎒",
+      "level": 12
+    },
+    {
+      "uid": "GK4AI3WPPDTI14QVIlgm8QifsCO2",
+      "name": "李明駿",
+      "totalScore": 380,
+      "xp": 1766,
+      "icon": "🧭",
+      "level": 12
+    },
+    {
+      "uid": "DRI3aDTvuad5d8rXitW94LpnlX23",
+      "name": "佐々木康仁",
+      "totalScore": 370,
+      "xp": 1786,
+      "icon": "🧭",
+      "level": 12
+    },
+    {
+      "uid": "do9kex5Yq3arNQxrT4h76rJowXi2",
+      "name": "山﨑翔生",
+      "totalScore": 360,
+      "xp": 1045,
+      "icon": "🖋️",
+      "level": 9
+    },
+    {
+      "uid": "KuCYKdgtw4P18LLNt50Sx7MUbOE2",
+      "name": "岡島湊太",
+      "totalScore": 360,
+      "xp": 807,
+      "icon": "🖋️",
+      "level": 8
+    },
+    {
+      "uid": "NOv0xQ4hPod1CITsiOauQx0I0Sm1",
+      "name": "洪礼恩",
+      "totalScore": 350,
+      "xp": 2477,
+      "icon": "🧭",
+      "level": 14
+    },
+    {
+      "uid": "5nSNAtHGA0dVIB47VTAzrXambK63",
+      "name": "南茂蘭蘭",
+      "totalScore": 340,
+      "xp": 6328,
+      "icon": "💡",
+      "level": 19
+    },
+    {
+      "uid": "KzQQuJPsTlQFj6xKbRSHKIqHeES2",
+      "name": "白川結梨",
+      "totalScore": 300,
+      "xp": 928,
+      "icon": "📗",
+      "level": 9
+    },
+    {
+      "uid": "fkoEWRc902PmE8UWgsvgNPKmf0c2",
+      "name": "土井泰地",
+      "totalScore": 300,
+      "xp": 696,
+      "icon": "📐",
+      "level": 8
+    },
+    {
+      "uid": "0UBRXCGUHTeP2rF1uFmUUltjr1H2",
+      "name": "中島廣人",
+      "totalScore": 290,
+      "xp": 615,
+      "icon": "📘",
+      "level": 7
+    },
+    {
+      "uid": "ep2kP7e8WDRnuJibLSJfKhEuGG03",
+      "name": "山神澄空",
+      "totalScore": 290,
+      "xp": 591,
+      "icon": "📐",
+      "level": 7
+    },
+    {
+      "uid": "gsSfJc0VJKflNUAzIN3dj4s7Pvs2",
+      "name": "高橋七慈",
+      "totalScore": 280,
+      "xp": 486,
+      "icon": "🎒",
+      "level": 6
+    },
+    {
+      "uid": "fZKbQvIP9KTx16LxWZgll43KoD02",
+      "name": "石川結翔",
+      "totalScore": 280,
+      "xp": 92,
+      "icon": "📐",
+      "level": 2
+    },
+    {
+      "uid": "Fq1S9snOdfeXsBsibxhGpEuC3gJ3",
+      "name": "河合祐貴",
+      "totalScore": 200,
+      "xp": 913,
+      "icon": "🔍",
+      "level": 9
+    },
+    {
+      "uid": "AheanXh11zcoYnHipbjwjpZvCSd2",
+      "name": "斎藤千嘉",
+      "totalScore": 200,
+      "xp": 696,
+      "icon": "🧮",
+      "level": 8
+    },
+    {
+      "uid": "K1A7T7B3XHdR1p6q0DoxqCfDtp93",
+      "name": "山崎瑞葵",
+      "totalScore": 200,
+      "xp": 595,
+      "icon": "✏️",
+      "level": 7
+    },
+    {
+      "uid": "BecmOI14ZUTls0TDgAaWwTxmj762",
+      "name": "寺山瑛士",
+      "totalScore": 200,
+      "xp": 464,
+      "icon": "✏️",
+      "level": 6
+    },
+    {
+      "uid": "V05PLDbkGINw5mq9B00t07uDrVc2",
+      "name": "安井朝陽",
+      "totalScore": 200,
+      "xp": 464,
+      "icon": "📐",
+      "level": 6
+    },
+    {
+      "uid": "knwm3URGRMTpjio2ODtyoLqlM6g2",
+      "name": "笠島耀",
+      "totalScore": 190,
+      "xp": 496,
+      "icon": "📐",
+      "level": 6
+    },
+    {
+      "uid": "OojXPlhVGtbqtnMt6g0xEtWy6ue2",
+      "name": "富澤孝行",
+      "totalScore": 160,
+      "xp": 223,
+      "icon": "📐",
+      "level": 4
+    },
+    {
+      "uid": "T9q0VwNporhab8hTWUFYADcjU9f2",
+      "name": "日台洸輝",
+      "totalScore": 100,
+      "xp": 1392,
+      "icon": "🕰️",
+      "level": 11
+    },
+    {
+      "uid": "bno0n0QHHAfGAhksOjbY2lxh7i62",
+      "name": "福田達矢",
+      "totalScore": 100,
+      "xp": 464,
+      "icon": "📘",
+      "level": 6
+    },
+    {
+      "uid": "GdZWuEXgwjg1RM2GWe89JlKMwe33",
+      "name": "古川静之",
+      "totalScore": 100,
+      "xp": 367,
+      "icon": "📐",
+      "level": 5
+    },
+    {
+      "uid": "3geTJLlNuOb1ESqL18GILDfGXJI2",
+      "name": "小林慶次郎",
+      "totalScore": 100,
+      "xp": 232,
+      "icon": "📐",
+      "level": 4
+    }
+  ],
+  "totalParticipants": 49,
+  "updatedAt": "2026-04-21T02:20:00Z"
+}

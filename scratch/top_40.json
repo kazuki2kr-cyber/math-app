@@ -1,0 +1,322 @@
+[
+  {
+    "displayName": "杉森一喜",
+    "totalScore": 700,
+    "xp": 7193,
+    "level": 20,
+    "icon": "💻",
+    "title": "計算の達人"
+  },
+  {
+    "displayName": "丹羽錬司",
+    "totalScore": 700,
+    "xp": 3960,
+    "level": 16,
+    "icon": "🖋️",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "村岡樹",
+    "totalScore": 700,
+    "xp": 2969,
+    "level": 15,
+    "icon": "🧭",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "小松悠悟",
+    "totalScore": 700,
+    "xp": 2298,
+    "level": 13,
+    "icon": "⚙️",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "安藤蒼",
+    "totalScore": 510,
+    "xp": 1664,
+    "level": 12,
+    "icon": "🧭",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "浅田悠史",
+    "totalScore": 500,
+    "xp": 1728,
+    "level": 12,
+    "icon": "📖",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "宇陀瑛人",
+    "totalScore": 490,
+    "xp": 1422,
+    "level": 11,
+    "icon": "🖋️",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "本間悠真",
+    "totalScore": 460,
+    "xp": 1011,
+    "level": 9,
+    "icon": "🔍",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "松本カレン",
+    "totalScore": 400,
+    "xp": 1806,
+    "level": 12,
+    "icon": "📐",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "岡田壮古",
+    "totalScore": 400,
+    "xp": 1568,
+    "level": 11,
+    "icon": "📐",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "宮澤陽人",
+    "totalScore": 400,
+    "xp": 1315,
+    "level": 10,
+    "icon": "📐",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "榛原丈紘",
+    "totalScore": 400,
+    "xp": 1063,
+    "level": 9,
+    "icon": "🖋️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "永井悠真",
+    "totalScore": 400,
+    "xp": 1061,
+    "level": 9,
+    "icon": "📐",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "下之薗蓮",
+    "totalScore": 390,
+    "xp": 1279,
+    "level": 10,
+    "icon": "📐",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "門司空桜",
+    "totalScore": 390,
+    "xp": 839,
+    "level": 8,
+    "icon": "🖋️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "櫻井陽斗",
+    "totalScore": 390,
+    "xp": 829,
+    "level": 8,
+    "icon": "🖋️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "渡部陽智",
+    "totalScore": 380,
+    "xp": 2661,
+    "level": 14,
+    "icon": "🔧",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "林碧花",
+    "totalScore": 380,
+    "xp": 2316,
+    "level": 13,
+    "icon": "📐",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "三井大馳",
+    "totalScore": 380,
+    "xp": 2184,
+    "level": 13,
+    "icon": "🔍",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "加藤竜樹",
+    "totalScore": 380,
+    "xp": 1828,
+    "level": 12,
+    "icon": "🎒",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "李明駿",
+    "totalScore": 380,
+    "xp": 1766,
+    "level": 12,
+    "icon": "🧭",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "佐々木康仁",
+    "totalScore": 370,
+    "xp": 1786,
+    "level": 12,
+    "icon": "🧭",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "山﨑翔生",
+    "totalScore": 360,
+    "xp": 1045,
+    "level": 9,
+    "icon": "🖋️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "岡島湊太",
+    "totalScore": 360,
+    "xp": 807,
+    "level": 8,
+    "icon": "🖋️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "洪礼恩",
+    "totalScore": 350,
+    "xp": 2477,
+    "level": 14,
+    "icon": "🧭",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "南茂蘭蘭",
+    "totalScore": 340,
+    "xp": 6328,
+    "level": 19,
+    "icon": "💡",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "堀部瑛太郎",
+    "totalScore": 340,
+    "xp": 595,
+    "level": 7,
+    "icon": "🧮",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "白川結梨",
+    "totalScore": 300,
+    "xp": 928,
+    "level": 9,
+    "icon": "📗",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "土井泰地",
+    "totalScore": 300,
+    "xp": 696,
+    "level": 8,
+    "icon": "📐",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "齋藤和久",
+    "totalScore": 300,
+    "xp": 696,
+    "level": 8,
+    "icon": "🎒",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "中島廣人",
+    "totalScore": 290,
+    "xp": 615,
+    "level": 7,
+    "icon": "📘",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "市川湊人",
+    "totalScore": 290,
+    "xp": 615,
+    "level": 7,
+    "icon": "✏️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "山神澄空",
+    "totalScore": 290,
+    "xp": 591,
+    "level": 7,
+    "icon": "📐",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "岩田庵",
+    "totalScore": 280,
+    "xp": 6125,
+    "level": 19,
+    "icon": "🖥️",
+    "title": "数学ビギナー"
+  },
+  {
+    "displayName": "高橋七慈",
+    "totalScore": 280,
+    "xp": 486,
+    "level": 6,
+    "icon": "🎒",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "石川結翔",
+    "totalScore": 280,
+    "xp": 92,
+    "level": 2,
+    "icon": "📐",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "河合祐貴",
+    "totalScore": 200,
+    "xp": 913,
+    "level": 9,
+    "icon": "🔍",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "斎藤千嘉",
+    "totalScore": 200,
+    "xp": 696,
+    "level": 8,
+    "icon": "🧮",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "山崎瑞葵",
+    "totalScore": 200,
+    "xp": 595,
+    "level": 7,
+    "icon": "✏️",
+    "title": "算数卒業生"
+  },
+  {
+    "displayName": "飯塚皓介",
+    "totalScore": 200,
+    "xp": 572,
+    "level": 7,
+    "icon": "📐",
+    "title": "算数卒業生"
+  }
+]
