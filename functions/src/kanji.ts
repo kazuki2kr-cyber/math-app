@@ -70,9 +70,8 @@ export const recognizeKanjiBatch = functions
     // 1. Vision API 呼び出し
     let visionResult;
     try {
-      // documentTextDetection よりも構造解析を抑えた textDetection の方が、
-      // まばらな手書き文字を「見たまま」の座標で認識するのに適している。
-      const [result] = await visionClient.textDetection({
+      // documentTextDetection に戻し、文字（symbol）レベルの正確な座標情報を取得する
+      const [result] = await visionClient.documentTextDetection({
         image: { content: base64Data },
         imageContext: {
           languageHints: ["ja"],
@@ -117,38 +116,37 @@ export const recognizeKanjiBatch = functions
     const recognizedCharacters: { text: string; x: number; y: number }[] = [];
     
     // 画像サイズを正規化のために取得
-    const fullText = visionResult.fullTextAnnotation;
-    const imgWidth = fullText?.pages?.[0]?.width || 1;
-    const imgHeight = fullText?.pages?.[0]?.height || 1;
+    const fullTextAnnotation = visionResult.fullTextAnnotation;
+    const pages = fullTextAnnotation?.pages || [];
+    const imgWidth = pages[0]?.width || 1;
+    const imgHeight = pages[0]?.height || 1;
 
-    const annotations = visionResult.textAnnotations || [];
-    if (annotations.length > 1) {
-      for (let i = 1; i < annotations.length; i++) {
-        const annotation = annotations[i];
-        if (!annotation.description) continue;
+    for (const page of pages) {
+      for (const block of page.blocks || []) {
+        for (const paragraph of block.paragraphs || []) {
+          for (const word of paragraph.words || []) {
+            for (const symbol of word.symbols || []) {
+              if (!symbol.text) continue;
 
-        // 【カスタム指示の代替】日本語以外の不要な文字（英数字、一部の記号）を除去するフィルタ
-        // 漢字、ひらがな、カタカナ、および一部の日本語記号のみを許可
-        const cleanedText = annotation.description.replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g, "");
-        if (!cleanedText) continue;
+              // 日本語以外の文字をフィルタリング
+              const char = symbol.text;
+              if (!/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(char)) continue;
 
-        const vertices = annotation.boundingPoly?.vertices || [];
-        if (vertices.length > 0) {
-          const xs = vertices.map(v => v.x || 0);
-          const ys = vertices.map(v => v.y || 0);
-          const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
-          const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+              const vertices = symbol.boundingBox?.vertices || [];
+              if (vertices.length > 0) {
+                const xs = vertices.map(v => v.x || 0);
+                const ys = vertices.map(v => v.y || 0);
+                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
+                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
 
-          // 相対座標 (0.0 - 1.0) に変換
-          const relX = avgX / imgWidth;
-          const relY = avgY / imgHeight;
-
-          for (let j = 0; j < cleanedText.length; j++) {
-            recognizedCharacters.push({
-              text: cleanedText[j],
-              x: relX,
-              y: relY
-            });
+                // 相対座標 (0.0 - 1.0) に変換
+                recognizedCharacters.push({
+                  text: char,
+                  x: avgX / imgWidth,
+                  y: avgY / imgHeight
+                });
+              }
+            }
           }
         }
       }
