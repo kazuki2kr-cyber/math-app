@@ -118,6 +118,20 @@ function scoreCharForSlot(
   );
 }
 
+function scoreCharForQuestion(
+  char: RecognizedCharacter,
+  questionLayout: OcrQuestionLayout
+): number {
+  const questionCenterX = questionLayout.x + questionLayout.width / 2;
+  const questionCenterY = questionLayout.y + questionLayout.height / 2;
+  const distance = Math.sqrt(distanceSquared(char, questionCenterX, questionCenterY));
+  const normalizedDistance = distance / Math.max(questionLayout.width, questionLayout.height, 0.000001);
+  const overlapRatio = getOverlapRatio(char, questionLayout);
+  const withinQuestion = isWithinBox(char, questionLayout, questionLayout.width * 0.01, questionLayout.height * 0.005);
+
+  return overlapRatio * 4 + (withinQuestion ? 1 : 0) - normalizedDistance * 0.75;
+}
+
 function buildFallbackSlots(questionLayout: OcrQuestionLayout, charCount: number): OcrSlotLayout[] {
   const slotCount = Math.max(1, charCount);
   const slotWidth = questionLayout.width / slotCount;
@@ -134,6 +148,42 @@ function distanceSquared(point: { x: number; y: number }, targetX: number, targe
   const dx = point.x - targetX;
   const dy = point.y - targetY;
   return dx * dx + dy * dy;
+}
+
+function assignRecognizedCharactersToQuestions(
+  recognizedCharacters: RecognizedCharacter[],
+  layouts: OcrQuestionLayout[]
+): Map<string, RecognizedCharacter[]> {
+  const charsByQuestionId = new Map<string, RecognizedCharacter[]>();
+
+  layouts.forEach((layout) => {
+    charsByQuestionId.set(layout.questionId, []);
+  });
+
+  recognizedCharacters.forEach((char) => {
+    const candidates = layouts
+      .map((layout) => ({
+        layout,
+        score: scoreCharForQuestion(char, layout),
+        overlapRatio: getOverlapRatio(char, layout),
+        withinQuestion: isWithinBox(char, layout, layout.width * 0.01, layout.height * 0.005),
+      }))
+      .filter(({ overlapRatio, withinQuestion }) => overlapRatio > 0 || withinQuestion)
+      .sort((a, b) => b.score - a.score);
+
+    const bestCandidate = candidates[0];
+    if (!bestCandidate) {
+      return;
+    }
+
+    if (!bestCandidate.withinQuestion && bestCandidate.overlapRatio < 0.08) {
+      return;
+    }
+
+    charsByQuestionId.get(bestCandidate.layout.questionId)?.push(char);
+  });
+
+  return charsByQuestionId;
 }
 
 function buildRecognizedTextFromLayout(
@@ -414,7 +464,7 @@ export const recognizeKanjiBatch = functions
     const COLUMNS = 1;
     const ROWS = questions.length;
 
-    const sortedChars = recognizedCharacters.sort((a, b) => {
+    const sortedChars = [...recognizedCharacters].sort((a, b) => {
       if (a.y !== b.y) return a.y - b.y;
       return a.x - b.x;
     });
@@ -427,6 +477,10 @@ export const recognizeKanjiBatch = functions
     let serverScore = 0;
     const layoutMap = new Map<string, OcrQuestionLayout>(
       Array.isArray(layout) ? layout.map((item) => [item.questionId, item]) : []
+    );
+    const questionCharsMap = assignRecognizedCharactersToQuestions(
+      recognizedCharacters,
+      Array.from(layoutMap.values())
     );
 
     questions.forEach((q, index) => {
@@ -442,8 +496,7 @@ export const recognizeKanjiBatch = functions
       let recognizedTextFromLayout = "";
 
       if (questionLayout) {
-        const questionChars = recognizedCharacters
-          .filter((char) => isWithinBox(char, questionLayout, 0.02, 0.025))
+        const questionChars = (questionCharsMap.get(q.id) || [])
           .sort((a, b) => a.x - b.x);
         recognizedTextFromLayout = buildCorrectedTextFromAnswer(questionChars, questionLayout, resolvedCorrectOptionText);
       }
