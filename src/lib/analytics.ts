@@ -24,6 +24,7 @@ export interface CorrelationPair {
   indexA: number;
   indexB: number;
   phi: number;
+  supportUsers?: number;
   direction: 'positive' | 'negative';
   strength: 'strong' | 'moderate';
 }
