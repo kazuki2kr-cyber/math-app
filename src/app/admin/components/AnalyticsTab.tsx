@@ -41,18 +41,6 @@ interface AnalyticsTabProps {
 
 type SubTab = 'overview' | 'questions' | 'correlation';
 
-type BackfillAnalyticsResult = {
-  ok: boolean;
-  dryRun: boolean;
-  processed: number;
-  written: number;
-  skippedExisting: number;
-  skippedInvalid: number;
-  skippedMissingUnit: number;
-  hasMore: boolean;
-  nextCursor: string | null;
-};
-
 function formatGeneratedAt(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === 'string') return new Date(value).toLocaleString('ja-JP');
@@ -77,7 +65,6 @@ export default function AnalyticsTab({
   const [unitSummaries, setUnitSummaries] = useState<UnitSummaryDoc[]>([]);
   const [questionAnalysis, setQuestionAnalysis] = useState<QuestionAnalysisDoc | null>(null);
   const [questionCorrelations, setQuestionCorrelations] = useState<QuestionCorrelationsDoc | null>(null);
-  const [backfillRunning, setBackfillRunning] = useState(false);
   const [aggregationRunning, setAggregationRunning] = useState(false);
   const [opsMessage, setOpsMessage] = useState<string | null>(null);
 
@@ -132,10 +119,6 @@ export default function AnalyticsTab({
   const generatedAtLabel = formatGeneratedAt(
     questionCorrelations?.generatedAt || questionAnalysis?.generatedAt || servingOverview?.generatedAt
   );
-  const backfillCallable = useMemo(
-    () => httpsCallable<any, BackfillAnalyticsResult>(functions, 'backfillAnalyticsEvents'),
-    []
-  );
   const aggregationCallable = useMemo(
     () => httpsCallable(functions, 'runAnalyticsAggregation'),
     []
@@ -161,7 +144,7 @@ export default function AnalyticsTab({
     }
   };
 
-  const handleBackfill = async () => {
+  /* const handleBackfill = async () => {
     setBackfillRunning(true);
     setOpsMessage(null);
 
@@ -201,7 +184,7 @@ export default function AnalyticsTab({
     } finally {
       setBackfillRunning(false);
     }
-  };
+  }; */
 
   const handleRunAggregation = async () => {
     setAggregationRunning(true);
@@ -363,10 +346,8 @@ export default function AnalyticsTab({
       </div>
 
       <AnalyticsOpsPanel
-        backfillRunning={backfillRunning}
         aggregationRunning={aggregationRunning}
         opsMessage={opsMessage}
-        onBackfill={handleBackfill}
         onRunAggregation={handleRunAggregation}
       />
 
@@ -492,16 +473,12 @@ function calculateCategoryAccuraciesFromSummaries(
 }
 
 function AnalyticsOpsPanel({
-  backfillRunning,
   aggregationRunning,
   opsMessage,
-  onBackfill,
   onRunAggregation,
 }: {
-  backfillRunning: boolean;
   aggregationRunning: boolean;
   opsMessage: string | null;
-  onBackfill: () => Promise<void>;
   onRunAggregation: () => Promise<void>;
 }) {
   return (
@@ -515,18 +492,9 @@ function AnalyticsOpsPanel({
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
-            variant="outline"
-            size="sm"
-            onClick={onBackfill}
-            disabled={backfillRunning || aggregationRunning}
-            className="text-xs"
-          >
-            {backfillRunning ? 'backfill 実行中...' : 'attempts を backfill'}
-          </Button>
-          <Button
             size="sm"
             onClick={onRunAggregation}
-            disabled={aggregationRunning || backfillRunning}
+            disabled={aggregationRunning}
             className="text-xs"
           >
             {aggregationRunning ? '再集計中...' : '集計を再実行'}

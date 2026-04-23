@@ -420,7 +420,7 @@ base AS (
     uid,
     question_id,
     question_order,
-    is_correct
+    NOT is_correct AS is_incorrect
   FROM latest_per_user
   WHERE row_num = 1
 ),
@@ -432,16 +432,42 @@ pairs AS (
     ANY_VALUE(left_side.question_order) AS question_order_a,
     ANY_VALUE(right_side.question_order) AS question_order_b,
     COUNT(*) AS support_users,
-    SUM(CASE WHEN left_side.is_correct AND right_side.is_correct THEN 1 ELSE 0 END) AS n11,
-    SUM(CASE WHEN left_side.is_correct AND NOT right_side.is_correct THEN 1 ELSE 0 END) AS n10,
-    SUM(CASE WHEN NOT left_side.is_correct AND right_side.is_correct THEN 1 ELSE 0 END) AS n01,
-    SUM(CASE WHEN NOT left_side.is_correct AND NOT right_side.is_correct THEN 1 ELSE 0 END) AS n00
+    SUM(CASE WHEN left_side.is_incorrect THEN 1 ELSE 0 END) AS wrong_users_a,
+    SUM(CASE WHEN right_side.is_incorrect THEN 1 ELSE 0 END) AS wrong_users_b,
+    SUM(CASE WHEN left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS co_wrong_users,
+    SUM(CASE WHEN left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS n11,
+    SUM(CASE WHEN left_side.is_incorrect AND NOT right_side.is_incorrect THEN 1 ELSE 0 END) AS n10,
+    SUM(CASE WHEN NOT left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS n01,
+    SUM(CASE WHEN NOT left_side.is_incorrect AND NOT right_side.is_incorrect THEN 1 ELSE 0 END) AS n00
   FROM base left_side
   JOIN base right_side
     ON left_side.unit_id = right_side.unit_id
    AND left_side.uid = right_side.uid
-   AND left_side.question_id < right_side.question_id
+    AND left_side.question_id < right_side.question_id
   GROUP BY unit_id, question_id_a, question_id_b
+),
+scored AS (
+  SELECT
+    unit_id,
+    question_id_a,
+    question_id_b,
+    question_order_a,
+    question_order_b,
+    support_users,
+    wrong_users_a,
+    wrong_users_b,
+    co_wrong_users,
+    SAFE_DIVIDE(co_wrong_users, NULLIF(wrong_users_a, 0)) * 100 AS mistake_rate_given_a,
+    SAFE_DIVIDE(co_wrong_users, NULLIF(wrong_users_b, 0)) * 100 AS mistake_rate_given_b,
+    SAFE_DIVIDE(
+      SAFE_DIVIDE(co_wrong_users, NULLIF(support_users, 0)),
+      SAFE_DIVIDE(wrong_users_a, NULLIF(support_users, 0)) * SAFE_DIVIDE(wrong_users_b, NULLIF(support_users, 0))
+    ) AS lift,
+    SAFE_DIVIDE(
+      (n11 * n00) - (n10 * n01),
+      SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
+    ) AS phi
+  FROM pairs
 )
 SELECT
   unit_id,
@@ -450,30 +476,28 @@ SELECT
   question_order_a,
   question_order_b,
   support_users,
-  SAFE_DIVIDE(
-    (n11 * n00) - (n10 * n01),
-    SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
-  ) AS phi,
+  wrong_users_a,
+  wrong_users_b,
+  co_wrong_users,
+  mistake_rate_given_a,
+  mistake_rate_given_b,
+  lift,
+  phi,
+  'positive' AS direction,
   CASE
-    WHEN SAFE_DIVIDE(
-      (n11 * n00) - (n10 * n01),
-      SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
-    ) >= 0 THEN 'positive'
-    ELSE 'negative'
-  END AS direction,
-  CASE
-    WHEN ABS(SAFE_DIVIDE(
-      (n11 * n00) - (n10 * n01),
-      SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
-    )) >= 0.7 THEN 'strong'
+    WHEN ABS(phi) >= 0.5 THEN 'strong'
     ELSE 'moderate'
   END AS strength
-FROM pairs
+FROM scored
 WHERE support_users >= 5
-  AND ABS(SAFE_DIVIDE(
-    (n11 * n00) - (n10 * n01),
-    SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
-  )) >= 0.5
+  AND wrong_users_a >= 3
+  AND wrong_users_b >= 3
+  AND co_wrong_users >= 3
+  AND phi > 0
+  AND GREATEST(
+    mistake_rate_given_a,
+    mistake_rate_given_b
+  ) >= 30
 `;
 }
 
@@ -1014,11 +1038,17 @@ SELECT
   question_id_a,
   question_id_b,
   support_users,
+  co_wrong_users,
+  wrong_users_a,
+  wrong_users_b,
+  mistake_rate_given_a,
+  mistake_rate_given_b,
+  lift,
   phi,
   direction,
   strength
 FROM ${tableRef(config, "agg_question_pair_current")}
-ORDER BY unit_id, ABS(phi) DESC, support_users DESC
+ORDER BY unit_id, co_wrong_users DESC, GREATEST(mistake_rate_given_a, mistake_rate_given_b) DESC, phi DESC
   `);
 
   const docs = new Map<string, any[]>();
@@ -1037,6 +1067,12 @@ ORDER BY unit_id, ABS(phi) DESC, support_users DESC
       questionTextB: questionB?.questionText || row.question_id_b,
       phi: Number(row.phi || 0),
       supportUsers: Number(row.support_users || 0),
+      coWrongUsers: Number(row.co_wrong_users || 0),
+      wrongUsersA: Number(row.wrong_users_a || 0),
+      wrongUsersB: Number(row.wrong_users_b || 0),
+      mistakeRateGivenA: Number(row.mistake_rate_given_a || 0),
+      mistakeRateGivenB: Number(row.mistake_rate_given_b || 0),
+      lift: Number(row.lift || 0),
       direction: row.direction || "positive",
       strength: row.strength || "moderate",
     });
@@ -1094,6 +1130,7 @@ async function writeServingDocs(
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
         unitId,
         minSupportUsers: 5,
+        minCoWrongUsers: 3,
         pairs: pairs.slice(0, 100),
       },
       { merge: true }
