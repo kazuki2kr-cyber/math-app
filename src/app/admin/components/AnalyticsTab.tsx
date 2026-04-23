@@ -285,7 +285,7 @@ export default function AnalyticsTab({
           {[
             { key: 'overview', label: '概要' },
             { key: 'questions', label: '問題分析' },
-            { key: 'correlation', label: '相関分析' },
+            { key: 'correlation', label: '誤答相関' },
           ].map((tab) => (
             <button
               key={tab.key}

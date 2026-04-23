@@ -30,18 +30,17 @@ export default function SmartCorrelationPanel({
         <CardHeader>
           <CardTitle className="text-amber-700 flex items-center gap-2">
             <Link2 className="w-5 h-5" />
-            誤答の相関分析
+            誤答相関
           </CardTitle>
           <CardDescription>
-            BigQuery の集計が終わると、「この問題を間違えた生徒は別のこの問題も間違えやすい」
-            という組み合わせがここに並びます。
+            ここには「同時に間違えやすい問題ペア」だけが表示されます。
           </CardDescription>
         </CardHeader>
         <CardContent className="py-8 text-center text-muted-foreground">
           <AlertCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
           <p className="font-semibold">まだ誤答相関データがありません</p>
           <p className="text-xs mt-2">
-            集計前か、同時に間違える人数が閾値に届いていない状態です。
+            集計前か、同時に間違えた人数が基準未満です。
           </p>
         </CardContent>
       </Card>
@@ -54,14 +53,21 @@ export default function SmartCorrelationPanel({
         <CardHeader>
           <CardTitle className="text-amber-700 flex items-center gap-2">
             <Link2 className="w-5 h-5" />
-            誤答の相関分析
+            誤答相関
           </CardTitle>
           <CardDescription>
-            正解どうしの一致ではなく、誤答が連動して起きる問題ペアだけを表示しています。
-            教材のつまずき箇所を探すための一覧です。
+            この一覧は正答どうしの相関ではありません。
+            「問題Aを間違えた生徒が、問題Bも間違えやすいか」を見ています。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="font-semibold">見方</p>
+            <p className="mt-1">
+              大きく表示している数字は「両方を間違えた人数」です。下には
+              「Aを間違えた人のうち何%がBも間違えたか」を表示しています。
+            </p>
+          </div>
           {generatedAtLabel && (
             <p className="text-xs text-muted-foreground">
               集計更新: {generatedAtLabel}
@@ -82,7 +88,7 @@ export default function SmartCorrelationPanel({
             同時に間違えやすい問題ペア
           </CardTitle>
           <CardDescription className="text-xs">
-            両方を間違えた人数と、「Aを間違えた生徒がBも間違える率」を中心に表示します。
+            どちらも正解した組み合わせではなく、誤答の連動だけを抽出しています。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -97,8 +103,9 @@ export default function SmartCorrelationPanel({
                   <span className="text-lg font-black text-amber-700">
                     {pair.coWrongUsers ?? 0}
                   </span>
+                  <span className="mt-1 text-[10px] text-muted-foreground">両方を誤答</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    className={`mt-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       pair.strength === 'strong'
                         ? 'bg-amber-200 text-amber-800'
                         : 'bg-gray-200 text-gray-600'
@@ -106,7 +113,6 @@ export default function SmartCorrelationPanel({
                   >
                     {pair.strength === 'strong' ? '強い' : '中程度'}
                   </span>
-                  <span className="mt-1 text-[10px] text-muted-foreground">両方を誤答</span>
                   {typeof pair.supportUsers === 'number' && pair.supportUsers > 0 && (
                     <span className="mt-1 text-[10px] text-muted-foreground">
                       対象 {pair.supportUsers}人
@@ -123,8 +129,9 @@ export default function SmartCorrelationPanel({
                     <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border">
                       {pair.qIdB}
                     </span>
-                    <span className="text-[10px] ml-1 text-amber-700">連動誤答</span>
+                    <span className="text-[10px] ml-1 text-amber-700">誤答どうしの関係</span>
                   </div>
+
                   <div className="text-gray-700">
                     <span className="font-semibold text-gray-500 mr-2">{pair.qIdA}:</span>
                     <MathDisplay math={pair.qTextA} className="text-sm" />
@@ -136,18 +143,18 @@ export default function SmartCorrelationPanel({
 
                   <div className="grid gap-2 pt-1 text-xs text-gray-600 md:grid-cols-2">
                     <div className="rounded-md bg-white/70 px-2 py-1 border border-amber-100">
-                      {pair.qIdA} を間違えた人のうち{' '}
-                      <span className="font-semibold text-amber-700">
+                      <span className="font-semibold">{pair.qIdA}</span> を間違えた人のうち
+                      <span className="mx-1 font-semibold text-amber-700">
                         {formatRate(pair.mistakeRateGivenA)}%
-                      </span>{' '}
-                      が {pair.qIdB} も間違えています
+                      </span>
+                      が <span className="font-semibold">{pair.qIdB}</span> も間違えています
                     </div>
                     <div className="rounded-md bg-white/70 px-2 py-1 border border-amber-100">
-                      {pair.qIdB} を間違えた人のうち{' '}
-                      <span className="font-semibold text-amber-700">
+                      <span className="font-semibold">{pair.qIdB}</span> を間違えた人のうち
+                      <span className="mx-1 font-semibold text-amber-700">
                         {formatRate(pair.mistakeRateGivenB)}%
-                      </span>{' '}
-                      が {pair.qIdA} も間違えています
+                      </span>
+                      が <span className="font-semibold">{pair.qIdA}</span> も間違えています
                     </div>
                   </div>
 
@@ -157,10 +164,10 @@ export default function SmartCorrelationPanel({
                       <span>誤答リフト {pair.lift.toFixed(2)}</span>
                     )}
                     {typeof pair.wrongUsersA === 'number' && (
-                      <span>{pair.qIdA} 誤答者 {pair.wrongUsersA}人</span>
+                      <span>{pair.qIdA} の誤答者 {pair.wrongUsersA}人</span>
                     )}
                     {typeof pair.wrongUsersB === 'number' && (
-                      <span>{pair.qIdB} 誤答者 {pair.wrongUsersB}人</span>
+                      <span>{pair.qIdB} の誤答者 {pair.wrongUsersB}人</span>
                     )}
                   </div>
                 </div>
