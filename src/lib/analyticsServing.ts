@@ -88,6 +88,7 @@ export interface QuestionCorrelationsDoc {
   generatedAt?: unknown;
   unitId: string;
   minSupportUsers?: number;
+  minCoWrongUsers?: number;
   pairs: Array<{
     questionIdA: string;
     questionIdB: string;
@@ -95,6 +96,12 @@ export interface QuestionCorrelationsDoc {
     questionTextB: string;
     phi: number;
     supportUsers?: number;
+    coWrongUsers?: number;
+    wrongUsersA?: number;
+    wrongUsersB?: number;
+    mistakeRateGivenA?: number;
+    mistakeRateGivenB?: number;
+    lift?: number;
     direction: CorrelationPair['direction'];
     strength: CorrelationPair['strength'];
   }>;
@@ -167,6 +174,12 @@ export function toCorrelationPairs(docData: QuestionCorrelationsDoc | null): Cor
     indexB: index + 1,
     phi: Number(pair.phi || 0),
     supportUsers: Number(pair.supportUsers || 0),
+    coWrongUsers: Number(pair.coWrongUsers || 0),
+    wrongUsersA: Number(pair.wrongUsersA || 0),
+    wrongUsersB: Number(pair.wrongUsersB || 0),
+    mistakeRateGivenA: Number(pair.mistakeRateGivenA || 0),
+    mistakeRateGivenB: Number(pair.mistakeRateGivenB || 0),
+    lift: Number(pair.lift || 0),
     direction: pair.direction,
     strength: pair.strength,
   }));

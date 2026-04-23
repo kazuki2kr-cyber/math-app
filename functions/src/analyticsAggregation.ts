@@ -2,6 +2,10 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { BigQuery } from "@google-cloud/bigquery";
 
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
 const db = admin.firestore();
 
 type AnalyticsConfig = {
@@ -13,164 +17,246 @@ type AnalyticsConfig = {
   servingRoot: string;
 };
 
-type OverviewTotalsRow = {
-  total_attempts: number | string;
-  unique_users: number | string;
-  avg_accuracy: number | string;
-  total_answered: number | string;
-  total_correct: number | string;
+type UnitMetadata = {
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  questions: Array<{
+    questionId: string;
+    questionOrder: number;
+    questionText: string;
+  }>;
 };
 
-type SubjectRow = {
-  subject: string | null;
-  total_attempts: number | string;
-  avg_accuracy: number | string;
+type AttemptBackfillQuestionResult = {
+  questionId: string;
+  questionOrder: number;
+  isCorrect: boolean;
 };
 
-type RankingRow = {
+type AttemptSubmittedAnalyticsEvent = {
+  eventType: "ATTEMPT_SUBMITTED";
+  eventVersion: number;
+  occurredAt: admin.firestore.Timestamp;
+  logicalDate: string;
+  attemptId: string;
   uid: string;
-  value: number | string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  correctCount: number;
+  answeredCount: number;
+  source: string;
+  questionResults: AttemptBackfillQuestionResult[];
 };
 
-type UnitSummaryRow = {
-  unit_id: string;
-  unit_title: string | null;
-  subject: string | null;
-  category: string | null;
-  total_attempts: number | string;
-  unique_users: number | string;
-  avg_accuracy: number | string;
-  avg_time_sec: number | string;
+const DEFAULT_CONFIG: AnalyticsConfig = {
+  projectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "math-app-26c77",
+  datasetId: "analytics",
+  location: "asia-northeast1",
+  sourceTablePrefix: "analytics_events",
+  timezone: "Asia/Tokyo",
+  servingRoot: "analytics_serving/current",
 };
 
-type UnitQuestionRow = {
-  unit_id: string;
-  question_id: string;
-  question_order: number | string;
-  total: number | string;
-  correct: number | string;
-  accuracy: number | string;
-  difficulty: string;
-};
-
-type UnitQuestionExtremesRow = UnitQuestionRow & {
-  hardest_rank?: number | string | null;
-  easiest_rank?: number | string | null;
-};
-
-type CorrelationRow = {
-  unit_id: string;
-  question_id_a: string;
-  question_id_b: string;
-  phi: number | string;
-  support_users: number | string;
-  direction: string;
-  strength: string;
-};
-
-function toNumber(value: unknown): number {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function getConfig(): AnalyticsConfig {
-  const raw = (((functions as any).config?.() || {}).analytics || {}) as Record<string, string>;
-  const projectId = String(raw.project_id || admin.app().options.projectId || "");
-
-  if (!projectId) {
-    throw new Error("analytics.project_id or Firebase project id is required");
-  }
+function getAnalyticsConfig(): AnalyticsConfig {
+  const cloudRuntimeConfig = process.env.CLOUD_RUNTIME_CONFIG
+    ? JSON.parse(process.env.CLOUD_RUNTIME_CONFIG)
+    : {};
+  const runtimeConfig = (cloudRuntimeConfig.analytics || {}) as Record<string, string>;
 
   return {
-    projectId,
-    datasetId: String(raw.dataset_id || "analytics"),
-    location: String(raw.location || "asia-northeast1"),
-    sourceTablePrefix: String(raw.source_table_prefix || "analytics_events"),
-    timezone: String(raw.timezone || "Asia/Tokyo"),
-    servingRoot: String(raw.serving_root || "analytics_serving"),
+    projectId: runtimeConfig.project_id || DEFAULT_CONFIG.projectId,
+    datasetId: runtimeConfig.dataset_id || DEFAULT_CONFIG.datasetId,
+    location: runtimeConfig.location || DEFAULT_CONFIG.location,
+    sourceTablePrefix: runtimeConfig.source_table_prefix || DEFAULT_CONFIG.sourceTablePrefix,
+    timezone: runtimeConfig.timezone || DEFAULT_CONFIG.timezone,
+    servingRoot: runtimeConfig.serving_root || DEFAULT_CONFIG.servingRoot,
   };
 }
 
-function tableName(config: AnalyticsConfig, suffix: string): string {
-  return `\`${config.projectId}.${config.datasetId}.${suffix}\``;
+function assertSafeIdentifier(value: string, label: string) {
+  if (!/^[A-Za-z0-9_:-]+$/.test(value)) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
 }
 
-function rawLatestTable(config: AnalyticsConfig): string {
-  return tableName(config, `${config.sourceTablePrefix}_raw_latest`);
+function tableRef(config: AnalyticsConfig, tableName: string): string {
+  assertSafeIdentifier(config.projectId, "project id");
+  assertSafeIdentifier(config.datasetId, "dataset id");
+  assertSafeIdentifier(tableName, "table name");
+  return `\`${config.projectId}.${config.datasetId}.${tableName}\``;
 }
 
-function rawChangelogTable(config: AnalyticsConfig): string {
-  return tableName(config, `${config.sourceTablePrefix}_raw_changelog`);
+function occurredAtExpr(alias = "data"): string {
+  return `COALESCE(
+    SAFE.TIMESTAMP(JSON_VALUE(${alias}, '$.occurredAt')),
+    TIMESTAMP_SECONDS(SAFE_CAST(JSON_VALUE(${alias}, '$.occurredAt._seconds') AS INT64))
+  )`;
+}
+
+function buildDifficultyCase(rateExpr: string): string {
+  return `CASE
+    WHEN ${rateExpr} >= 90 THEN 'very_easy'
+    WHEN ${rateExpr} >= 70 THEN 'easy'
+    WHEN ${rateExpr} >= 40 THEN 'normal'
+    WHEN ${rateExpr} >= 20 THEN 'hard'
+    ELSE 'very_hard'
+  END`;
+}
+
+function buildLogicalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildAttemptSubmittedEventFromAttempt(params: {
+  attemptId: string;
+  uid: string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  occurredAt: admin.firestore.Timestamp;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  questionResults: AttemptBackfillQuestionResult[];
+}): AttemptSubmittedAnalyticsEvent {
+  return {
+    eventType: "ATTEMPT_SUBMITTED",
+    eventVersion: 1,
+    occurredAt: params.occurredAt,
+    logicalDate: buildLogicalDate(params.occurredAt.toDate()),
+    attemptId: params.attemptId,
+    uid: params.uid,
+    unitId: params.unitId,
+    unitTitle: params.unitTitle,
+    subject: params.subject,
+    category: params.category,
+    score: params.score,
+    timeSec: params.timeSec,
+    xpGain: params.xpGain,
+    correctCount: params.questionResults.filter((question) => question.isCorrect).length,
+    answeredCount: params.questionResults.length,
+    source: "attempts_backfill",
+    questionResults: params.questionResults,
+  };
+}
+
+async function runQuery(bigquery: BigQuery, config: AnalyticsConfig, query: string) {
+  const [rows] = await bigquery.query({
+    query,
+    location: config.location,
+    useLegacySql: false,
+  });
+  return rows as any[];
 }
 
 function buildFactAttemptsSql(config: AnalyticsConfig): string {
+  const rawLatestTable = tableRef(config, `${config.sourceTablePrefix}_raw_latest`);
   return `
-CREATE OR REPLACE TABLE ${tableName(config, "fact_attempts")}
+CREATE OR REPLACE TABLE ${tableRef(config, "fact_attempts")}
 PARTITION BY occurred_date
-OPTIONS (partition_expiration_days = 366)
 CLUSTER BY unit_id, uid AS
-WITH source_events AS (
-  SELECT data
-  FROM ${rawLatestTable(config)}
-  WHERE JSON_VALUE(data, '$.eventType') IN ('ATTEMPT_SUBMITTED', 'ATTEMPT_DELETED', 'ALL_DATA_RESET')
+WITH raw_events AS (
+  SELECT
+    data AS raw_json
+  FROM ${rawLatestTable}
+  WHERE data IS NOT NULL
 ),
 last_reset AS (
-  SELECT MAX(TIMESTAMP(JSON_VALUE(data, '$.occurredAt'))) AS reset_at
-  FROM source_events
-  WHERE JSON_VALUE(data, '$.eventType') = 'ALL_DATA_RESET'
-),
-submitted_attempts AS (
   SELECT
-    JSON_VALUE(data, '$.attemptId') AS attempt_id,
-    JSON_VALUE(data, '$.uid') AS uid,
-    JSON_VALUE(data, '$.unitId') AS unit_id,
-    COALESCE(JSON_VALUE(data, '$.unitTitle'), '') AS unit_title,
-    COALESCE(JSON_VALUE(data, '$.subject'), '数学') AS subject,
-    COALESCE(JSON_VALUE(data, '$.category'), 'その他') AS category,
-    TIMESTAMP(JSON_VALUE(data, '$.occurredAt')) AS occurred_at,
-    DATE(TIMESTAMP(JSON_VALUE(data, '$.occurredAt')), '${config.timezone}') AS occurred_date,
-    SAFE_CAST(JSON_VALUE(data, '$.score') AS INT64) AS score,
-    SAFE_CAST(JSON_VALUE(data, '$.timeSec') AS INT64) AS time_sec,
-    SAFE_CAST(JSON_VALUE(data, '$.xpGain') AS INT64) AS xp_gain,
-    SAFE_CAST(JSON_VALUE(data, '$.correctCount') AS INT64) AS correct_count,
-    SAFE_CAST(JSON_VALUE(data, '$.answeredCount') AS INT64) AS answered_count
-  FROM source_events
-  WHERE JSON_VALUE(data, '$.eventType') = 'ATTEMPT_SUBMITTED'
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
 ),
-deleted_attempts AS (
-  SELECT DISTINCT JSON_VALUE(data, '$.attemptId') AS attempt_id
-  FROM source_events
-  WHERE JSON_VALUE(data, '$.eventType') = 'ATTEMPT_DELETED'
-    AND TIMESTAMP(JSON_VALUE(data, '$.occurredAt')) >= COALESCE((SELECT reset_at FROM last_reset), TIMESTAMP('1970-01-01'))
+submitted AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
+    JSON_VALUE(raw_json, '$.uid') AS uid,
+    JSON_VALUE(raw_json, '$.unitId') AS unit_id,
+    JSON_VALUE(raw_json, '$.unitTitle') AS unit_title,
+    JSON_VALUE(raw_json, '$.subject') AS subject,
+    JSON_VALUE(raw_json, '$.category') AS category,
+    ${occurredAtExpr("raw_json")} AS occurred_at,
+    DATE(${occurredAtExpr("raw_json")}, '${config.timezone}') AS occurred_date,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.score') AS INT64) AS score,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.timeSec') AS INT64) AS time_sec,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.xpGain') AS INT64) AS xp_gain,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.correctCount') AS INT64) AS correct_count,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.answeredCount') AS INT64) AS answered_count
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_SUBMITTED'
+),
+deleted AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
+    ${occurredAtExpr("raw_json")} AS deleted_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_DELETED'
 )
 SELECT s.*
-FROM submitted_attempts s
-WHERE s.occurred_at >= COALESCE((SELECT reset_at FROM last_reset), TIMESTAMP('1970-01-01'))
-  AND s.attempt_id NOT IN (SELECT attempt_id FROM deleted_attempts WHERE attempt_id IS NOT NULL)
+FROM submitted s
+LEFT JOIN deleted d
+  ON d.attempt_id = s.attempt_id
+CROSS JOIN last_reset lr
+WHERE s.occurred_at IS NOT NULL
+  AND (lr.reset_at IS NULL OR s.occurred_at > lr.reset_at)
+  AND (d.deleted_at IS NULL OR d.deleted_at < s.occurred_at)
 `;
 }
 
 function buildFactAttemptQuestionResultsSql(config: AnalyticsConfig): string {
+  const rawLatestTable = tableRef(config, `${config.sourceTablePrefix}_raw_latest`);
   return `
-CREATE OR REPLACE TABLE ${tableName(config, "fact_attempt_question_results")}
+CREATE OR REPLACE TABLE ${tableRef(config, "fact_attempt_question_results")}
 PARTITION BY occurred_date
-OPTIONS (partition_expiration_days = 366)
 CLUSTER BY unit_id, question_id, uid AS
-WITH submitted_events AS (
+WITH raw_events AS (
   SELECT
-    JSON_VALUE(data, '$.attemptId') AS attempt_id,
-    JSON_VALUE(data, '$.uid') AS uid,
-    JSON_VALUE(data, '$.unitId') AS unit_id,
-    COALESCE(JSON_VALUE(data, '$.unitTitle'), '') AS unit_title,
-    COALESCE(JSON_VALUE(data, '$.subject'), '数学') AS subject,
-    COALESCE(JSON_VALUE(data, '$.category'), 'その他') AS category,
-    TIMESTAMP(JSON_VALUE(data, '$.occurredAt')) AS occurred_at,
-    DATE(TIMESTAMP(JSON_VALUE(data, '$.occurredAt')), '${config.timezone}') AS occurred_date,
-    SAFE_CAST(JSON_VALUE(data, '$.score') AS INT64) AS score,
-    SAFE_CAST(JSON_VALUE(data, '$.timeSec') AS INT64) AS time_sec,
-    JSON_QUERY_ARRAY(data, '$.questionResults') AS question_results
-  FROM ${rawLatestTable(config)}
-  WHERE JSON_VALUE(data, '$.eventType') = 'ATTEMPT_SUBMITTED'
+    data AS raw_json
+  FROM ${rawLatestTable}
+  WHERE data IS NOT NULL
+),
+last_reset AS (
+  SELECT
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
+),
+submitted AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
+    JSON_VALUE(raw_json, '$.uid') AS uid,
+    JSON_VALUE(raw_json, '$.unitId') AS unit_id,
+    JSON_VALUE(raw_json, '$.unitTitle') AS unit_title,
+    JSON_VALUE(raw_json, '$.subject') AS subject,
+    JSON_VALUE(raw_json, '$.category') AS category,
+    ${occurredAtExpr("raw_json")} AS occurred_at,
+    DATE(${occurredAtExpr("raw_json")}, '${config.timezone}') AS occurred_date,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.score') AS INT64) AS score,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.timeSec') AS INT64) AS time_sec,
+    SAFE_CAST(JSON_VALUE(raw_json, '$.xpGain') AS INT64) AS xp_gain,
+    JSON_QUERY_ARRAY(raw_json, '$.questionResults') AS question_results
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_SUBMITTED'
+),
+deleted AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
+    ${occurredAtExpr("raw_json")} AS deleted_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_DELETED'
 )
 SELECT
   s.attempt_id,
@@ -185,102 +271,198 @@ SELECT
   SAFE_CAST(JSON_VALUE(question_result, '$.questionOrder') AS INT64) AS question_order,
   SAFE_CAST(JSON_VALUE(question_result, '$.isCorrect') AS BOOL) AS is_correct,
   s.score,
-  s.time_sec
-FROM submitted_events s
-JOIN ${tableName(config, "fact_attempts")} valid_attempts
-  ON valid_attempts.attempt_id = s.attempt_id,
-UNNEST(s.question_results) AS question_result
+  s.time_sec,
+  s.xp_gain
+FROM submitted s
+LEFT JOIN deleted d
+  ON d.attempt_id = s.attempt_id
+CROSS JOIN last_reset lr
+CROSS JOIN UNNEST(s.question_results) AS question_result
+WHERE s.occurred_at IS NOT NULL
+  AND (lr.reset_at IS NULL OR s.occurred_at > lr.reset_at)
+  AND (d.deleted_at IS NULL OR d.deleted_at < s.occurred_at)
 `;
 }
 
 function buildAggUnitDailySql(config: AnalyticsConfig): string {
   return `
-CREATE OR REPLACE TABLE ${tableName(config, "agg_unit_daily")}
+CREATE OR REPLACE TABLE ${tableRef(config, "agg_unit_daily")}
 PARTITION BY stat_date
-OPTIONS (partition_expiration_days = 366)
 CLUSTER BY unit_id AS
+WITH unit_question_attempts AS (
+  SELECT
+    occurred_date AS stat_date,
+    unit_id,
+    unit_title,
+    subject,
+    category,
+    uid,
+    question_id,
+    is_correct,
+    SAFE_DIVIDE(time_sec, NULLIF(COUNT(*) OVER (PARTITION BY attempt_id), 0)) AS question_time_sec,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS question_attempt_order
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+),
+first_retry AS (
+  SELECT
+    stat_date,
+    unit_id,
+    AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS first_attempt_accuracy,
+    (
+      AVG(IF(question_attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+      AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL))
+    ) * 100 AS retry_improvement_rate
+  FROM unit_question_attempts
+  GROUP BY stat_date, unit_id
+)
 SELECT
-  occurred_date AS stat_date,
-  unit_id,
-  ANY_VALUE(unit_title) AS unit_title,
-  ANY_VALUE(subject) AS subject,
-  ANY_VALUE(category) AS category,
+  attempts.occurred_date AS stat_date,
+  attempts.unit_id,
+  ANY_VALUE(attempts.unit_title) AS unit_title,
+  ANY_VALUE(attempts.subject) AS subject,
+  ANY_VALUE(attempts.category) AS category,
   COUNT(*) AS total_attempts,
-  COUNT(DISTINCT uid) AS unique_users,
-  SUM(answered_count) AS total_answered,
-  SUM(correct_count) AS total_correct,
-  SAFE_DIVIDE(SUM(correct_count), SUM(answered_count)) * 100 AS avg_accuracy,
-  AVG(time_sec) AS avg_time_sec
-FROM ${tableName(config, "fact_attempts")}
-GROUP BY stat_date, unit_id
+  COUNT(DISTINCT attempts.uid) AS unique_users,
+  SUM(attempts.answered_count) AS total_answered,
+  SUM(attempts.correct_count) AS total_correct,
+  SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100 AS avg_accuracy,
+  AVG(attempts.time_sec) AS avg_time_sec,
+  COALESCE(fr.first_attempt_accuracy, 0) AS first_attempt_accuracy,
+  COALESCE(fr.retry_improvement_rate, 0) AS retry_improvement_rate,
+  (100 - SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100)
+    * LOG10(COUNT(*) + 10) AS improvement_priority_score
+FROM ${tableRef(config, "fact_attempts")} attempts
+LEFT JOIN first_retry fr
+  ON fr.stat_date = attempts.occurred_date
+ AND fr.unit_id = attempts.unit_id
+GROUP BY stat_date, unit_id, fr.first_attempt_accuracy, fr.retry_improvement_rate
 `;
 }
 
 function buildAggQuestionDailySql(config: AnalyticsConfig): string {
+  const difficultyExpr = buildDifficultyCase(
+    "SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100"
+  );
   return `
-CREATE OR REPLACE TABLE ${tableName(config, "agg_question_daily")}
+CREATE OR REPLACE TABLE ${tableRef(config, "agg_question_daily")}
 PARTITION BY stat_date
-OPTIONS (partition_expiration_days = 366)
 CLUSTER BY unit_id, question_id AS
+WITH enriched AS (
+  SELECT
+    occurred_date AS stat_date,
+    unit_id,
+    unit_title,
+    subject,
+    category,
+    uid,
+    attempt_id,
+    question_id,
+    question_order,
+    is_correct,
+    SAFE_DIVIDE(time_sec, NULLIF(COUNT(*) OVER (PARTITION BY attempt_id), 0)) AS question_time_sec,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS question_attempt_order,
+    AVG(CAST(is_correct AS INT64)) OVER (PARTITION BY uid, unit_id) AS user_unit_accuracy
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+)
 SELECT
-  occurred_date AS stat_date,
+  stat_date,
   unit_id,
+  ANY_VALUE(unit_title) AS unit_title,
+  ANY_VALUE(subject) AS subject,
+  ANY_VALUE(category) AS category,
   question_id,
   ANY_VALUE(question_order) AS question_order,
   COUNT(*) AS total,
-  SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct,
-  SAFE_DIVIDE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END), COUNT(*)) * 100 AS accuracy,
-  CASE
-    WHEN SAFE_DIVIDE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END), COUNT(*)) >= 0.90 THEN 'very_easy'
-    WHEN SAFE_DIVIDE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END), COUNT(*)) >= 0.70 THEN 'easy'
-    WHEN SAFE_DIVIDE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END), COUNT(*)) >= 0.40 THEN 'normal'
-    WHEN SAFE_DIVIDE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END), COUNT(*)) >= 0.20 THEN 'hard'
-    ELSE 'very_hard'
-  END AS difficulty
-FROM ${tableName(config, "fact_attempt_question_results")}
+  SUM(CAST(is_correct AS INT64)) AS correct,
+  SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100 AS accuracy,
+  ${difficultyExpr} AS difficulty,
+  AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS first_attempt_accuracy,
+  (
+    AVG(IF(question_attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+    AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL))
+  ) * 100 AS retry_improvement_rate,
+  AVG(question_time_sec) AS avg_time_sec,
+  CORR(CAST(is_correct AS INT64), user_unit_accuracy) AS discrimination_index,
+  (100 - SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100)
+    * LOG10(COUNT(*) + 10)
+    + AVG(question_time_sec) AS improvement_priority_score
+FROM enriched
 GROUP BY stat_date, unit_id, question_id
 `;
 }
 
 function buildAggQuestionPairCurrentSql(config: AnalyticsConfig): string {
   return `
-CREATE OR REPLACE TABLE ${tableName(config, "agg_question_pair_current")}
+CREATE OR REPLACE TABLE ${tableRef(config, "agg_question_pair_current")}
 CLUSTER BY unit_id, question_id_a, question_id_b AS
-WITH user_question_outcomes AS (
+WITH latest_per_user AS (
   SELECT
     unit_id,
     uid,
     question_id,
-    MAX(CASE WHEN is_correct THEN 1 ELSE 0 END) AS answered_correctly
-  FROM ${tableName(config, "fact_attempt_question_results")}
-  GROUP BY unit_id, uid, question_id
+    question_order,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY unit_id, uid, question_id
+      ORDER BY occurred_at DESC, attempt_id DESC
+    ) AS row_num
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+),
+base AS (
+  SELECT
+    unit_id,
+    uid,
+    question_id,
+    question_order,
+    NOT is_correct AS is_incorrect
+  FROM latest_per_user
+  WHERE row_num = 1
 ),
 pairs AS (
   SELECT
-    a.unit_id,
-    a.question_id AS question_id_a,
-    b.question_id AS question_id_b,
+    left_side.unit_id,
+    left_side.question_id AS question_id_a,
+    right_side.question_id AS question_id_b,
+    ANY_VALUE(left_side.question_order) AS question_order_a,
+    ANY_VALUE(right_side.question_order) AS question_order_b,
     COUNT(*) AS support_users,
-    SUM(CASE WHEN a.answered_correctly = 1 AND b.answered_correctly = 1 THEN 1 ELSE 0 END) AS n11,
-    SUM(CASE WHEN a.answered_correctly = 1 AND b.answered_correctly = 0 THEN 1 ELSE 0 END) AS n10,
-    SUM(CASE WHEN a.answered_correctly = 0 AND b.answered_correctly = 1 THEN 1 ELSE 0 END) AS n01,
-    SUM(CASE WHEN a.answered_correctly = 0 AND b.answered_correctly = 0 THEN 1 ELSE 0 END) AS n00
-  FROM user_question_outcomes a
-  JOIN user_question_outcomes b
-    ON a.unit_id = b.unit_id
-   AND a.uid = b.uid
-   AND a.question_id < b.question_id
-  GROUP BY a.unit_id, a.question_id, b.question_id
+    SUM(CASE WHEN left_side.is_incorrect THEN 1 ELSE 0 END) AS wrong_users_a,
+    SUM(CASE WHEN right_side.is_incorrect THEN 1 ELSE 0 END) AS wrong_users_b,
+    SUM(CASE WHEN left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS co_wrong_users,
+    SUM(CASE WHEN left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS n11,
+    SUM(CASE WHEN left_side.is_incorrect AND NOT right_side.is_incorrect THEN 1 ELSE 0 END) AS n10,
+    SUM(CASE WHEN NOT left_side.is_incorrect AND right_side.is_incorrect THEN 1 ELSE 0 END) AS n01,
+    SUM(CASE WHEN NOT left_side.is_incorrect AND NOT right_side.is_incorrect THEN 1 ELSE 0 END) AS n00
+  FROM base left_side
+  JOIN base right_side
+    ON left_side.unit_id = right_side.unit_id
+   AND left_side.uid = right_side.uid
+    AND left_side.question_id < right_side.question_id
+  GROUP BY unit_id, question_id_a, question_id_b
 ),
 scored AS (
   SELECT
-    CURRENT_DATE('${config.timezone}') AS stat_date,
     unit_id,
     question_id_a,
     question_id_b,
-    question_text_a,
-    question_text_b,
+    question_order_a,
+    question_order_b,
     support_users,
+    wrong_users_a,
+    wrong_users_b,
+    co_wrong_users,
+    SAFE_DIVIDE(co_wrong_users, NULLIF(wrong_users_a, 0)) * 100 AS mistake_rate_given_a,
+    SAFE_DIVIDE(co_wrong_users, NULLIF(wrong_users_b, 0)) * 100 AS mistake_rate_given_b,
+    SAFE_DIVIDE(
+      SAFE_DIVIDE(co_wrong_users, NULLIF(support_users, 0)),
+      SAFE_DIVIDE(wrong_users_a, NULLIF(support_users, 0)) * SAFE_DIVIDE(wrong_users_b, NULLIF(support_users, 0))
+    ) AS lift,
     SAFE_DIVIDE(
       (n11 * n00) - (n10 * n01),
       SQRT((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
@@ -288,383 +470,710 @@ scored AS (
   FROM pairs
 )
 SELECT
-  stat_date,
   unit_id,
   question_id_a,
   question_id_b,
+  question_order_a,
+  question_order_b,
   support_users,
+  wrong_users_a,
+  wrong_users_b,
+  co_wrong_users,
+  mistake_rate_given_a,
+  mistake_rate_given_b,
+  lift,
   phi,
-  CASE WHEN phi >= 0 THEN 'positive' ELSE 'negative' END AS direction,
-  CASE WHEN ABS(phi) >= 0.7 THEN 'strong' ELSE 'moderate' END AS strength
+  'positive' AS direction,
+  CASE
+    WHEN ABS(phi) >= 0.5 THEN 'strong'
+    ELSE 'moderate'
+  END AS strength
 FROM scored
 WHERE support_users >= 5
+  AND wrong_users_a >= 3
+  AND wrong_users_b >= 3
+  AND co_wrong_users >= 3
+  AND phi > 0
+  AND GREATEST(
+    mistake_rate_given_a,
+    mistake_rate_given_b
+  ) >= 30
 `;
 }
 
-async function runQuery(bigquery: BigQuery, config: AnalyticsConfig, query: string) {
-  await bigquery.query({
-    query,
-    location: config.location,
-  });
+async function buildDerivedTables(bigquery: BigQuery, config: AnalyticsConfig) {
+  const queries = [
+    buildFactAttemptsSql(config),
+    buildFactAttemptQuestionResultsSql(config),
+    buildAggUnitDailySql(config),
+    buildAggQuestionDailySql(config),
+    buildAggQuestionPairCurrentSql(config),
+  ];
+
+  for (const query of queries) {
+    await runQuery(bigquery, config, query);
+  }
 }
 
-async function selectRows<T>(bigquery: BigQuery, config: AnalyticsConfig, query: string): Promise<T[]> {
-  const [rows] = await bigquery.query({
-    query,
-    location: config.location,
-  });
-  return rows as T[];
-}
+async function fetchUnitMetadata(): Promise<Map<string, UnitMetadata>> {
+  const unitsSnapshot = await db.collection("units").get();
+  const metadata = new Map<string, UnitMetadata>();
 
-async function fetchDisplayNames(uids: string[]): Promise<Map<string, string>> {
-  const uniqueUids = Array.from(new Set(uids.filter(Boolean)));
-  const result = new Map<string, string>();
-
-  for (let i = 0; i < uniqueUids.length; i += 10) {
-    const chunk = uniqueUids.slice(i, i + 10);
-    const snaps = await db.getAll(...chunk.map((uid) => db.doc(`users/${uid}`)));
-    snaps.forEach((snap, index) => {
-      const uid = chunk[index];
-      const data = snap.data() || {};
-      const displayName = String(data.displayName || data.name || data.userName || uid);
-      result.set(uid, displayName);
+  for (const unitDoc of unitsSnapshot.docs) {
+    const unitData = unitDoc.data() as any;
+    const questionsSnapshot = await unitDoc.ref.collection("questions").orderBy("order", "asc").get();
+    metadata.set(unitDoc.id, {
+      unitId: unitDoc.id,
+      unitTitle: unitData.title || unitDoc.id,
+      subject: unitData.subject || "数学",
+      category: unitData.category || "その他",
+      questions: questionsSnapshot.docs.map((questionDoc) => {
+        const questionData = questionDoc.data() as any;
+        return {
+          questionId: questionDoc.id,
+          questionOrder: Number(questionData.order || 0),
+          questionText: questionData.question_text || questionData.questionText || questionDoc.id,
+        };
+      }),
     });
   }
-
-  return result;
-}
-
-async function fetchQuestionMetadata(unitIds: string[]) {
-  const metadata = new Map<string, Map<string, { text: string; order: number }>>();
-
-  await Promise.all(unitIds.map(async (unitId) => {
-    const snap = await db.collection(`units/${unitId}/questions`).get();
-    const map = new Map<string, { text: string; order: number }>();
-    snap.docs.forEach((doc) => {
-      const data = doc.data() as Record<string, unknown>;
-      map.set(doc.id, {
-        text: String(data.question_text || ""),
-        order: Number(data.order || 0),
-      });
-    });
-    metadata.set(unitId, map);
-  }));
 
   return metadata;
 }
 
-async function ensureAnalyticsTables(bigquery: BigQuery, config: AnalyticsConfig) {
-  await bigquery.dataset(config.datasetId).get({ autoCreate: true });
-  await runQuery(bigquery, config, `
-    ALTER TABLE ${rawLatestTable(config)}
-    SET OPTIONS (partition_expiration_days = 366)
-  `);
-  await runQuery(bigquery, config, `
-    ALTER TABLE ${rawChangelogTable(config)}
-    SET OPTIONS (partition_expiration_days = 366)
-  `);
-  await runQuery(bigquery, config, buildFactAttemptsSql(config));
-  await runQuery(bigquery, config, buildFactAttemptQuestionResultsSql(config));
-  await runQuery(bigquery, config, buildAggUnitDailySql(config));
-  await runQuery(bigquery, config, buildAggQuestionDailySql(config));
-  await runQuery(bigquery, config, buildAggQuestionPairCurrentSql(config));
+async function fetchUserNames(): Promise<Map<string, string>> {
+  const usersSnapshot = await db.collection("users").get();
+  const names = new Map<string, string>();
+
+  for (const userDoc of usersSnapshot.docs) {
+    const data = userDoc.data() as any;
+    names.set(
+      userDoc.id,
+      data.displayName || data.name || data.email || "ユーザー"
+    );
+  }
+
+  return names;
 }
 
-async function writeServingDocuments(bigquery: BigQuery, config: AnalyticsConfig) {
-  const generatedAt = admin.firestore.Timestamp.now();
-  const servingRoot = config.servingRoot;
+async function backfillAnalyticsEventsInternal(options?: {
+  batchSize?: number;
+  cursor?: string;
+  overwriteExisting?: boolean;
+  dryRun?: boolean;
+}) {
+  const batchSize = Math.max(1, Math.min(Number(options?.batchSize || 200), 500));
+  const overwriteExisting = options?.overwriteExisting === true;
+  const dryRun = options?.dryRun === true;
+  const cursor = options?.cursor;
 
-  const [overviewRows, subjectRows, topAccuracyRows, topCorrectRows, unitSummaryRows, questionRows, extremeRows, correlationRows] =
-    await Promise.all([
-      selectRows<OverviewTotalsRow>(bigquery, config, `
-        SELECT
-          COUNT(*) AS total_attempts,
-          COUNT(DISTINCT uid) AS unique_users,
-          SAFE_DIVIDE(SUM(correct_count), SUM(answered_count)) * 100 AS avg_accuracy,
-          SUM(answered_count) AS total_answered,
-          SUM(correct_count) AS total_correct
-        FROM ${tableName(config, "fact_attempts")}
-      `),
-      selectRows<SubjectRow>(bigquery, config, `
-        SELECT
-          subject,
-          COUNT(*) AS total_attempts,
-          SAFE_DIVIDE(SUM(correct_count), SUM(answered_count)) * 100 AS avg_accuracy
-        FROM ${tableName(config, "fact_attempts")}
-        GROUP BY subject
-        ORDER BY total_attempts DESC, subject
-      `),
-      selectRows<RankingRow>(bigquery, config, `
-        SELECT
-          uid,
-          SAFE_DIVIDE(SUM(correct_count), SUM(answered_count)) * 100 AS value
-        FROM ${tableName(config, "fact_attempts")}
-        GROUP BY uid
-        HAVING SUM(answered_count) > 0
-        ORDER BY value DESC, SUM(answered_count) DESC
-        LIMIT 10
-      `),
-      selectRows<RankingRow>(bigquery, config, `
-        SELECT
-          uid,
-          SUM(correct_count) AS value
-        FROM ${tableName(config, "fact_attempts")}
-        GROUP BY uid
-        ORDER BY value DESC
-        LIMIT 10
-      `),
-      selectRows<UnitSummaryRow>(bigquery, config, `
-        SELECT
-          unit_id,
-          ANY_VALUE(unit_title) AS unit_title,
-          ANY_VALUE(subject) AS subject,
-          ANY_VALUE(category) AS category,
-          COUNT(*) AS total_attempts,
-          COUNT(DISTINCT uid) AS unique_users,
-          SAFE_DIVIDE(SUM(correct_count), SUM(answered_count)) * 100 AS avg_accuracy,
-          AVG(time_sec) AS avg_time_sec
-        FROM ${tableName(config, "fact_attempts")}
-        GROUP BY unit_id
-      `),
-      selectRows<UnitQuestionRow>(bigquery, config, `
-        SELECT
-          unit_id,
-          question_id,
-          ANY_VALUE(question_order) AS question_order,
-          SUM(total) AS total,
-          SUM(correct) AS correct,
-          SAFE_DIVIDE(SUM(correct), SUM(total)) * 100 AS accuracy,
-          CASE
-            WHEN SAFE_DIVIDE(SUM(correct), SUM(total)) >= 0.90 THEN 'very_easy'
-            WHEN SAFE_DIVIDE(SUM(correct), SUM(total)) >= 0.70 THEN 'easy'
-            WHEN SAFE_DIVIDE(SUM(correct), SUM(total)) >= 0.40 THEN 'normal'
-            WHEN SAFE_DIVIDE(SUM(correct), SUM(total)) >= 0.20 THEN 'hard'
-            ELSE 'very_hard'
-          END AS difficulty
-        FROM ${tableName(config, "agg_question_daily")}
-        GROUP BY unit_id, question_id
-      `),
-      selectRows<UnitQuestionExtremesRow>(bigquery, config, `
-        WITH aggregated AS (
-          SELECT
-            unit_id,
-            question_id,
-            ANY_VALUE(question_order) AS question_order,
-            SUM(total) AS total,
-            SUM(correct) AS correct,
-            SAFE_DIVIDE(SUM(correct), SUM(total)) * 100 AS accuracy
-          FROM ${tableName(config, "agg_question_daily")}
-          GROUP BY unit_id, question_id
-        )
-        SELECT *
-        FROM (
-          SELECT
-            *,
-            ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY accuracy ASC, total DESC, question_id) AS hardest_rank,
-            ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY accuracy DESC, total DESC, question_id) AS easiest_rank
-          FROM aggregated
-        )
-        WHERE hardest_rank <= 3 OR easiest_rank <= 3
-      `),
-      selectRows<CorrelationRow>(bigquery, config, `
-        SELECT *
-        FROM (
-          SELECT
-            *,
-            ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY ABS(phi) DESC, support_users DESC) AS rank_in_unit
-          FROM ${tableName(config, "agg_question_pair_current")}
-          WHERE ABS(phi) >= 0.3
-        )
-        WHERE rank_in_unit <= 100
-      `),
-    ]);
+  const unitMetadata = await fetchUnitMetadata();
+  let query: FirebaseFirestore.Query<FirebaseFirestore.QueryDocumentSnapshot> = db
+    .collectionGroup("attempts")
+    .orderBy(admin.firestore.FieldPath.documentId())
+    .limit(batchSize);
 
-  const overview = overviewRows[0] || {
-    total_attempts: 0,
-    unique_users: 0,
-    avg_accuracy: 0,
-    total_answered: 0,
-    total_correct: 0,
+  if (cursor) {
+    query = query.startAfter(cursor);
+  }
+
+  const attemptsSnapshot = await query.get();
+
+  if (attemptsSnapshot.empty) {
+    return {
+      ok: true,
+      dryRun,
+      processed: 0,
+      written: 0,
+      skippedExisting: 0,
+      skippedInvalid: 0,
+      skippedMissingUnit: 0,
+      hasMore: false,
+      nextCursor: null,
+    };
+  }
+
+  const eventRefs = attemptsSnapshot.docs.map((attemptDoc) =>
+    db.collection("analytics_events").doc(`submit_${attemptDoc.id}`)
+  );
+  const existingEventSnapshots = eventRefs.length > 0 ? await db.getAll(...eventRefs) : [];
+  const existingEventIds = new Set(
+    existingEventSnapshots.filter((snapshot) => snapshot.exists).map((snapshot) => snapshot.id)
+  );
+
+  const writeBatch = db.batch();
+  let written = 0;
+  let skippedExisting = 0;
+  let skippedInvalid = 0;
+  let skippedMissingUnit = 0;
+
+  for (const attemptDoc of attemptsSnapshot.docs) {
+    const attemptData = attemptDoc.data() as any;
+    const attemptId = attemptDoc.id;
+    const eventDocId = `submit_${attemptId}`;
+
+    if (!overwriteExisting && existingEventIds.has(eventDocId)) {
+      skippedExisting += 1;
+      continue;
+    }
+
+    const pathSegments = attemptDoc.ref.path.split("/");
+    const uidFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+    const uid = String(attemptData.uid || uidFromPath || "");
+    const unitId = String(attemptData.unitId || "");
+    const unitMeta = unitMetadata.get(unitId);
+
+    if (!uid || !unitId || !unitMeta) {
+      skippedMissingUnit += 1;
+      continue;
+    }
+
+    const rawDetails = Array.isArray(attemptData.details) ? attemptData.details : [];
+    const questionOrderMap = new Map(
+      unitMeta.questions.map((question) => [question.questionId, question.questionOrder])
+    );
+
+    const questionResults = rawDetails
+      .map((detail: any): AttemptBackfillQuestionResult | null => {
+        const questionId = String(detail?.qId || detail?.questionId || "");
+        if (!questionId) {
+          return null;
+        }
+
+        return {
+          questionId,
+          questionOrder: Number(questionOrderMap.get(questionId) || 0),
+          isCorrect: detail?.isCorrect === true,
+        };
+      })
+      .filter((detail: AttemptBackfillQuestionResult | null): detail is AttemptBackfillQuestionResult => detail !== null);
+
+    if (rawDetails.length > 0 && questionResults.length === 0) {
+      skippedInvalid += 1;
+      continue;
+    }
+
+    const occurredAt = attemptData.date
+      ? admin.firestore.Timestamp.fromDate(new Date(attemptData.date))
+      : attemptDoc.createTime || admin.firestore.Timestamp.now();
+
+    const event = buildAttemptSubmittedEventFromAttempt({
+      attemptId,
+      uid,
+      unitId,
+      unitTitle: String(attemptData.unitTitle || unitMeta.unitTitle || unitId),
+      subject: unitMeta.subject,
+      category: unitMeta.category,
+      occurredAt,
+      score: toFiniteNumber(attemptData.score),
+      timeSec: toFiniteNumber(attemptData.time),
+      xpGain: toFiniteNumber(attemptData.xpGain),
+      questionResults,
+    });
+
+    if (!dryRun) {
+      writeBatch.set(db.collection("analytics_events").doc(eventDocId), event, { merge: true });
+    }
+
+    written += 1;
+  }
+
+  if (!dryRun && written > 0) {
+    await writeBatch.commit();
+  }
+
+  const lastDoc = attemptsSnapshot.docs[attemptsSnapshot.docs.length - 1];
+
+  return {
+    ok: true,
+    dryRun,
+    processed: attemptsSnapshot.size,
+    written,
+    skippedExisting,
+    skippedInvalid,
+    skippedMissingUnit,
+    hasMore: attemptsSnapshot.size === batchSize,
+    nextCursor: lastDoc.ref.path,
   };
+}
 
-  const rankingNameMap = await fetchDisplayNames([
-    ...topAccuracyRows.map((row) => row.uid),
-    ...topCorrectRows.map((row) => row.uid),
-  ]);
-  const questionMetadataByUnit = await fetchQuestionMetadata(unitSummaryRows.map((row) => row.unit_id));
+async function buildOverviewDoc(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  userNames: Map<string, string>,
+  unitMetadata: Map<string, UnitMetadata>
+) {
+  const [totalsRow] = await runQuery(bigquery, config, `
+SELECT
+  COUNT(*) AS totalAttempts,
+  COUNT(DISTINCT uid) AS uniqueUsers,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avgAccuracy,
+  SUM(answered_count) AS totalAnswered,
+  SUM(correct_count) AS totalCorrect,
+  SUM(time_sec) AS totalStudyTimeSec,
+  COUNT(DISTINCT IF(occurred_date = CURRENT_DATE('${config.timezone}'), uid, NULL)) AS dau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY), uid, NULL)) AS wau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau,
+  SAFE_DIVIDE(COUNT(*), NULLIF(COUNT(DISTINCT uid), 0)) AS avgAttemptsPerUser
+FROM ${tableRef(config, "fact_attempts")}
+  `);
 
-  await db.doc(`${servingRoot}/admin_overview/current`).set({
-    generatedAt,
-    totals: {
-      totalAttempts: toNumber(overview.total_attempts),
-      uniqueUsers: toNumber(overview.unique_users),
-      avgAccuracy: toNumber(overview.avg_accuracy),
-      totalAnswered: toNumber(overview.total_answered),
-      totalCorrect: toNumber(overview.total_correct),
+  const [qualityRow] = await runQuery(bigquery, config, `
+WITH attempts AS (
+  SELECT
+    uid,
+    unit_id,
+    occurred_at,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS attempt_order
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+),
+at_risk AS (
+  SELECT
+    uid,
+    AVG(CAST(is_correct AS INT64)) * 100 AS accuracy,
+    COUNT(*) AS answered_count
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 14 DAY)
+  GROUP BY uid
+)
+SELECT
+  AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS firstAttemptAccuracy,
+  (
+    AVG(IF(attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+    AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL))
+  ) * 100 AS retryImprovementRate,
+  (
+    SELECT COUNTIF(answered_count >= 10 AND accuracy < 50)
+    FROM at_risk
+  ) AS atRiskUsers
+FROM attempts
+  `);
+
+  const bySubject = await runQuery(bigquery, config, `
+SELECT
+  subject,
+  COUNT(*) AS totalAttempts,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avgAccuracy
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY subject
+ORDER BY totalAttempts DESC
+  `);
+
+  const topAccuracyRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS value,
+  AVG(time_sec) AS avgTime,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+HAVING attempts >= 3
+ORDER BY value DESC, avgTime ASC
+LIMIT 10
+  `);
+
+  const worstAccuracyRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS value,
+  AVG(time_sec) AS avgTime,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+HAVING attempts >= 3
+ORDER BY value ASC, avgTime DESC
+LIMIT 10
+  `);
+
+  const topCorrectRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SUM(correct_count) AS value,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+ORDER BY value DESC, attempts DESC
+LIMIT 10
+  `);
+
+  const worstCorrectRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SUM(correct_count) AS value,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+ORDER BY value ASC, attempts ASC
+LIMIT 10
+  `);
+
+  const currentDate = new Date().toISOString().slice(0, 10);
+  const earliestDateQuery = await runQuery(bigquery, config, `
+SELECT
+  MIN(CAST(occurred_date AS STRING)) AS startDate
+FROM ${tableRef(config, "fact_attempts")}
+  `);
+
+  return {
+    generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    sourceWindow: {
+      startDate: earliestDateQuery[0]?.startDate || currentDate,
+      endDate: currentDate,
     },
-    bySubject: subjectRows.map((row) => ({
+    totals: {
+      totalAttempts: Number(totalsRow?.totalAttempts || 0),
+      uniqueUsers: Number(totalsRow?.uniqueUsers || 0),
+      avgAccuracy: Number(totalsRow?.avgAccuracy || 0),
+      totalAnswered: Number(totalsRow?.totalAnswered || 0),
+      totalCorrect: Number(totalsRow?.totalCorrect || 0),
+      totalStudyTimeSec: Number(totalsRow?.totalStudyTimeSec || 0),
+      dau: Number(totalsRow?.dau || 0),
+      wau: Number(totalsRow?.wau || 0),
+      mau: Number(totalsRow?.mau || 0),
+      avgAttemptsPerUser: Number(totalsRow?.avgAttemptsPerUser || 0),
+      firstAttemptAccuracy: Number(qualityRow?.firstAttemptAccuracy || 0),
+      retryImprovementRate: Number(qualityRow?.retryImprovementRate || 0),
+      atRiskUsers: Number(qualityRow?.atRiskUsers || 0),
+    },
+    bySubject: bySubject.map((row) => ({
       subject: row.subject || "数学",
-      totalAttempts: toNumber(row.total_attempts),
-      avgAccuracy: toNumber(row.avg_accuracy),
+      totalAttempts: Number(row.totalAttempts || 0),
+      avgAccuracy: Number(row.avgAccuracy || 0),
     })),
     rankings: {
       topAccuracy: topAccuracyRows.map((row) => ({
         uid: row.uid,
-        userName: rankingNameMap.get(row.uid) || row.uid,
-        value: toNumber(row.value),
+        userName: userNames.get(row.uid) || row.uid,
+        value: Number(row.value || 0),
+        displayValue: `${Number(row.value || 0).toFixed(1)}%`,
+        avgTime: Number(row.avgTime || 0),
+        rankValue: `${Number(row.avgTime || 0).toFixed(0)}秒`,
+      })),
+      worstAccuracy: worstAccuracyRows.map((row) => ({
+        uid: row.uid,
+        userName: userNames.get(row.uid) || row.uid,
+        value: Number(row.value || 0),
+        displayValue: `${Number(row.value || 0).toFixed(1)}%`,
+        avgTime: Number(row.avgTime || 0),
+        rankValue: `${Number(row.avgTime || 0).toFixed(0)}秒`,
       })),
       topCorrect: topCorrectRows.map((row) => ({
         uid: row.uid,
-        userName: rankingNameMap.get(row.uid) || row.uid,
-        value: toNumber(row.value),
+        userName: userNames.get(row.uid) || row.uid,
+        value: Number(row.value || 0),
+        displayValue: `${Number(row.value || 0).toLocaleString()}問`,
+        rankValue: `${Number(row.attempts || 0)} attempt`,
+      })),
+      worstCorrect: worstCorrectRows.map((row) => ({
+        uid: row.uid,
+        userName: userNames.get(row.uid) || row.uid,
+        value: Number(row.value || 0),
+        displayValue: `${Number(row.value || 0).toLocaleString()}問`,
+        rankValue: `${Number(row.attempts || 0)} attempt`,
       })),
     },
-  });
-
-  const unitQuestionMap = new Map<string, UnitQuestionRow[]>();
-  for (const row of questionRows) {
-    const list = unitQuestionMap.get(row.unit_id) || [];
-    list.push(row);
-    unitQuestionMap.set(row.unit_id, list);
-  }
-
-  const extremesMap = new Map<string, { hardest: UnitQuestionExtremesRow[]; easiest: UnitQuestionExtremesRow[] }>();
-  for (const row of extremeRows) {
-    const current = extremesMap.get(row.unit_id) || { hardest: [], easiest: [] };
-    if (toNumber(row.hardest_rank) > 0 && toNumber(row.hardest_rank) <= 3) {
-      current.hardest.push(row);
-    }
-    if (toNumber(row.easiest_rank) > 0 && toNumber(row.easiest_rank) <= 3) {
-      current.easiest.push(row);
-    }
-    extremesMap.set(row.unit_id, current);
-  }
-
-  const correlationMap = new Map<string, CorrelationRow[]>();
-  for (const row of correlationRows) {
-    const list = correlationMap.get(row.unit_id) || [];
-    list.push(row);
-    correlationMap.set(row.unit_id, list);
-  }
-
-  let batch = db.batch();
-  let ops = 0;
-  const flush = async () => {
-    if (ops === 0) return;
-    await batch.commit();
-    batch = db.batch();
-    ops = 0;
-  };
-
-  for (const unit of unitSummaryRows) {
-    const unitId = unit.unit_id;
-    const questionMetadata = questionMetadataByUnit.get(unitId) || new Map<string, { text: string; order: number }>();
-    const questionsForUnit = (unitQuestionMap.get(unitId) || [])
-      .map((row) => ({
-        questionId: row.question_id,
-        questionOrder: toNumber(row.question_order) || questionMetadata.get(row.question_id)?.order || 0,
-        questionText: questionMetadata.get(row.question_id)?.text || "",
-        total: toNumber(row.total),
-        correct: toNumber(row.correct),
-        accuracy: toNumber(row.accuracy),
-        difficulty: row.difficulty,
-      }))
-      .sort((a, b) => a.questionOrder - b.questionOrder);
-
-    const extremes = extremesMap.get(unitId) || { hardest: [], easiest: [] };
-    const normalizeExtreme = (row: UnitQuestionExtremesRow) => ({
-      questionId: row.question_id,
-      questionText: questionMetadata.get(row.question_id)?.text || "",
-      accuracy: toNumber(row.accuracy),
-      total: toNumber(row.total),
-    });
-
-    batch.set(db.doc(`${servingRoot}/unit_summaries/${unitId}`), {
-      generatedAt,
-      unitId,
-      unitTitle: unit.unit_title || unitId,
-      subject: unit.subject || "数学",
-      category: unit.category || "その他",
-      totals: {
-        totalAttempts: toNumber(unit.total_attempts),
-        uniqueUsers: toNumber(unit.unique_users),
-        avgAccuracy: toNumber(unit.avg_accuracy),
-        avgTimeSec: toNumber(unit.avg_time_sec),
-      },
-      hardestQuestions: extremes.hardest
-        .sort((a, b) => toNumber(a.hardest_rank) - toNumber(b.hardest_rank))
-        .map(normalizeExtreme),
-      easiestQuestions: extremes.easiest
-        .sort((a, b) => toNumber(a.easiest_rank) - toNumber(b.easiest_rank))
-        .map(normalizeExtreme),
-    });
-    ops++;
-
-    batch.set(db.doc(`${servingRoot}/question_analysis/${unitId}`), {
-      generatedAt,
-      unitId,
-      questions: questionsForUnit,
-    });
-    ops++;
-
-    batch.set(db.doc(`${servingRoot}/question_correlations/${unitId}`), {
-      generatedAt,
-      unitId,
-      minSupportUsers: 5,
-      pairs: (correlationMap.get(unitId) || []).map((row) => ({
-        questionIdA: row.question_id_a,
-        questionIdB: row.question_id_b,
-        questionTextA: questionMetadata.get(row.question_id_a)?.text || "",
-        questionTextB: questionMetadata.get(row.question_id_b)?.text || "",
-        phi: toNumber(row.phi),
-        supportUsers: toNumber(row.support_users),
-        direction: row.direction,
-        strength: row.strength,
-      })),
-    });
-    ops++;
-
-    if (ops >= 400) {
-      await flush();
-    }
-  }
-
-  batch.set(db.doc(`${servingRoot}/manifest/current`), {
-    generatedAt,
-    unitCount: unitSummaryRows.length,
-    questionAnalysisCount: unitQuestionMap.size,
-    correlationUnitCount: correlationMap.size,
-  });
-  ops++;
-
-  batch.set(db.doc(`${servingRoot}/job_status/daily`), {
-    generatedAt,
-    status: "success",
-    pipelineVersion: 1,
-    notes: "Analytics aggregation completed successfully.",
-  });
-  ops++;
-
-  await flush();
-
-  return {
-    unitCount: unitSummaryRows.length,
-    questionAnalysisCount: unitQuestionMap.size,
-    correlationUnitCount: correlationMap.size,
+    metadata: {
+      unitsTracked: unitMetadata.size,
+    },
   };
 }
 
-async function runAggregation(trigger: string) {
-  const config = getConfig();
+async function buildUnitSummaries(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  metadata: Map<string, UnitMetadata>
+) {
+  const rows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  ANY_VALUE(unit_title) AS unit_title,
+  ANY_VALUE(subject) AS subject,
+  ANY_VALUE(category) AS category,
+  SUM(total_attempts) AS total_attempts,
+  SUM(unique_users) AS unique_users,
+  SAFE_DIVIDE(SUM(total_correct), NULLIF(SUM(total_answered), 0)) * 100 AS avg_accuracy,
+  AVG(avg_time_sec) AS avg_time_sec,
+  AVG(first_attempt_accuracy) AS first_attempt_accuracy,
+  AVG(retry_improvement_rate) AS retry_improvement_rate,
+  AVG(improvement_priority_score) AS improvement_priority_score
+FROM ${tableRef(config, "agg_unit_daily")}
+GROUP BY unit_id
+ORDER BY total_attempts DESC
+  `);
+
+  const questionRows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  question_id,
+  SUM(total) AS total,
+  SUM(correct) AS correct,
+  SAFE_DIVIDE(SUM(correct), NULLIF(SUM(total), 0)) * 100 AS accuracy
+FROM ${tableRef(config, "agg_question_daily")}
+GROUP BY unit_id, question_id
+  `);
+
+  const questionMap = new Map<string, any[]>();
+  for (const row of questionRows) {
+    const unitId = row.unit_id;
+    const list = questionMap.get(unitId) || [];
+    list.push(row);
+    questionMap.set(unitId, list);
+  }
+
+  return rows.map((row) => {
+    const unitId = row.unit_id as string;
+    const unitMeta = metadata.get(unitId);
+    const questions = (questionMap.get(unitId) || []).map((questionRow) => {
+      const questionMeta = unitMeta?.questions.find((question) => question.questionId === questionRow.question_id);
+      return {
+        questionId: questionRow.question_id,
+        questionText: questionMeta?.questionText || questionRow.question_id,
+        accuracy: Number(questionRow.accuracy || 0),
+        total: Number(questionRow.total || 0),
+      };
+    });
+
+    const hardestQuestions = [...questions]
+      .filter((question) => question.total > 0)
+      .sort((left, right) => left.accuracy - right.accuracy)
+      .slice(0, 5);
+
+    const easiestQuestions = [...questions]
+      .filter((question) => question.total > 0)
+      .sort((left, right) => right.accuracy - left.accuracy)
+      .slice(0, 5);
+
+    return {
+      unitId,
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      unitTitle: unitMeta?.unitTitle || row.unit_title || unitId,
+      subject: unitMeta?.subject || row.subject || "数学",
+      category: unitMeta?.category || row.category || "その他",
+      totals: {
+        totalAttempts: Number(row.total_attempts || 0),
+        uniqueUsers: Number(row.unique_users || 0),
+        avgAccuracy: Number(row.avg_accuracy || 0),
+        avgTimeSec: Number(row.avg_time_sec || 0),
+        firstAttemptAccuracy: Number(row.first_attempt_accuracy || 0),
+        retryImprovementRate: Number(row.retry_improvement_rate || 0),
+        improvementPriorityScore: Number(row.improvement_priority_score || 0),
+      },
+      hardestQuestions,
+      easiestQuestions,
+    };
+  });
+}
+
+async function buildQuestionAnalysisDocs(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  metadata: Map<string, UnitMetadata>
+) {
+  const rows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  question_id,
+  ANY_VALUE(question_order) AS question_order,
+  SUM(total) AS total,
+  SUM(correct) AS correct,
+  SAFE_DIVIDE(SUM(correct), NULLIF(SUM(total), 0)) * 100 AS accuracy,
+  AVG(first_attempt_accuracy) AS first_attempt_accuracy,
+  AVG(retry_improvement_rate) AS retry_improvement_rate,
+  AVG(avg_time_sec) AS avg_time_sec,
+  AVG(discrimination_index) AS discrimination_index,
+  AVG(improvement_priority_score) AS improvement_priority_score
+FROM ${tableRef(config, "agg_question_daily")}
+GROUP BY unit_id, question_id
+ORDER BY unit_id, question_order
+  `);
+
+  const docs = new Map<string, any[]>();
+
+  for (const row of rows) {
+    const unitId = row.unit_id as string;
+    const unitMeta = metadata.get(unitId);
+    const questionMeta = unitMeta?.questions.find((question) => question.questionId === row.question_id);
+    const list = docs.get(unitId) || [];
+
+    const accuracy = Number(row.accuracy || 0);
+    list.push({
+      questionId: row.question_id,
+      questionOrder: Number(row.question_order || questionMeta?.questionOrder || 0),
+      questionText: questionMeta?.questionText || row.question_id,
+      total: Number(row.total || 0),
+      correct: Number(row.correct || 0),
+      accuracy,
+      difficulty:
+        accuracy >= 90 ? "very_easy" :
+        accuracy >= 70 ? "easy" :
+        accuracy >= 40 ? "normal" :
+        accuracy >= 20 ? "hard" :
+        "very_hard",
+      firstAttemptAccuracy: Number(row.first_attempt_accuracy || 0),
+      retryImprovementRate: Number(row.retry_improvement_rate || 0),
+      avgTimeSec: Number(row.avg_time_sec || 0),
+      discriminationIndex: Number(row.discrimination_index || 0),
+      improvementPriorityScore: Number(row.improvement_priority_score || 0),
+    });
+
+    docs.set(unitId, list);
+  }
+
+  return docs;
+}
+
+async function buildCorrelationDocs(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  metadata: Map<string, UnitMetadata>
+) {
+  const rows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  question_id_a,
+  question_id_b,
+  support_users,
+  co_wrong_users,
+  wrong_users_a,
+  wrong_users_b,
+  mistake_rate_given_a,
+  mistake_rate_given_b,
+  lift,
+  phi,
+  direction,
+  strength
+FROM ${tableRef(config, "agg_question_pair_current")}
+ORDER BY unit_id, co_wrong_users DESC, GREATEST(mistake_rate_given_a, mistake_rate_given_b) DESC, phi DESC
+  `);
+
+  const docs = new Map<string, any[]>();
+
+  for (const row of rows) {
+    const unitId = row.unit_id as string;
+    const unitMeta = metadata.get(unitId);
+    const questionA = unitMeta?.questions.find((question) => question.questionId === row.question_id_a);
+    const questionB = unitMeta?.questions.find((question) => question.questionId === row.question_id_b);
+    const list = docs.get(unitId) || [];
+
+    list.push({
+      questionIdA: row.question_id_a,
+      questionIdB: row.question_id_b,
+      questionTextA: questionA?.questionText || row.question_id_a,
+      questionTextB: questionB?.questionText || row.question_id_b,
+      phi: Number(row.phi || 0),
+      supportUsers: Number(row.support_users || 0),
+      coWrongUsers: Number(row.co_wrong_users || 0),
+      wrongUsersA: Number(row.wrong_users_a || 0),
+      wrongUsersB: Number(row.wrong_users_b || 0),
+      mistakeRateGivenA: Number(row.mistake_rate_given_a || 0),
+      mistakeRateGivenB: Number(row.mistake_rate_given_b || 0),
+      lift: Number(row.lift || 0),
+      direction: row.direction || "positive",
+      strength: row.strength || "moderate",
+    });
+
+    docs.set(unitId, list);
+  }
+
+  return docs;
+}
+
+async function writeServingDocs(
+  config: AnalyticsConfig,
+  overviewDoc: any,
+  unitSummaries: any[],
+  questionAnalysisDocs: Map<string, any[]>,
+  correlationDocs: Map<string, any[]>
+) {
+  const root = config.servingRoot;
+  const batch = db.batch();
+
+  batch.set(db.doc(`${root}/overview/current`), overviewDoc, { merge: true });
+  batch.set(
+    db.doc(`${root}/manifest/current`),
+    {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      version: 1,
+      overviewPath: `${root}/overview/current`,
+      unitSummaryCollection: `${root}/unit_summaries`,
+      questionAnalysisCollection: `${root}/question_analysis`,
+      questionCorrelationCollection: `${root}/question_correlations`,
+    },
+    { merge: true }
+  );
+
+  for (const summary of unitSummaries) {
+    batch.set(db.doc(`${root}/unit_summaries/${summary.unitId}`), summary, { merge: true });
+  }
+
+  for (const [unitId, questions] of questionAnalysisDocs.entries()) {
+    batch.set(
+      db.doc(`${root}/question_analysis/${unitId}`),
+      {
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        unitId,
+        questions,
+      },
+      { merge: true }
+    );
+  }
+
+  for (const [unitId, pairs] of correlationDocs.entries()) {
+    batch.set(
+      db.doc(`${root}/question_correlations/${unitId}`),
+      {
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        unitId,
+        minSupportUsers: 5,
+        minCoWrongUsers: 3,
+        pairs: pairs.slice(0, 100),
+      },
+      { merge: true }
+    );
+  }
+
+  batch.set(
+    db.doc(`${root}/job_status/daily`),
+    {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "success",
+      pipelineVersion: 1,
+    },
+    { merge: true }
+  );
+
+  await batch.commit();
+}
+
+async function runAnalyticsAggregationInternal() {
+  const config = getAnalyticsConfig();
   const bigquery = new BigQuery({ projectId: config.projectId });
-  await ensureAnalyticsTables(bigquery, config);
-  const servingStats = await writeServingDocuments(bigquery, config);
+
+  await buildDerivedTables(bigquery, config);
+
+  const [unitMetadata, userNames] = await Promise.all([
+    fetchUnitMetadata(),
+    fetchUserNames(),
+  ]);
+
+  const [overviewDoc, unitSummaries, questionAnalysisDocs, correlationDocs] = await Promise.all([
+    buildOverviewDoc(bigquery, config, userNames, unitMetadata),
+    buildUnitSummaries(bigquery, config, unitMetadata),
+    buildQuestionAnalysisDocs(bigquery, config, unitMetadata),
+    buildCorrelationDocs(bigquery, config, unitMetadata),
+  ]);
+
+  await writeServingDocs(config, overviewDoc, unitSummaries, questionAnalysisDocs, correlationDocs);
 
   return {
-    trigger,
-    datasetId: config.datasetId,
-    sourceTablePrefix: config.sourceTablePrefix,
-    ...servingStats,
+    ok: true,
+    unitCount: unitSummaries.length,
+    root: config.servingRoot,
   };
 }
 
@@ -676,15 +1185,19 @@ export const runAnalyticsAggregation = functions
     }
 
     try {
-      return await runAggregation("manual");
+      return await runAnalyticsAggregationInternal();
     } catch (error: any) {
-      await db.doc(`${getConfig().servingRoot}/job_status/daily`).set({
-        generatedAt: admin.firestore.Timestamp.now(),
-        status: "failed",
-        pipelineVersion: 1,
-        notes: error?.message || "Unknown analytics aggregation error.",
-      }, { merge: true });
-      throw new functions.https.HttpsError("internal", error?.message || "Analytics aggregation failed.");
+      console.error("[runAnalyticsAggregation] failed", error);
+      await db.doc(`${getAnalyticsConfig().servingRoot}/job_status/daily`).set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "failed",
+          pipelineVersion: 1,
+          notes: error?.message || String(error),
+        },
+        { merge: true }
+      );
+      throw new functions.https.HttpsError("internal", error?.message || "Aggregation failed.");
     }
   });
 
@@ -694,14 +1207,40 @@ export const aggregateAnalyticsDaily = functions
   .timeZone("Asia/Tokyo")
   .onRun(async () => {
     try {
-      await runAggregation("scheduled");
+      await runAnalyticsAggregationInternal();
+      return null;
     } catch (error: any) {
-      await db.doc(`${getConfig().servingRoot}/job_status/daily`).set({
-        generatedAt: admin.firestore.Timestamp.now(),
-        status: "failed",
-        pipelineVersion: 1,
-        notes: error?.message || "Unknown analytics aggregation error.",
-      }, { merge: true });
-      throw error;
+      console.error("[aggregateAnalyticsDaily] failed", error);
+      await db.doc(`${getAnalyticsConfig().servingRoot}/job_status/daily`).set(
+        {
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "failed",
+          pipelineVersion: 1,
+          notes: error?.message || String(error),
+        },
+        { merge: true }
+      );
+      return null;
+    }
+  });
+
+export const backfillAnalyticsEvents = functions
+  .region("us-central1")
+  .runWith({ timeoutSeconds: 540, memory: "512MB" })
+  .https.onCall(async (data, context) => {
+    if (!context.auth?.token?.admin) {
+      throw new functions.https.HttpsError("permission-denied", "Admin only.");
+    }
+
+    try {
+      return await backfillAnalyticsEventsInternal({
+        batchSize: data?.batchSize,
+        cursor: data?.cursor,
+        overwriteExisting: data?.overwriteExisting,
+        dryRun: data?.dryRun,
+      });
+    } catch (error: any) {
+      console.error("[backfillAnalyticsEvents] failed", error);
+      throw new functions.https.HttpsError("internal", error?.message || "Backfill failed.");
     }
   });

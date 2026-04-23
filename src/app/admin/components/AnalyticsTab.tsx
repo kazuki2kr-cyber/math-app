@@ -1,13 +1,16 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { httpsCallable } from 'firebase/functions';
 import { BarChart2, BookOpen, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { functions } from '@/lib/firebase';
 import OverviewPanel from './OverviewPanel';
 import QuestionAnalysisPanel from './QuestionAnalysisPanel';
 import SmartCorrelationPanel from './SmartCorrelationPanel';
 import {
   calculateAccuracyDistribution,
+  calculateCategoryAccuracies,
   generateActionSuggestions,
   type OverviewMetrics,
 } from '@/lib/analytics';
@@ -41,13 +44,8 @@ type SubTab = 'overview' | 'questions' | 'correlation';
 function formatGeneratedAt(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === 'string') return new Date(value).toLocaleString('ja-JP');
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'toDate' in value &&
-    typeof (value as { toDate?: () => Date }).toDate === 'function'
-  ) {
-    return (value as { toDate: () => Date }).toDate().toLocaleString('ja-JP');
+  if (typeof value === 'object' && value !== null && 'toDate' in value && typeof (value as any).toDate === 'function') {
+    return (value as any).toDate().toLocaleString('ja-JP');
   }
   return null;
 }
@@ -67,6 +65,8 @@ export default function AnalyticsTab({
   const [unitSummaries, setUnitSummaries] = useState<UnitSummaryDoc[]>([]);
   const [questionAnalysis, setQuestionAnalysis] = useState<QuestionAnalysisDoc | null>(null);
   const [questionCorrelations, setQuestionCorrelations] = useState<QuestionCorrelationsDoc | null>(null);
+  const [aggregationRunning, setAggregationRunning] = useState(false);
+  const [opsMessage, setOpsMessage] = useState<string | null>(null);
 
   const hasServingData = !!servingOverview || unitSummaries.length > 0;
 
@@ -119,6 +119,10 @@ export default function AnalyticsTab({
   const generatedAtLabel = formatGeneratedAt(
     questionCorrelations?.generatedAt || questionAnalysis?.generatedAt || servingOverview?.generatedAt
   );
+  const aggregationCallable = useMemo(
+    () => httpsCallable(functions, 'runAnalyticsAggregation'),
+    []
+  );
 
   const handleLoadData = async () => {
     setLoadingData(true);
@@ -137,6 +141,64 @@ export default function AnalyticsTab({
       }
     } finally {
       setLoadingData(false);
+    }
+  };
+
+  /* const handleBackfill = async () => {
+    setBackfillRunning(true);
+    setOpsMessage(null);
+
+    try {
+      let cursor: string | null = null;
+      let processed = 0;
+      let written = 0;
+      let skippedExisting = 0;
+      let skippedInvalid = 0;
+      let skippedMissingUnit = 0;
+      let hasMore = false;
+
+      do {
+        const result: { data: BackfillAnalyticsResult } = await backfillCallable({
+          batchSize: 200,
+          cursor,
+          overwriteExisting: false,
+          dryRun: false,
+        });
+        const data: BackfillAnalyticsResult = result.data;
+
+        processed += Number(data.processed || 0);
+        written += Number(data.written || 0);
+        skippedExisting += Number(data.skippedExisting || 0);
+        skippedInvalid += Number(data.skippedInvalid || 0);
+        skippedMissingUnit += Number(data.skippedMissingUnit || 0);
+        hasMore = data.hasMore === true;
+        cursor = data.nextCursor || null;
+      } while (hasMore);
+
+      setOpsMessage(
+        `backfill が完了しました。processed=${processed}, written=${written}, skippedExisting=${skippedExisting}, skippedInvalid=${skippedInvalid}, skippedMissingUnit=${skippedMissingUnit}。BigQuery 同期後に再集計を実行してください。`
+      );
+    } catch (error) {
+      console.error('Failed to backfill analytics events', error);
+      setOpsMessage('backfill の実行に失敗しました。Functions ログを確認してください。');
+    } finally {
+      setBackfillRunning(false);
+    }
+  }; */
+
+  const handleRunAggregation = async () => {
+    setAggregationRunning(true);
+    setOpsMessage(null);
+
+    try {
+      await aggregationCallable({});
+      await handleLoadData();
+      setOpsMessage('集計を再実行しました。最新データを読み込み済みです。');
+    } catch (error) {
+      console.error('Failed to run analytics aggregation', error);
+      setOpsMessage('集計の再実行に失敗しました。Functions ログを確認してください。');
+    } finally {
+      setAggregationRunning(false);
     }
   };
 
@@ -183,13 +245,11 @@ export default function AnalyticsTab({
       <div className="flex flex-col items-center justify-center py-20 gap-4 text-gray-500">
         <BarChart2 className="w-12 h-12 text-gray-300" />
         <p className="text-sm font-medium">分析は BigQuery の事前集計データだけを参照します</p>
-        <p className="text-xs text-muted-foreground">
-          管理画面から raw Firestore を直接走査しない構成に切り替えています。
-        </p>
+        <p className="text-xs text-muted-foreground">管理画面から raw Firestore を直接走査しない構成に切り替えています。</p>
         <Button onClick={handleLoadData} disabled={loadingData} className="mt-2">
           {loadingData ? (
             <span className="flex items-center gap-2">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
               読み込み中...
             </span>
           ) : (
@@ -202,8 +262,8 @@ export default function AnalyticsTab({
 
   if (loadingData) {
     return (
-      <div className="flex items-center justify-center gap-3 py-20 text-gray-500">
-        <span className="h-6 w-6 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <div className="flex items-center justify-center py-20 gap-3 text-gray-500">
+        <span className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full" />
         <span className="text-sm font-medium">分析データを読み込み中...</span>
       </div>
     );
@@ -213,29 +273,27 @@ export default function AnalyticsTab({
     return (
       <div className="rounded-xl border border-dashed bg-amber-50 p-6 text-amber-900">
         <p className="font-semibold">まだ集計済みデータがありません</p>
-        <p className="mt-2 text-sm">
-          Firestore から BigQuery への同期と集計が完了すると、分析は `analytics_serving` だけで表示されます。
-        </p>
+        <p className="text-sm mt-2">Extension の同期と日次集計が完了すると、管理画面の分析は `analytics_serving` だけで表示されます。</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-4 space-y-6">
-      <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
-        <div className="flex w-fit gap-1 rounded-lg bg-gray-100 p-1">
+    <div className="space-y-6 mt-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
           {[
             { key: 'overview', label: '概要' },
             { key: 'questions', label: '問題分析' },
-            { key: 'correlation', label: '相関分析' },
+            { key: 'correlation', label: '誤答相関' },
           ].map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveSubTab(tab.key as SubTab)}
-              className={`rounded-md px-4 py-2 text-sm font-medium transition-all ${
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
                 activeSubTab === tab.key
                   ? 'bg-white text-primary shadow-sm'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
               }`}
             >
               {tab.label}
@@ -244,16 +302,16 @@ export default function AnalyticsTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 shadow-sm">
-            <BookOpen className="h-4 w-4 text-gray-400" />
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">教科</span>
+          <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
+            <BookOpen className="w-4 h-4 text-gray-400" />
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">教科</span>
             <select
               value={subjectFilter}
               onChange={(event) => {
                 setSubjectFilter(event.target.value);
                 setCategoryFilter('all');
               }}
-              className="min-w-[80px] cursor-pointer border-none bg-transparent text-sm font-medium outline-none focus:ring-0"
+              className="text-sm font-medium bg-transparent outline-none border-none focus:ring-0 cursor-pointer min-w-[80px]"
             >
               <option value="all">すべて</option>
               {subjects.map((subject) => (
@@ -264,12 +322,12 @@ export default function AnalyticsTab({
             </select>
           </div>
 
-          <div className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 shadow-sm">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">分類</span>
+          <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">分類</span>
             <select
               value={categoryFilter}
               onChange={(event) => setCategoryFilter(event.target.value)}
-              className="min-w-[120px] cursor-pointer border-none bg-transparent text-sm font-medium outline-none focus:ring-0"
+              className="text-sm font-medium bg-transparent outline-none border-none focus:ring-0 cursor-pointer min-w-[120px]"
             >
               <option value="all">すべて</option>
               {availableCategories.map((category) => (
@@ -281,15 +339,20 @@ export default function AnalyticsTab({
           </div>
 
           <Button variant="outline" size="sm" onClick={handleLoadData} disabled={loadingData} className="text-xs">
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
             再読み込み
           </Button>
         </div>
       </div>
 
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        BigQuery の事前集計結果を反映した `analytics_serving` だけを参照しています。
-        `attempts` や `stats` の直接走査は行いません。
+      <AnalyticsOpsPanel
+        aggregationRunning={aggregationRunning}
+        opsMessage={opsMessage}
+        onRunAggregation={handleRunAggregation}
+      />
+
+      <div className="rounded-xl border px-4 py-3 text-sm bg-blue-50 border-blue-200 text-blue-900">
+        BigQuery の事前集計結果を優先し、管理画面は `analytics_serving` のみを参照します。`attempts` や `stats` の直接走査は行いません。
       </div>
 
       <AnalyticsHighlights overview={servingOverview} />
@@ -301,30 +364,28 @@ export default function AnalyticsTab({
             scoresCount={Number(servingOverview?.totals?.totalAttempts || 0)}
             currentSubject={subjectFilter === 'all' ? '全教科' : subjectFilter}
           />
-          <div className="mt-6 border-t border-dashed border-gray-300 pt-6">
+          <div className="mt-6 pt-6 border-t border-dashed border-gray-300">
             <Button
               variant="outline"
               className="text-xs text-red-500 border-red-300 hover:bg-red-50"
               onClick={onResetAllData}
             >
-              <RotateCcw className="mr-1 h-3.5 w-3.5" />
+              <RotateCcw className="w-3.5 h-3.5 mr-1" />
               全プレイデータをリセット
             </Button>
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              XP・スコア・ランキング・統計に影響します。
-            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">XP、スコア、ランキング、統計が初期化されます。</p>
           </div>
         </>
       )}
 
       {activeSubTab === 'questions' && (
         <div className="space-y-4">
-          <div className="rounded-lg border bg-white p-4 shadow-sm">
-            <label className="mb-2 block text-sm font-bold text-gray-700">分析する単元を選択:</label>
+          <div className="bg-white p-4 rounded-lg border shadow-sm">
+            <label className="text-sm font-bold text-gray-700 mb-2 block">分析する単元を選択</label>
             <select
               value={selectedUnitForStats}
               onChange={(event) => setSelectedUnitForStats(event.target.value)}
-              className="w-full rounded-md border bg-white px-3 py-2 text-sm focus:border-primary focus:ring-2 focus:ring-primary/30 md:w-auto"
+              className="w-full md:w-auto border rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/30 focus:border-primary"
             >
               <option value="">-- 選択してください --</option>
               {unitSelectionOptions.map((unit) => (
@@ -335,18 +396,10 @@ export default function AnalyticsTab({
             </select>
             {selectedUnitSummary?.totals && (
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span className="rounded-full bg-gray-100 px-3 py-1">
-                  初回正答率 {Number(selectedUnitSummary.totals.firstAttemptAccuracy || 0).toFixed(1)}%
-                </span>
-                <span className="rounded-full bg-gray-100 px-3 py-1">
-                  再挑戦改善率 {Number(selectedUnitSummary.totals.retryImprovementRate || 0).toFixed(1)}%
-                </span>
-                <span className="rounded-full bg-gray-100 px-3 py-1">
-                  平均時間 {Number(selectedUnitSummary.totals.avgTimeSec || 0).toFixed(1)}秒
-                </span>
-                <span className="rounded-full bg-gray-100 px-3 py-1">
-                  改善優先度 {Number(selectedUnitSummary.totals.improvementPriorityScore || 0).toFixed(1)}
-                </span>
+                <span className="rounded-full bg-gray-100 px-3 py-1">初回正答率 {Number(selectedUnitSummary.totals.firstAttemptAccuracy || 0).toFixed(1)}%</span>
+                <span className="rounded-full bg-gray-100 px-3 py-1">再挑戦改善率 {Number(selectedUnitSummary.totals.retryImprovementRate || 0).toFixed(1)}%</span>
+                <span className="rounded-full bg-gray-100 px-3 py-1">平均時間 {Number(selectedUnitSummary.totals.avgTimeSec || 0).toFixed(1)}秒</span>
+                <span className="rounded-full bg-gray-100 px-3 py-1">改善優先度 {Number(selectedUnitSummary.totals.improvementPriorityScore || 0).toFixed(1)}</span>
               </div>
             )}
           </div>
@@ -364,12 +417,12 @@ export default function AnalyticsTab({
 
       {activeSubTab === 'correlation' && (
         <div className="space-y-4">
-          <div className="rounded-lg border bg-white p-4 shadow-sm">
-            <label className="mb-2 block text-sm font-bold text-gray-700">分析する単元を選択:</label>
+          <div className="bg-white p-4 rounded-lg border shadow-sm">
+            <label className="text-sm font-bold text-gray-700 mb-2 block">分析する単元を選択</label>
             <select
               value={selectedUnitForStats}
               onChange={(event) => setSelectedUnitForStats(event.target.value)}
-              className="w-full rounded-md border bg-white px-3 py-2 text-sm focus:border-primary focus:ring-2 focus:ring-primary/30 md:w-auto"
+              className="w-full md:w-auto border rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/30 focus:border-primary"
             >
               <option value="">-- 選択してください --</option>
               {unitSelectionOptions.map((unit) => (
@@ -389,46 +442,6 @@ export default function AnalyticsTab({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function AnalyticsHighlights({ overview }: { overview: AnalyticsOverviewDoc | null }) {
-  const totals = overview?.totals;
-  if (!totals) return null;
-
-  return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">利用人数</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.dau || 0).toLocaleString()}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          DAU / WAU {Number(totals.wau || 0).toLocaleString()} / MAU {Number(totals.mau || 0).toLocaleString()}
-        </p>
-      </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">学習量</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">
-          {Number(totals.totalStudyTimeSec || 0).toLocaleString()}
-        </p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          学習時間(秒) / 1人平均 {Number(totals.avgAttemptsPerUser || 0).toFixed(1)} attempt
-        </p>
-      </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">初回正答率</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">
-          {Number(totals.firstAttemptAccuracy || 0).toFixed(1)}%
-        </p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          再挑戦改善率 {Number(totals.retryImprovementRate || 0).toFixed(1)}%
-        </p>
-      </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">要注意人数</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.atRiskUsers || 0).toLocaleString()}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">直近成績で正答率が低い推定人数</p>
-      </div>
     </div>
   );
 }
@@ -457,4 +470,72 @@ function calculateCategoryAccuraciesFromSummaries(
       return accumulator;
     }, [])
     .sort((left, right) => right.totalAttempts - left.totalAttempts);
+}
+
+function AnalyticsOpsPanel({
+  aggregationRunning,
+  opsMessage,
+  onRunAggregation,
+}: {
+  aggregationRunning: boolean;
+  opsMessage: string | null;
+  onRunAggregation: () => Promise<void>;
+}) {
+  return (
+    <div className="rounded-xl border bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">分析データ運用</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            過去 attempts の backfill と、BigQuery 同期後の再集計をここから実行できます。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            onClick={onRunAggregation}
+            disabled={aggregationRunning}
+            className="text-xs"
+          >
+            {aggregationRunning ? '再集計中...' : '集計を再実行'}
+          </Button>
+        </div>
+      </div>
+      {opsMessage && (
+        <p className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+          {opsMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function AnalyticsHighlights({ overview }: { overview: AnalyticsOverviewDoc | null }) {
+  const totals = overview?.totals;
+  if (!totals) return null;
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">稼働人数</p>
+        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.dau || 0).toLocaleString()}</p>
+        <p className="text-[11px] text-muted-foreground mt-1">DAU / WAU {Number(totals.wau || 0).toLocaleString()} / MAU {Number(totals.mau || 0).toLocaleString()}</p>
+      </div>
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">学習量</p>
+        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.totalStudyTimeSec || 0).toLocaleString()}</p>
+        <p className="text-[11px] text-muted-foreground mt-1">総学習時間(秒) / 1人平均 {Number(totals.avgAttemptsPerUser || 0).toFixed(1)} attempt</p>
+      </div>
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">初回理解</p>
+        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.firstAttemptAccuracy || 0).toFixed(1)}%</p>
+        <p className="text-[11px] text-muted-foreground mt-1">再挑戦改善率 {Number(totals.retryImprovementRate || 0).toFixed(1)}%</p>
+      </div>
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">要注意</p>
+        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.atRiskUsers || 0).toLocaleString()}</p>
+        <p className="text-[11px] text-muted-foreground mt-1">直近で正答率が低い生徒数</p>
+      </div>
+    </div>
+  );
 }
