@@ -303,12 +303,12 @@ function buildCorrectedTextFromAnswer(
 // 漢字のレベル計算ユーティリティ (literary themes)
 // ==========================================
 function calculateKanjiLevel(kanjiXp: number) {
-  const MAX_LEVEL = 100;
+  const MAX_LEVEL = 999;
   let level = 1;
   let accumulatedXp = 0;
 
   while (level < MAX_LEVEL) {
-    // Lv1〜100は一律200XP、Lv101以降は今後追加可能
+    // Lv1〜999 は一律200XP
     const xpForNext = 200;
 
     if (kanjiXp >= accumulatedXp + xpForNext) {
