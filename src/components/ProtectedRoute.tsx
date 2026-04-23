@@ -11,7 +11,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const targetConfig = pathname.startsWith('/kanji') ? 'maintenance_kanji' : 'maintenance';
+  const targetConfig = pathname.startsWith('/yamato') ? 'maintenance_kanji' : 'maintenance';
   const [maintenance, setMaintenance] = useState<{ enabled: boolean; message?: string; scheduledEnd?: string } | null>(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(true);
 
