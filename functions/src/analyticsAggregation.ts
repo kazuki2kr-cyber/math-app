@@ -29,6 +29,32 @@ type UnitMetadata = {
   }>;
 };
 
+type AttemptBackfillQuestionResult = {
+  questionId: string;
+  questionOrder: number;
+  isCorrect: boolean;
+};
+
+type AttemptSubmittedAnalyticsEvent = {
+  eventType: "ATTEMPT_SUBMITTED";
+  eventVersion: number;
+  occurredAt: admin.firestore.Timestamp;
+  logicalDate: string;
+  attemptId: string;
+  uid: string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  correctCount: number;
+  answeredCount: number;
+  source: string;
+  questionResults: AttemptBackfillQuestionResult[];
+};
+
 const DEFAULT_CONFIG: AnalyticsConfig = {
   projectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "math-app-26c77",
   datasetId: "analytics",
@@ -87,6 +113,49 @@ function buildDifficultyCase(rateExpr: string): string {
     WHEN ${rateExpr} >= 20 THEN 'hard'
     ELSE 'very_hard'
   END`;
+}
+
+function buildLogicalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildAttemptSubmittedEventFromAttempt(params: {
+  attemptId: string;
+  uid: string;
+  unitId: string;
+  unitTitle: string;
+  subject: string;
+  category: string;
+  occurredAt: admin.firestore.Timestamp;
+  score: number;
+  timeSec: number;
+  xpGain: number;
+  questionResults: AttemptBackfillQuestionResult[];
+}): AttemptSubmittedAnalyticsEvent {
+  return {
+    eventType: "ATTEMPT_SUBMITTED",
+    eventVersion: 1,
+    occurredAt: params.occurredAt,
+    logicalDate: buildLogicalDate(params.occurredAt.toDate()),
+    attemptId: params.attemptId,
+    uid: params.uid,
+    unitId: params.unitId,
+    unitTitle: params.unitTitle,
+    subject: params.subject,
+    category: params.category,
+    score: params.score,
+    timeSec: params.timeSec,
+    xpGain: params.xpGain,
+    correctCount: params.questionResults.filter((question) => question.isCorrect).length,
+    answeredCount: params.questionResults.length,
+    source: "attempts_backfill",
+    questionResults: params.questionResults,
+  };
 }
 
 async function runQuery(bigquery: BigQuery, config: AnalyticsConfig, query: string) {
@@ -464,6 +533,147 @@ async function fetchUserNames(): Promise<Map<string, string>> {
   }
 
   return names;
+}
+
+async function backfillAnalyticsEventsInternal(options?: {
+  batchSize?: number;
+  cursor?: string;
+  overwriteExisting?: boolean;
+  dryRun?: boolean;
+}) {
+  const batchSize = Math.max(1, Math.min(Number(options?.batchSize || 200), 500));
+  const overwriteExisting = options?.overwriteExisting === true;
+  const dryRun = options?.dryRun === true;
+  const cursor = options?.cursor;
+
+  const unitMetadata = await fetchUnitMetadata();
+  let query: FirebaseFirestore.Query<FirebaseFirestore.QueryDocumentSnapshot> = db
+    .collectionGroup("attempts")
+    .orderBy(admin.firestore.FieldPath.documentId())
+    .limit(batchSize);
+
+  if (cursor) {
+    query = query.startAfter(cursor);
+  }
+
+  const attemptsSnapshot = await query.get();
+
+  if (attemptsSnapshot.empty) {
+    return {
+      ok: true,
+      dryRun,
+      processed: 0,
+      written: 0,
+      skippedExisting: 0,
+      skippedInvalid: 0,
+      skippedMissingUnit: 0,
+      hasMore: false,
+      nextCursor: null,
+    };
+  }
+
+  const eventRefs = attemptsSnapshot.docs.map((attemptDoc) =>
+    db.collection("analytics_events").doc(`submit_${attemptDoc.id}`)
+  );
+  const existingEventSnapshots = eventRefs.length > 0 ? await db.getAll(...eventRefs) : [];
+  const existingEventIds = new Set(
+    existingEventSnapshots.filter((snapshot) => snapshot.exists).map((snapshot) => snapshot.id)
+  );
+
+  const writeBatch = db.batch();
+  let written = 0;
+  let skippedExisting = 0;
+  let skippedInvalid = 0;
+  let skippedMissingUnit = 0;
+
+  for (const attemptDoc of attemptsSnapshot.docs) {
+    const attemptData = attemptDoc.data() as any;
+    const attemptId = attemptDoc.id;
+    const eventDocId = `submit_${attemptId}`;
+
+    if (!overwriteExisting && existingEventIds.has(eventDocId)) {
+      skippedExisting += 1;
+      continue;
+    }
+
+    const pathSegments = attemptDoc.ref.path.split("/");
+    const uidFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+    const uid = String(attemptData.uid || uidFromPath || "");
+    const unitId = String(attemptData.unitId || "");
+    const unitMeta = unitMetadata.get(unitId);
+
+    if (!uid || !unitId || !unitMeta) {
+      skippedMissingUnit += 1;
+      continue;
+    }
+
+    const rawDetails = Array.isArray(attemptData.details) ? attemptData.details : [];
+    const questionOrderMap = new Map(
+      unitMeta.questions.map((question) => [question.questionId, question.questionOrder])
+    );
+
+    const questionResults = rawDetails
+      .map((detail: any): AttemptBackfillQuestionResult | null => {
+        const questionId = String(detail?.qId || detail?.questionId || "");
+        if (!questionId) {
+          return null;
+        }
+
+        return {
+          questionId,
+          questionOrder: Number(questionOrderMap.get(questionId) || 0),
+          isCorrect: detail?.isCorrect === true,
+        };
+      })
+      .filter((detail: AttemptBackfillQuestionResult | null): detail is AttemptBackfillQuestionResult => detail !== null);
+
+    if (rawDetails.length > 0 && questionResults.length === 0) {
+      skippedInvalid += 1;
+      continue;
+    }
+
+    const occurredAt = attemptData.date
+      ? admin.firestore.Timestamp.fromDate(new Date(attemptData.date))
+      : attemptDoc.createTime || admin.firestore.Timestamp.now();
+
+    const event = buildAttemptSubmittedEventFromAttempt({
+      attemptId,
+      uid,
+      unitId,
+      unitTitle: String(attemptData.unitTitle || unitMeta.unitTitle || unitId),
+      subject: unitMeta.subject,
+      category: unitMeta.category,
+      occurredAt,
+      score: toFiniteNumber(attemptData.score),
+      timeSec: toFiniteNumber(attemptData.time),
+      xpGain: toFiniteNumber(attemptData.xpGain),
+      questionResults,
+    });
+
+    if (!dryRun) {
+      writeBatch.set(db.collection("analytics_events").doc(eventDocId), event, { merge: true });
+    }
+
+    written += 1;
+  }
+
+  if (!dryRun && written > 0) {
+    await writeBatch.commit();
+  }
+
+  const lastDoc = attemptsSnapshot.docs[attemptsSnapshot.docs.length - 1];
+
+  return {
+    ok: true,
+    dryRun,
+    processed: attemptsSnapshot.size,
+    written,
+    skippedExisting,
+    skippedInvalid,
+    skippedMissingUnit,
+    hasMore: attemptsSnapshot.size === batchSize,
+    nextCursor: lastDoc.ref.path,
+  };
 }
 
 async function buildOverviewDoc(
@@ -956,5 +1166,26 @@ export const aggregateAnalyticsDaily = functions
         { merge: true }
       );
       return null;
+    }
+  });
+
+export const backfillAnalyticsEvents = functions
+  .region("us-central1")
+  .runWith({ timeoutSeconds: 540, memory: "512MB" })
+  .https.onCall(async (data, context) => {
+    if (!context.auth?.token?.admin) {
+      throw new functions.https.HttpsError("permission-denied", "Admin only.");
+    }
+
+    try {
+      return await backfillAnalyticsEventsInternal({
+        batchSize: data?.batchSize,
+        cursor: data?.cursor,
+        overwriteExisting: data?.overwriteExisting,
+        dryRun: data?.dryRun,
+      });
+    } catch (error: any) {
+      console.error("[backfillAnalyticsEvents] failed", error);
+      throw new functions.https.HttpsError("internal", error?.message || "Backfill failed.");
     }
   });

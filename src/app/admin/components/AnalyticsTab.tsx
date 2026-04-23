@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { httpsCallable } from 'firebase/functions';
 import { BarChart2, BookOpen, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { functions } from '@/lib/firebase';
 import OverviewPanel from './OverviewPanel';
 import QuestionAnalysisPanel from './QuestionAnalysisPanel';
 import SmartCorrelationPanel from './SmartCorrelationPanel';
@@ -39,6 +41,18 @@ interface AnalyticsTabProps {
 
 type SubTab = 'overview' | 'questions' | 'correlation';
 
+type BackfillAnalyticsResult = {
+  ok: boolean;
+  dryRun: boolean;
+  processed: number;
+  written: number;
+  skippedExisting: number;
+  skippedInvalid: number;
+  skippedMissingUnit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
 function formatGeneratedAt(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === 'string') return new Date(value).toLocaleString('ja-JP');
@@ -63,6 +77,9 @@ export default function AnalyticsTab({
   const [unitSummaries, setUnitSummaries] = useState<UnitSummaryDoc[]>([]);
   const [questionAnalysis, setQuestionAnalysis] = useState<QuestionAnalysisDoc | null>(null);
   const [questionCorrelations, setQuestionCorrelations] = useState<QuestionCorrelationsDoc | null>(null);
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [aggregationRunning, setAggregationRunning] = useState(false);
+  const [opsMessage, setOpsMessage] = useState<string | null>(null);
 
   const hasServingData = !!servingOverview || unitSummaries.length > 0;
 
@@ -115,6 +132,14 @@ export default function AnalyticsTab({
   const generatedAtLabel = formatGeneratedAt(
     questionCorrelations?.generatedAt || questionAnalysis?.generatedAt || servingOverview?.generatedAt
   );
+  const backfillCallable = useMemo(
+    () => httpsCallable<any, BackfillAnalyticsResult>(functions, 'backfillAnalyticsEvents'),
+    []
+  );
+  const aggregationCallable = useMemo(
+    () => httpsCallable(functions, 'runAnalyticsAggregation'),
+    []
+  );
 
   const handleLoadData = async () => {
     setLoadingData(true);
@@ -133,6 +158,64 @@ export default function AnalyticsTab({
       }
     } finally {
       setLoadingData(false);
+    }
+  };
+
+  const handleBackfill = async () => {
+    setBackfillRunning(true);
+    setOpsMessage(null);
+
+    try {
+      let cursor: string | null = null;
+      let processed = 0;
+      let written = 0;
+      let skippedExisting = 0;
+      let skippedInvalid = 0;
+      let skippedMissingUnit = 0;
+      let hasMore = false;
+
+      do {
+        const result: { data: BackfillAnalyticsResult } = await backfillCallable({
+          batchSize: 200,
+          cursor,
+          overwriteExisting: false,
+          dryRun: false,
+        });
+        const data: BackfillAnalyticsResult = result.data;
+
+        processed += Number(data.processed || 0);
+        written += Number(data.written || 0);
+        skippedExisting += Number(data.skippedExisting || 0);
+        skippedInvalid += Number(data.skippedInvalid || 0);
+        skippedMissingUnit += Number(data.skippedMissingUnit || 0);
+        hasMore = data.hasMore === true;
+        cursor = data.nextCursor || null;
+      } while (hasMore);
+
+      setOpsMessage(
+        `backfill が完了しました。processed=${processed}, written=${written}, skippedExisting=${skippedExisting}, skippedInvalid=${skippedInvalid}, skippedMissingUnit=${skippedMissingUnit}。BigQuery 同期後に再集計を実行してください。`
+      );
+    } catch (error) {
+      console.error('Failed to backfill analytics events', error);
+      setOpsMessage('backfill の実行に失敗しました。Functions ログを確認してください。');
+    } finally {
+      setBackfillRunning(false);
+    }
+  };
+
+  const handleRunAggregation = async () => {
+    setAggregationRunning(true);
+    setOpsMessage(null);
+
+    try {
+      await aggregationCallable({});
+      await handleLoadData();
+      setOpsMessage('集計を再実行しました。最新データを読み込み済みです。');
+    } catch (error) {
+      console.error('Failed to run analytics aggregation', error);
+      setOpsMessage('集計の再実行に失敗しました。Functions ログを確認してください。');
+    } finally {
+      setAggregationRunning(false);
     }
   };
 
@@ -279,6 +362,14 @@ export default function AnalyticsTab({
         </div>
       </div>
 
+      <AnalyticsOpsPanel
+        backfillRunning={backfillRunning}
+        aggregationRunning={aggregationRunning}
+        opsMessage={opsMessage}
+        onBackfill={handleBackfill}
+        onRunAggregation={handleRunAggregation}
+      />
+
       <div className="rounded-xl border px-4 py-3 text-sm bg-blue-50 border-blue-200 text-blue-900">
         BigQuery の事前集計結果を優先し、管理画面は `analytics_serving` のみを参照します。`attempts` や `stats` の直接走査は行いません。
       </div>
@@ -398,6 +489,57 @@ function calculateCategoryAccuraciesFromSummaries(
       return accumulator;
     }, [])
     .sort((left, right) => right.totalAttempts - left.totalAttempts);
+}
+
+function AnalyticsOpsPanel({
+  backfillRunning,
+  aggregationRunning,
+  opsMessage,
+  onBackfill,
+  onRunAggregation,
+}: {
+  backfillRunning: boolean;
+  aggregationRunning: boolean;
+  opsMessage: string | null;
+  onBackfill: () => Promise<void>;
+  onRunAggregation: () => Promise<void>;
+}) {
+  return (
+    <div className="rounded-xl border bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">分析データ運用</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            過去 attempts の backfill と、BigQuery 同期後の再集計をここから実行できます。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onBackfill}
+            disabled={backfillRunning || aggregationRunning}
+            className="text-xs"
+          >
+            {backfillRunning ? 'backfill 実行中...' : 'attempts を backfill'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={onRunAggregation}
+            disabled={aggregationRunning || backfillRunning}
+            className="text-xs"
+          >
+            {aggregationRunning ? '再集計中...' : '集計を再実行'}
+          </Button>
+        </div>
+      </div>
+      {opsMessage && (
+        <p className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+          {opsMessage}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function AnalyticsHighlights({ overview }: { overview: AnalyticsOverviewDoc | null }) {
