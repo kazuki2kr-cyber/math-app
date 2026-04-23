@@ -93,15 +93,10 @@ function tableRef(config: AnalyticsConfig, tableName: string): string {
   return `\`${config.projectId}.${config.datasetId}.${tableName}\``;
 }
 
-function buildRawJsonExpression(alias = "data"): string {
-  return `TO_JSON_STRING(${alias})`;
-}
-
 function occurredAtExpr(alias = "data"): string {
-  const raw = buildRawJsonExpression(alias);
   return `COALESCE(
-    SAFE.TIMESTAMP(JSON_VALUE(${raw}, '$.occurredAt')),
-    TIMESTAMP_SECONDS(SAFE_CAST(JSON_VALUE(${raw}, '$.occurredAt._seconds') AS INT64))
+    SAFE.TIMESTAMP(JSON_VALUE(${alias}, '$.occurredAt')),
+    TIMESTAMP_SECONDS(SAFE_CAST(JSON_VALUE(${alias}, '$.occurredAt._seconds') AS INT64))
   )`;
 }
 
@@ -175,12 +170,13 @@ PARTITION BY occurred_date
 CLUSTER BY unit_id, uid AS
 WITH raw_events AS (
   SELECT
-    ${buildRawJsonExpression()} AS raw_json
+    data AS raw_json
   FROM ${rawLatestTable}
+  WHERE data IS NOT NULL
 ),
 last_reset AS (
   SELECT
-    MAX(${occurredAtExpr("PARSE_JSON(raw_json)")}) AS reset_at
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
 ),
@@ -192,8 +188,8 @@ submitted AS (
     JSON_VALUE(raw_json, '$.unitTitle') AS unit_title,
     JSON_VALUE(raw_json, '$.subject') AS subject,
     JSON_VALUE(raw_json, '$.category') AS category,
-    ${occurredAtExpr("PARSE_JSON(raw_json)")} AS occurred_at,
-    DATE(${occurredAtExpr("PARSE_JSON(raw_json)")}, '${config.timezone}') AS occurred_date,
+    ${occurredAtExpr("raw_json")} AS occurred_at,
+    DATE(${occurredAtExpr("raw_json")}, '${config.timezone}') AS occurred_date,
     SAFE_CAST(JSON_VALUE(raw_json, '$.score') AS INT64) AS score,
     SAFE_CAST(JSON_VALUE(raw_json, '$.timeSec') AS INT64) AS time_sec,
     SAFE_CAST(JSON_VALUE(raw_json, '$.xpGain') AS INT64) AS xp_gain,
@@ -205,7 +201,7 @@ submitted AS (
 deleted AS (
   SELECT
     JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
-    ${occurredAtExpr("PARSE_JSON(raw_json)")} AS deleted_at
+    ${occurredAtExpr("raw_json")} AS deleted_at
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_DELETED'
 )
@@ -228,12 +224,13 @@ PARTITION BY occurred_date
 CLUSTER BY unit_id, question_id, uid AS
 WITH raw_events AS (
   SELECT
-    ${buildRawJsonExpression()} AS raw_json
+    data AS raw_json
   FROM ${rawLatestTable}
+  WHERE data IS NOT NULL
 ),
 last_reset AS (
   SELECT
-    MAX(${occurredAtExpr("PARSE_JSON(raw_json)")}) AS reset_at
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
 ),
@@ -245,8 +242,8 @@ submitted AS (
     JSON_VALUE(raw_json, '$.unitTitle') AS unit_title,
     JSON_VALUE(raw_json, '$.subject') AS subject,
     JSON_VALUE(raw_json, '$.category') AS category,
-    ${occurredAtExpr("PARSE_JSON(raw_json)")} AS occurred_at,
-    DATE(${occurredAtExpr("PARSE_JSON(raw_json)")}, '${config.timezone}') AS occurred_date,
+    ${occurredAtExpr("raw_json")} AS occurred_at,
+    DATE(${occurredAtExpr("raw_json")}, '${config.timezone}') AS occurred_date,
     SAFE_CAST(JSON_VALUE(raw_json, '$.score') AS INT64) AS score,
     SAFE_CAST(JSON_VALUE(raw_json, '$.timeSec') AS INT64) AS time_sec,
     SAFE_CAST(JSON_VALUE(raw_json, '$.xpGain') AS INT64) AS xp_gain,
@@ -257,7 +254,7 @@ submitted AS (
 deleted AS (
   SELECT
     JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
-    ${occurredAtExpr("PARSE_JSON(raw_json)")} AS deleted_at
+    ${occurredAtExpr("raw_json")} AS deleted_at
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ATTEMPT_DELETED'
 )
@@ -726,9 +723,11 @@ SELECT
     AVG(IF(attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
     AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL))
   ) * 100 AS retryImprovementRate,
-  COUNTIF(answered_count >= 10 AND accuracy < 50) AS atRiskUsers
+  (
+    SELECT COUNTIF(answered_count >= 10 AND accuracy < 50)
+    FROM at_risk
+  ) AS atRiskUsers
 FROM attempts
-CROSS JOIN at_risk
   `);
 
   const bySubject = await runQuery(bigquery, config, `
@@ -744,13 +743,26 @@ ORDER BY totalAttempts DESC
   const topAccuracyRows = await runQuery(bigquery, config, `
 SELECT
   uid,
-  AVG(score) AS value,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS value,
   AVG(time_sec) AS avgTime,
   COUNT(*) AS attempts
 FROM ${tableRef(config, "fact_attempts")}
 GROUP BY uid
 HAVING attempts >= 3
 ORDER BY value DESC, avgTime ASC
+LIMIT 10
+  `);
+
+  const worstAccuracyRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS value,
+  AVG(time_sec) AS avgTime,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+HAVING attempts >= 3
+ORDER BY value ASC, avgTime DESC
 LIMIT 10
   `);
 
@@ -765,10 +777,16 @@ ORDER BY value DESC, attempts DESC
 LIMIT 10
   `);
 
-  const worstAccuracyRows = [...topAccuracyRows]
-    .sort((left, right) => Number(left.value || 0) - Number(right.value || 0));
-  const worstCorrectRows = [...topCorrectRows]
-    .sort((left, right) => Number(left.value || 0) - Number(right.value || 0));
+  const worstCorrectRows = await runQuery(bigquery, config, `
+SELECT
+  uid,
+  SUM(correct_count) AS value,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY uid
+ORDER BY value ASC, attempts ASC
+LIMIT 10
+  `);
 
   const currentDate = new Date().toISOString().slice(0, 10);
   const earliestDateQuery = await runQuery(bigquery, config, `
