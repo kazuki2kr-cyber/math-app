@@ -34,10 +34,10 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }, [targetConfig]);
 
   useEffect(() => {
-    if (!loading && !user && pathname !== '/login') {
+    if (!loading && !maintenanceLoading && !maintenance?.enabled && !user && pathname !== '/login') {
       router.push('/login');
     }
-  }, [user, loading, router, pathname]);
+  }, [user, loading, maintenanceLoading, maintenance, router, pathname]);
 
   if (loading || maintenanceLoading) {
     return (

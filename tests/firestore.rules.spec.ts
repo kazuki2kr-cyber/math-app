@@ -348,4 +348,30 @@ describe('Firestore Security Rules', () => {
     const aliceRef = doc(adminContext.firestore(), 'users', aliceId);
     await expect(getDoc(aliceRef)).resolves.toBeDefined();
   });
+
+  test('未認証ユーザーも config/maintenance_kanji を読み取れる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'config', 'maintenance_kanji'), {
+        enabled: false,
+      });
+    });
+
+    const anonContext = testEnv.unauthenticatedContext();
+    const ref = doc(anonContext.firestore(), 'config', 'maintenance_kanji');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+  });
+
+  test('一般ユーザーは config/maintenance_kanji に書き込めない', async () => {
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'config', 'maintenance_kanji');
+    await expect(setDoc(ref, { enabled: true })).rejects.toThrow();
+  });
+
+  test('管理者は config/maintenance_kanji に書き込める', async () => {
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const ref = doc(adminContext.firestore(), 'config', 'maintenance_kanji');
+    await expect(
+      setDoc(ref, { enabled: false, message: '' })
+    ).resolves.toBeUndefined();
+  });
 });
