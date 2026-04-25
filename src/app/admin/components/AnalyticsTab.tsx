@@ -6,25 +6,29 @@ import { BarChart2, BookOpen, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { functions } from '@/lib/firebase';
 import OverviewPanel from './OverviewPanel';
+import PublicAnalyticsReportPanel from './PublicAnalyticsReportPanel';
 import QuestionAnalysisPanel from './QuestionAnalysisPanel';
 import SmartCorrelationPanel from './SmartCorrelationPanel';
 import {
   calculateAccuracyDistribution,
-  calculateCategoryAccuracies,
   generateActionSuggestions,
   type OverviewMetrics,
 } from '@/lib/analytics';
 import {
   fetchAnalyticsOverview,
+  fetchAnalyticsOverviewByCategory,
+  fetchAnalyticsOverviewBySubject,
   fetchQuestionAnalysis,
   fetchQuestionCorrelations,
   fetchUnitSummaries,
+  fetchUnitRankings,
   toCorrelationPairs,
   toOverviewMetrics,
   toQuestionStats,
   type AnalyticsOverviewDoc,
   type QuestionAnalysisDoc,
   type QuestionCorrelationsDoc,
+  type UnitRankingsDoc,
   type UnitSummaryDoc,
 } from '@/lib/analyticsServing';
 
@@ -39,7 +43,7 @@ interface AnalyticsTabProps {
   autoLoad?: boolean;
 }
 
-type SubTab = 'overview' | 'questions' | 'correlation';
+type SubTab = 'overview' | 'questions' | 'correlation' | 'report';
 
 function formatGeneratedAt(value: unknown): string | null {
   if (!value) return null;
@@ -62,13 +66,17 @@ export default function AnalyticsTab({
   const [dataRequested, setDataRequested] = useState(autoLoad);
   const [loadingData, setLoadingData] = useState(false);
   const [servingOverview, setServingOverview] = useState<AnalyticsOverviewDoc | null>(null);
+  const [scopedOverview, setScopedOverview] = useState<AnalyticsOverviewDoc | null>(null);
   const [unitSummaries, setUnitSummaries] = useState<UnitSummaryDoc[]>([]);
   const [questionAnalysis, setQuestionAnalysis] = useState<QuestionAnalysisDoc | null>(null);
   const [questionCorrelations, setQuestionCorrelations] = useState<QuestionCorrelationsDoc | null>(null);
+  const [unitRankings, setUnitRankings] = useState<UnitRankingsDoc | null>(null);
   const [aggregationRunning, setAggregationRunning] = useState(false);
   const [opsMessage, setOpsMessage] = useState<string | null>(null);
 
   const hasServingData = !!servingOverview || unitSummaries.length > 0;
+  const isScopedFilterActive = subjectFilter !== 'all' || categoryFilter !== 'all';
+  const effectiveOverview = isScopedFilterActive ? scopedOverview : servingOverview;
 
   const filteredUnitSummaries = useMemo(() => {
     return unitSummaries.filter((unit) => {
@@ -93,13 +101,24 @@ export default function AnalyticsTab({
   }, [subjectFilter, unitSummaries]);
 
   const overviewMetrics: OverviewMetrics = useMemo(() => {
-    const metrics = toOverviewMetrics(servingOverview, filteredUnitSummaries);
+    const metrics = toOverviewMetrics(effectiveOverview, filteredUnitSummaries);
     metrics.categoryAccuracies = calculateCategoryAccuraciesFromSummaries(filteredUnitSummaries);
     return metrics;
-  }, [filteredUnitSummaries, servingOverview]);
+  }, [effectiveOverview, filteredUnitSummaries]);
 
   const questionStats = useMemo(() => toQuestionStats(questionAnalysis), [questionAnalysis]);
   const correlationPairs = useMemo(() => toCorrelationPairs(questionCorrelations), [questionCorrelations]);
+  const activeRankings = useMemo(() => {
+    const rankings = unitRankings?.rankings || overviewMetrics.rankings;
+    if (!rankings) return undefined;
+
+    return {
+      topAccuracy: rankings.topAccuracy || [],
+      worstAccuracy: rankings.worstAccuracy || [],
+      topCorrect: rankings.topCorrect || [],
+      worstCorrect: rankings.worstCorrect || [],
+    };
+  }, [overviewMetrics.rankings, unitRankings?.rankings]);
   const distribution = useMemo(() => calculateAccuracyDistribution(questionStats), [questionStats]);
   const suggestions = useMemo(
     () => generateActionSuggestions(questionStats, correlationPairs),
@@ -117,7 +136,7 @@ export default function AnalyticsTab({
   }));
 
   const generatedAtLabel = formatGeneratedAt(
-    questionCorrelations?.generatedAt || questionAnalysis?.generatedAt || servingOverview?.generatedAt
+    questionCorrelations?.generatedAt || questionAnalysis?.generatedAt || effectiveOverview?.generatedAt
   );
   const aggregationCallable = useMemo(
     () => httpsCallable(functions, 'runAnalyticsAggregation'),
@@ -134,6 +153,7 @@ export default function AnalyticsTab({
       ]);
 
       setServingOverview(overview);
+      setScopedOverview(null);
       setUnitSummaries(summaries);
 
       if (!selectedUnitForStats && summaries.length > 0) {
@@ -219,16 +239,19 @@ export default function AnalyticsTab({
           fetchQuestionAnalysis(selectedUnitForStats),
           fetchQuestionCorrelations(selectedUnitForStats),
         ]);
+        const rankingsDoc = await fetchUnitRankings(selectedUnitForStats);
 
         if (!cancelled) {
           setQuestionAnalysis(analysisDoc);
           setQuestionCorrelations(correlationsDoc);
+          setUnitRankings(rankingsDoc);
         }
       } catch (error) {
         console.error('Failed to load serving docs for unit analytics', error);
         if (!cancelled) {
           setQuestionAnalysis(null);
           setQuestionCorrelations(null);
+          setUnitRankings(null);
         }
       }
     };
@@ -239,6 +262,36 @@ export default function AnalyticsTab({
       cancelled = true;
     };
   }, [dataRequested, hasServingData, selectedUnitForStats]);
+
+  useEffect(() => {
+    if (!dataRequested || !hasServingData) return;
+
+    let cancelled = false;
+
+    const loadScopedOverview = async () => {
+      setScopedOverview(null);
+
+      if (categoryFilter !== 'all') {
+        const overview = await fetchAnalyticsOverviewByCategory(categoryFilter);
+        if (!cancelled) setScopedOverview(overview);
+        return;
+      }
+
+      if (subjectFilter !== 'all') {
+        const overview = await fetchAnalyticsOverviewBySubject(subjectFilter);
+        if (!cancelled) setScopedOverview(overview);
+        return;
+      }
+
+      setScopedOverview(null);
+    };
+
+    void loadScopedOverview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [categoryFilter, dataRequested, hasServingData, subjectFilter]);
 
   if (!hasServingData && !dataRequested) {
     return (
@@ -286,6 +339,7 @@ export default function AnalyticsTab({
             { key: 'overview', label: '概要' },
             { key: 'questions', label: '問題分析' },
             { key: 'correlation', label: '誤答相関' },
+            { key: 'report', label: '配布レポート' },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -355,13 +409,18 @@ export default function AnalyticsTab({
         BigQuery の事前集計結果を優先し、管理画面は `analytics_serving` のみを参照します。`attempts` や `stats` の直接走査は行いません。
       </div>
 
-      <AnalyticsHighlights overview={servingOverview} />
+      <AnalyticsHighlights overview={effectiveOverview} />
+      {isScopedFilterActive && !scopedOverview && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          選択中のフィルタに対応する事前集計がまだありません。集計を再実行すると、概要KPIとランキングもフィルタに追従します。
+        </div>
+      )}
 
       {activeSubTab === 'overview' && (
         <>
           <OverviewPanel
             metrics={overviewMetrics}
-            scoresCount={Number(servingOverview?.totals?.totalAttempts || 0)}
+            scoresCount={Number(effectiveOverview?.totals?.totalAttempts || 0)}
             currentSubject={subjectFilter === 'all' ? '全教科' : subjectFilter}
           />
           <div className="mt-6 pt-6 border-t border-dashed border-gray-300">
@@ -409,7 +468,7 @@ export default function AnalyticsTab({
               questionStats={questionStats}
               distribution={distribution}
               suggestions={suggestions}
-              rankings={overviewMetrics.rankings}
+              rankings={activeRankings}
             />
           )}
         </div>
@@ -442,6 +501,8 @@ export default function AnalyticsTab({
           )}
         </div>
       )}
+
+      {activeSubTab === 'report' && <PublicAnalyticsReportPanel />}
     </div>
   );
 }
