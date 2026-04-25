@@ -37,6 +37,12 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     if (!loading && !maintenanceLoading && !maintenance?.enabled && !user && pathname !== '/login') {
       router.push('/login');
     }
+
+    // 特定のUIDを漢字モードからブロック
+    const isKanjiMode = pathname.startsWith('/yamato') || pathname.startsWith('/kanji');
+    if (user?.uid === 'GdZWuEXgwjg1RM2GWe89JlKMwe33' && isKanjiMode) {
+      router.push('/');
+    }
   }, [user, loading, maintenanceLoading, maintenance, router, pathname]);
 
   if (loading || maintenanceLoading) {
