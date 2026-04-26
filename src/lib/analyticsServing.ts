@@ -163,6 +163,15 @@ export interface PublicAnalyticsReportTrendDoc {
   }>;
 }
 
+export interface PublicAnalyticsReportCategoryDoc {
+  generatedAt?: unknown;
+  category: string;
+  categoryKey: string;
+  totals?: PublicAnalyticsReportOverviewDoc['totals'] & {
+    unitCount?: number;
+  };
+}
+
 export interface PublicAnalyticsReportUnitDoc {
   generatedAt?: unknown;
   unitId: string;
@@ -324,6 +333,16 @@ export async function fetchPublicAnalyticsReportOverview(): Promise<PublicAnalyt
 
 export async function fetchPublicAnalyticsReportTrends(): Promise<PublicAnalyticsReportTrendDoc | null> {
   const snap = await getDoc(doc(db, 'public_analytics_serving', 'current', 'report_trends', 'current'));
+  return snap.exists() ? (snap.data() as PublicAnalyticsReportTrendDoc) : null;
+}
+
+export async function fetchPublicAnalyticsReportCategories(): Promise<PublicAnalyticsReportCategoryDoc[]> {
+  const snap = await getDocs(collection(db, 'public_analytics_serving', 'current', 'report_categories'));
+  return snap.docs.map((item) => item.data() as PublicAnalyticsReportCategoryDoc);
+}
+
+export async function fetchPublicAnalyticsReportCategoryTrends(categoryKey: string): Promise<PublicAnalyticsReportTrendDoc | null> {
+  const snap = await getDoc(doc(db, 'public_analytics_serving', 'current', 'report_category_trends', categoryKey));
   return snap.exists() ? (snap.data() as PublicAnalyticsReportTrendDoc) : null;
 }
 

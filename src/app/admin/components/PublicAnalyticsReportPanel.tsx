@@ -3,10 +3,14 @@
 import React, { useMemo, useState } from 'react';
 import { FileText, Printer, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { MathDisplay } from '@/components/MathDisplay';
 import {
+  fetchPublicAnalyticsReportCategories,
+  fetchPublicAnalyticsReportCategoryTrends,
   fetchPublicAnalyticsReportOverview,
   fetchPublicAnalyticsReportTrends,
   fetchPublicAnalyticsReportUnits,
+  type PublicAnalyticsReportCategoryDoc,
   type PublicAnalyticsReportOverviewDoc,
   type PublicAnalyticsReportTrendDoc,
   type PublicAnalyticsReportUnitDoc,
@@ -37,37 +41,63 @@ function formatPercent(value: unknown): string {
 }
 
 function formatStudyTime(seconds: unknown): string {
-  const hours = Number(seconds || 0) / 3600;
-  if (hours >= 10) return `${formatNumber(hours, 0)}時間`;
-  return `${formatNumber(hours, 1)}時間`;
+  const minutes = Number(seconds || 0) / 60;
+  if (minutes >= 600) return `${formatNumber(minutes / 60, 0)}時間`;
+  if (minutes >= 60) return `${formatNumber(minutes / 60, 1)}時間`;
+  return `${formatNumber(minutes, 0)}分`;
+}
+
+function weightedAverage(
+  units: PublicAnalyticsReportUnitDoc[],
+  selector: (unit: PublicAnalyticsReportUnitDoc) => number
+): number {
+  const totalWeight = units.reduce((sum, unit) => sum + Number(unit.totals?.totalAttempts || 0), 0);
+  if (!totalWeight) return 0;
+  return units.reduce((sum, unit) => sum + selector(unit) * Number(unit.totals?.totalAttempts || 0), 0) / totalWeight;
 }
 
 export default function PublicAnalyticsReportPanel() {
   const [overview, setOverview] = useState<PublicAnalyticsReportOverviewDoc | null>(null);
   const [trends, setTrends] = useState<PublicAnalyticsReportTrendDoc | null>(null);
+  const [categories, setCategories] = useState<PublicAnalyticsReportCategoryDoc[]>([]);
   const [units, setUnits] = useState<PublicAnalyticsReportUnitDoc[]>([]);
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState('all');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  const publishable = overview?.privacy?.publishable !== false;
+  const selectedCategory = categories.find((category) => category.categoryKey === selectedCategoryKey) || null;
   const thresholds = overview?.privacy?.thresholds;
+  const publishable = overview?.privacy?.publishable !== false;
 
-  const topPriorityUnits = useMemo(
+  const filteredUnits = useMemo(() => {
+    if (selectedCategoryKey === 'all') return units;
+    return units.filter((unit) => unit.category === selectedCategory?.category);
+  }, [selectedCategory?.category, selectedCategoryKey, units]);
+
+  const activeTotals = selectedCategory?.totals || overview?.totals || {};
+  const activeTitle = selectedCategory ? `${selectedCategory.category} レポート` : '全分野レポート';
+  const activeTrendDays = trends?.days || [];
+  const maxTrendAttempts = useMemo(
+    () => Math.max(1, ...activeTrendDays.map((day) => Number(day.totalAttempts || 0))),
+    [activeTrendDays]
+  );
+
+  const featuredUnits = useMemo(
     () =>
-      [...units]
+      [...filteredUnits]
         .sort(
           (left, right) =>
             Number(right.totals?.improvementPriorityScore || 0) -
             Number(left.totals?.improvementPriorityScore || 0)
         )
-        .slice(0, 6),
-    [units]
+        .slice(0, 4),
+    [filteredUnits]
   );
 
   const strugglingQuestions = useMemo(
     () =>
-      units
+      filteredUnits
         .flatMap((unit) =>
           (unit.reviewQuestions || []).map((question) => ({
             ...question,
@@ -75,28 +105,56 @@ export default function PublicAnalyticsReportPanel() {
           }))
         )
         .sort((left, right) => Number(right.stumbleRate || 0) - Number(left.stumbleRate || 0))
-        .slice(0, 8),
-    [units]
+        .slice(0, 4),
+    [filteredUnits]
   );
 
-  const maxTrendAttempts = useMemo(
-    () => Math.max(1, ...(trends?.days || []).map((day) => Number(day.totalAttempts || 0))),
-    [trends?.days]
+  const coMistakes = useMemo(
+    () =>
+      filteredUnits
+        .flatMap((unit) =>
+          (unit.strongCoMistakes || []).map((pair) => ({
+            ...pair,
+            unitTitle: unit.unitTitle,
+          }))
+        )
+        .sort((left, right) => Number(right.coWrongUsers || 0) - Number(left.coWrongUsers || 0))
+        .slice(0, 2),
+    [filteredUnits]
   );
 
-  const loadReport = async () => {
+  const firstAttemptAccuracy = weightedAverage(
+    filteredUnits,
+    (unit) => Number(unit.totals?.firstAttemptAccuracy || 0)
+  );
+  const retryImprovementRate = weightedAverage(
+    filteredUnits,
+    (unit) => Number(unit.totals?.retryImprovementRate || 0)
+  );
+  const avgTimeSec = weightedAverage(filteredUnits, (unit) => Number(unit.totals?.avgTimeSec || 0));
+
+  const loadReport = async (categoryKey = selectedCategoryKey) => {
     setLoading(true);
     setMessage(null);
     try {
-      const [overviewDoc, trendDoc, unitDocs] = await Promise.all([
+      const [overviewDoc, trendDoc, categoryDocs, unitDocs] = await Promise.all([
         fetchPublicAnalyticsReportOverview(),
         fetchPublicAnalyticsReportTrends(),
+        fetchPublicAnalyticsReportCategories(),
         fetchPublicAnalyticsReportUnits(),
       ]);
 
       setOverview(overviewDoc);
-      setTrends(trendDoc);
+      setCategories(categoryDocs.sort((left, right) => left.category.localeCompare(right.category, 'ja')));
       setUnits(unitDocs);
+
+      if (categoryKey !== 'all') {
+        const categoryTrend = await fetchPublicAnalyticsReportCategoryTrends(categoryKey);
+        setTrends(categoryTrend || { days: [] });
+      } else {
+        setTrends(trendDoc);
+      }
+
       setLoaded(true);
     } catch (error) {
       console.error('Failed to load public analytics report docs', error);
@@ -104,6 +162,20 @@ export default function PublicAnalyticsReportPanel() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCategoryChange = async (categoryKey: string) => {
+    setSelectedCategoryKey(categoryKey);
+    if (!loaded) return;
+
+    if (categoryKey === 'all') {
+      const trendDoc = await fetchPublicAnalyticsReportTrends();
+      setTrends(trendDoc);
+      return;
+    }
+
+    const categoryTrend = await fetchPublicAnalyticsReportCategoryTrends(categoryKey);
+    setTrends(categoryTrend || { days: [] });
   };
 
   const printReport = () => {
@@ -132,11 +204,11 @@ export default function PublicAnalyticsReportPanel() {
             <div>
               <p className="font-semibold text-gray-900">生徒配布用レポート</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                匿名化済みの集計だけを読み込み、印刷またはPDF保存できる形式で表示します。
+                匿名化済みの集計だけを読み込み、分野別に印刷またはPDF保存できます。
               </p>
             </div>
           </div>
-          <Button onClick={loadReport} disabled={loading} size="sm">
+          <Button onClick={() => loadReport()} disabled={loading} size="sm">
             {loading ? (
               <span className="flex items-center gap-2">
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
@@ -159,7 +231,7 @@ export default function PublicAnalyticsReportPanel() {
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-900">
         <p className="font-semibold">レポート用データがまだありません</p>
         <p className="mt-1 text-sm">集計を再実行すると `public_analytics_serving` に匿名化済みレポートが生成されます。</p>
-        <Button className="mt-4" variant="outline" size="sm" onClick={loadReport} disabled={loading}>
+        <Button className="mt-4" variant="outline" size="sm" onClick={() => loadReport()} disabled={loading}>
           <RefreshCw className="mr-1.5 h-4 w-4" />
           再読み込み
         </Button>
@@ -169,19 +241,35 @@ export default function PublicAnalyticsReportPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="student-report-no-print flex flex-col gap-3 rounded-lg border bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+      <div className="student-report-no-print flex flex-col gap-3 rounded-lg border bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="font-semibold text-gray-900">生徒配布用レポート</p>
           <p className="mt-1 text-sm text-muted-foreground">
             管理者だけが出力できます。本文には個人名・uid・メールアドレスを含めません。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={loadReport} disabled={loading}>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-gray-600" htmlFor="report-category">
+            分野
+          </label>
+          <select
+            id="report-category"
+            value={selectedCategoryKey}
+            onChange={(event) => void handleCategoryChange(event.target.value)}
+            className="h-9 rounded-md border bg-white px-3 text-sm"
+          >
+            <option value="all">全分野</option>
+            {categories.map((category) => (
+              <option key={category.categoryKey} value={category.categoryKey}>
+                {category.category}
+              </option>
+            ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={loading}>
             <RefreshCw className="mr-1.5 h-4 w-4" />
             再読み込み
           </Button>
-          <Button size="sm" onClick={printReport} disabled={!publishable}>
+          <Button size="sm" onClick={printReport} disabled={!publishable || loading}>
             <Printer className="mr-1.5 h-4 w-4" />
             印刷 / PDF
           </Button>
@@ -200,102 +288,139 @@ export default function PublicAnalyticsReportPanel() {
         </div>
       )}
 
-      <section className="student-report-print rounded-lg border bg-white p-6 shadow-sm print:shadow-none">
-        <header className="border-b pb-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Formix Learning Report</p>
-              <h2 className="mt-1 text-2xl font-black text-gray-950">みんなの学習レポート</h2>
-              <p className="mt-2 text-sm text-gray-600">生成日時: {formatGeneratedAt(overview.generatedAt)}</p>
-            </div>
-            <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-              <ShieldCheck className="h-4 w-4" />
-              k匿名化済み
-            </div>
+      <section className="student-report-print report-a4-sheet rounded-lg border bg-white text-gray-950 shadow-sm print:shadow-none">
+        <header className="report-header">
+          <div>
+            <p className="report-kicker">Formix Learning Report</p>
+            <h2>{activeTitle}</h2>
+            <p className="report-muted">生成日時: {formatGeneratedAt(overview.generatedAt)}</p>
+          </div>
+          <div className="report-privacy">
+            <ShieldCheck className="h-4 w-4" />
+            k匿名化済み
           </div>
         </header>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <ReportMetric label="参加人数" value={`${formatNumber(overview.totals?.uniqueUsers)}人`} />
-          <ReportMetric label="演習回数" value={formatNumber(overview.totals?.totalAttempts)} />
-          <ReportMetric label="平均正答率" value={formatPercent(overview.totals?.avgAccuracy)} />
-          <ReportMetric label="学習時間" value={formatStudyTime(overview.totals?.totalStudyTimeSec)} />
+        <div className="report-metrics">
+          <ReportMetric label="参加人数" value={`${formatNumber(activeTotals.uniqueUsers)}人`} note="重複を除いた人数" />
+          <ReportMetric label="演習回数" value={formatNumber(activeTotals.totalAttempts)} note="提出された演習" />
+          <ReportMetric label="平均正答率" value={formatPercent(activeTotals.avgAccuracy)} note="正答数 ÷ 解答数" />
+          <ReportMetric label="学習時間" value={formatStudyTime(activeTotals.totalStudyTimeSec)} note="演習時間の合計" />
+          <ReportMetric label="初回正答率" value={formatPercent(firstAttemptAccuracy)} note="最初の挑戦で正解" />
+          <ReportMetric label="再挑戦改善" value={formatPercent(retryImprovementRate)} note="再挑戦後の伸び" />
         </div>
 
-        <div className="mt-6 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-          <section>
-            <h3 className="text-base font-bold text-gray-900">最近30日の学習量</h3>
-            <div className="mt-3 space-y-2">
-              {(trends?.days || []).slice(-14).map((day) => (
-                <div key={day.date} className="grid grid-cols-[84px_1fr_72px] items-center gap-3 text-sm">
-                  <span className="text-gray-600">{day.date}</span>
-                  <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
-                    <div
-                      className="h-full rounded-full bg-emerald-600"
-                      style={{ width: `${Math.max(5, (Number(day.totalAttempts || 0) / maxTrendAttempts) * 100)}%` }}
-                    />
+        <div className="report-grid">
+          <section className="report-panel">
+            <div className="report-section-title">
+              <h3>最近の学習量</h3>
+              <p>直近の日別演習回数</p>
+            </div>
+            <div className="report-trends">
+              {activeTrendDays.slice(-10).map((day) => (
+                <div key={day.date} className="report-trend-row">
+                  <span>{day.date.slice(5)}</span>
+                  <div>
+                    <i style={{ width: `${Math.max(4, (Number(day.totalAttempts || 0) / maxTrendAttempts) * 100)}%` }} />
                   </div>
-                  <span className="text-right tabular-nums text-gray-700">{formatNumber(day.totalAttempts)}回</span>
+                  <b>{formatNumber(day.totalAttempts)}</b>
                 </div>
               ))}
-              {!(trends?.days || []).length && (
-                <p className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">公開基準を満たす日別データがありません。</p>
-              )}
+              {!activeTrendDays.length && <p className="report-empty">公開基準を満たす日別データがありません。</p>}
             </div>
           </section>
 
-          <section>
-            <h3 className="text-base font-bold text-gray-900">重点的に復習したい単元</h3>
-            <div className="mt-3 overflow-hidden rounded-md border">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2">単元</th>
-                    <th className="px-3 py-2 text-right">正答率</th>
-                    <th className="px-3 py-2 text-right">改善度</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {topPriorityUnits.map((unit) => (
-                    <tr key={unit.unitId}>
-                      <td className="px-3 py-2 font-medium text-gray-900">{unit.unitTitle}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatPercent(unit.totals?.avgAccuracy)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {formatNumber(unit.totals?.improvementPriorityScore, 1)}
-                      </td>
-                    </tr>
-                  ))}
-                  {!topPriorityUnits.length && (
-                    <tr>
-                      <td colSpan={3} className="px-3 py-4 text-center text-gray-500">公開基準を満たす単元がありません。</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+          <section className="report-panel">
+            <div className="report-section-title">
+              <h3>復習優先の単元</h3>
+              <p>低正答率かつ演習が多い単元</p>
             </div>
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th>単元</th>
+                  <th>正答率</th>
+                  <th>改善度</th>
+                </tr>
+              </thead>
+              <tbody>
+                {featuredUnits.map((unit) => (
+                  <tr key={unit.unitId}>
+                    <td>{unit.unitTitle}</td>
+                    <td>{formatPercent(unit.totals?.avgAccuracy)}</td>
+                    <td>{formatNumber(unit.totals?.improvementPriorityScore, 1)}</td>
+                  </tr>
+                ))}
+                {!featuredUnits.length && (
+                  <tr>
+                    <td colSpan={3}>公開基準を満たす単元がありません。</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </section>
         </div>
 
-        <section className="mt-6">
-          <h3 className="text-base font-bold text-gray-900">みんなが苦戦中の問題</h3>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <section className="report-panel report-questions">
+          <div className="report-section-title">
+            <h3>みんなが苦戦中の問題</h3>
+            <p>つまずき率 = 100% - 正答率</p>
+          </div>
+          <div className="report-question-grid">
             {strugglingQuestions.map((question) => (
-              <div key={`${question.unitTitle}-${question.questionId}`} className="rounded-md border p-3">
-                <p className="text-xs font-semibold text-gray-500">{question.unitTitle}</p>
-                <p className="mt-1 line-clamp-2 text-sm font-medium text-gray-900">{question.questionText}</p>
-                <div className="mt-2 flex items-center justify-between text-xs text-gray-600">
-                  <span>つまずき率 {formatPercent(question.stumbleRate)}</span>
-                  <span>回答 {formatNumber(question.total)}件</span>
+              <article key={`${question.unitTitle}-${question.questionId}`}>
+                <p>{question.unitTitle}</p>
+                <div className="report-math">
+                  <MathDisplay math={question.questionText} className="text-[10px] leading-snug" />
                 </div>
-              </div>
+                <span>つまずき率 {formatPercent(question.stumbleRate)} / 回答 {formatNumber(question.total)}件</span>
+              </article>
             ))}
-            {!strugglingQuestions.length && (
-              <p className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">公開基準を満たす問題データがありません。</p>
-            )}
+            {!strugglingQuestions.length && <p className="report-empty">公開基準を満たす問題データがありません。</p>}
           </div>
         </section>
 
-        <footer className="mt-6 border-t pt-3 text-xs text-gray-500">
+        <div className="report-bottom-grid">
+          <section className="report-panel">
+            <div className="report-section-title">
+              <h3>誤答のつながり</h3>
+              <p>一緒に間違えやすい問題ペア</p>
+            </div>
+            <div className="report-pairs">
+              {coMistakes.map((pair) => (
+                <article key={`${pair.unitTitle}-${pair.questionIdA}-${pair.questionIdB}`}>
+                  <p>{pair.unitTitle}</p>
+                  <div>
+                    <MathDisplay math={pair.questionTextA} className="text-[9px] leading-tight" />
+                    <span>+</span>
+                    <MathDisplay math={pair.questionTextB} className="text-[9px] leading-tight" />
+                  </div>
+                  <b>同時誤答 {formatNumber(pair.coWrongUsers)}人</b>
+                </article>
+              ))}
+              {!coMistakes.length && <p className="report-empty">公開基準を満たす誤答ペアがありません。</p>}
+            </div>
+          </section>
+
+          <section className="report-panel report-glossary">
+            <div className="report-section-title">
+              <h3>用語の見方</h3>
+              <p>数字の読み取り方</p>
+            </div>
+            <dl>
+              <dt>改善度</dt>
+              <dd>正答率の低さと演習回数を合わせた、復習優先度の目安です。</dd>
+              <dt>つまずき率</dt>
+              <dd>その問題で不正解になった割合です。高いほど苦戦しています。</dd>
+              <dt>再挑戦改善</dt>
+              <dd>初回より再挑戦後にどれだけ正答率が伸びたかを示します。</dd>
+              <dt>平均時間</dt>
+              <dd>この範囲の1演習あたり平均時間は約 {formatNumber(avgTimeSec, 0)} 秒です。</dd>
+            </dl>
+          </section>
+        </div>
+
+        <footer className="report-footer">
           個人を特定できる情報は含めていません。単元は {thresholds?.unitMinUsers || 5} 人以上、問題は{' '}
           {thresholds?.questionMinUsers || 5} 人以上かつ {thresholds?.questionMinAttempts || 10} 回以上のデータだけを掲載しています。
         </footer>
@@ -304,11 +429,12 @@ export default function PublicAnalyticsReportPanel() {
   );
 }
 
-function ReportMetric({ label, value }: { label: string; value: string }) {
+function ReportMetric({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="rounded-md border bg-gray-50 px-3 py-3">
-      <p className="text-xs font-semibold text-gray-500">{label}</p>
-      <p className="mt-1 text-xl font-black text-gray-950">{value}</p>
+    <div className="report-metric">
+      <p>{label}</p>
+      <b>{value}</b>
+      <span>{note}</span>
     </div>
   );
 }

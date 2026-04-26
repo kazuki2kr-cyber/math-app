@@ -1440,6 +1440,42 @@ HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
 ORDER BY occurred_date
   `);
 
+  const categoryRows = await runQuery(bigquery, config, `
+SELECT
+  category,
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT uid) AS unique_users,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+  SUM(answered_count) AS total_answered,
+  SUM(correct_count) AS total_correct,
+  SUM(time_sec) AS total_study_time_sec,
+  COUNT(DISTINCT IF(occurred_date = CURRENT_DATE('${config.timezone}'), uid, NULL)) AS dau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY), uid, NULL)) AS wau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau,
+  COUNT(DISTINCT unit_id) AS unit_count
+FROM ${tableRef(config, "fact_attempts")}
+WHERE category IS NOT NULL AND category != ''
+GROUP BY category
+HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY total_attempts DESC
+  `);
+
+  const categoryTrendRows = await runQuery(bigquery, config, `
+SELECT
+  category,
+  occurred_date AS date,
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT uid) AS unique_users,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+  SUM(time_sec) AS study_time_sec
+FROM ${tableRef(config, "fact_attempts")}
+WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY)
+  AND category IS NOT NULL AND category != ''
+GROUP BY category, occurred_date
+HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY category, occurred_date
+  `);
+
   const questionMap = new Map<string, any[]>();
   for (const row of questionRows) {
     const unitId = String(row.unit_id || "");
@@ -1504,6 +1540,47 @@ ORDER BY occurred_date
     };
   });
 
+  const categoryTrendMap = new Map<string, any[]>();
+  for (const row of categoryTrendRows) {
+    const category = String(row.category || "");
+    if (!category) continue;
+    const categoryKey = safeServingDocId(category);
+    const list = categoryTrendMap.get(categoryKey) || [];
+    list.push({
+      date: String(row.date?.value || row.date || ""),
+      totalAttempts: Number(row.total_attempts || 0),
+      uniqueUsers: Number(row.unique_users || 0),
+      avgAccuracy: Number(row.avg_accuracy || 0),
+      studyTimeSec: Number(row.study_time_sec || 0),
+    });
+    categoryTrendMap.set(categoryKey, list);
+  }
+
+  const reportCategories = categoryRows.map((row) => {
+    const category = String(row.category || "Other");
+    return {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      category,
+      categoryKey: safeServingDocId(category),
+      totals: {
+        totalAttempts: Number(row.total_attempts || 0),
+        uniqueUsers: Number(row.unique_users || 0),
+        avgAccuracy: Number(row.avg_accuracy || 0),
+        totalAnswered: Number(row.total_answered || 0),
+        totalCorrect: Number(row.total_correct || 0),
+        totalStudyTimeSec: Number(row.total_study_time_sec || 0),
+        dau: Number(row.dau || 0),
+        wau: Number(row.wau || 0),
+        mau: Number(row.mau || 0),
+        unitCount: Number(row.unit_count || 0),
+      },
+      trends: {
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        days: categoryTrendMap.get(safeServingDocId(category)) || [],
+      },
+    };
+  });
+
   const overviewTotals = {
     totalAttempts: Number(overviewRow?.total_attempts || 0),
     uniqueUsers: Number(overviewRow?.unique_users || 0),
@@ -1539,6 +1616,7 @@ ORDER BY occurred_date
         mau: 0,
       },
     },
+    categories: reportCategories,
     units: reportUnits,
     trends: {
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1766,6 +1844,7 @@ async function writeServingDocs(
   unitRankingDocs: Map<string, any>,
   publicReportDocs: {
     overview: any;
+    categories: any[];
     units: any[];
     trends: any;
   }
@@ -1863,11 +1942,21 @@ async function writeServingDocs(
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       version: 1,
       reportOverviewPath: `${PUBLIC_REPORT_ROOT}/report_overview/current`,
+      reportCategoryCollection: `${PUBLIC_REPORT_ROOT}/report_categories`,
+      reportCategoryTrendCollection: `${PUBLIC_REPORT_ROOT}/report_category_trends`,
       reportUnitCollection: `${PUBLIC_REPORT_ROOT}/report_units`,
       reportTrendPath: `${PUBLIC_REPORT_ROOT}/report_trends/current`,
       thresholds: PUBLIC_REPORT_THRESHOLDS,
     }
   );
+
+  for (const categoryReport of publicReportDocs.categories) {
+    await setDoc(`${PUBLIC_REPORT_ROOT}/report_categories/${categoryReport.categoryKey}`, categoryReport);
+    await setDoc(`${PUBLIC_REPORT_ROOT}/report_category_trends/${categoryReport.categoryKey}`, categoryReport.trends || {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      days: [],
+    });
+  }
 
   for (const unitReport of publicReportDocs.units) {
     await setDoc(`${PUBLIC_REPORT_ROOT}/report_units/${unitReport.unitId}`, unitReport);
