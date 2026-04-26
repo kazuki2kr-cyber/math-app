@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, increment } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, increment, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
@@ -17,6 +17,58 @@ import XpTab from './components/XpTab';
 import SuspiciousTab from './components/SuspiciousTab';
 import RolesTab from './components/RolesTab';
 import 'katex/dist/katex.min.css';
+
+const ANALYTICS_EVENT_BATCH_SIZE = 200;
+
+function getAttemptDocId(attempt: any): string | null {
+  if (attempt?.docId) return String(attempt.docId);
+  if (attempt?.attemptId) return String(attempt.attemptId);
+  if (typeof attempt?.path === 'string') {
+    const segments = attempt.path.split('/');
+    return segments[segments.length - 1] || null;
+  }
+  return null;
+}
+
+function safeAnalyticsDocPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'unknown';
+}
+
+function buildTokyoLogicalDate(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function buildAttemptDeletedAnalyticsEvent(attempt: any, actor: string, reason: string) {
+  const attemptId = getAttemptDocId(attempt);
+  if (!attemptId) return null;
+
+  return {
+    eventType: 'ATTEMPT_DELETED',
+    eventVersion: 1,
+    occurredAt: serverTimestamp(),
+    logicalDate: buildTokyoLogicalDate(),
+    attemptId,
+    uid: attempt?.uid || null,
+    unitId: attempt?.unitId || null,
+    source: 'admin',
+    reason,
+    actor,
+  };
+}
+
+function queueAttemptDeletedAnalyticsEvent(batch: ReturnType<typeof writeBatch>, attempt: any, actor: string, reason: string) {
+  const event = buildAttemptDeletedAnalyticsEvent(attempt, actor, reason);
+  if (!event) return false;
+
+  const docId = `delete_${safeAnalyticsDocPart(event.attemptId)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  batch.set(doc(db, 'analytics_events', docId), event);
+  return true;
+}
 
 export default function AdminPage() {
   const { user, isAdmin } = useAuth();
@@ -392,10 +444,18 @@ export default function AdminPage() {
       }
 
       // 2. ドキュメントの削除
+      const deleteBatch = writeBatch(db);
+      let queuedDelete = false;
       if (s.path) {
-        await deleteDoc(doc(db, s.path));
+        deleteBatch.delete(doc(db, s.path));
+        queuedDelete = true;
       } else if (s.uid && s.docId) {
-        await deleteDoc(doc(db, 'users', s.uid, 'attempts', s.docId));
+        deleteBatch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
+        queuedDelete = true;
+      }
+      if (queuedDelete) {
+        queueAttemptDeletedAnalyticsEvent(deleteBatch, s, user?.uid || user?.email || 'admin', 'single_attempt_delete');
+        await deleteBatch.commit();
       }
 
       // 3. 統計カウンターの更新
@@ -521,24 +581,36 @@ export default function AdminPage() {
       // 1. ユーザーの全 attempts を取得
       const attemptsSnap = await getDocs(collection(db, 'users', uid, 'attempts'));
       const attemptsCount = attemptsSnap.size;
+      const attempts = attemptsSnap.docs.map(d => ({ docId: d.id, path: d.ref.path, ...d.data() }));
 
       // 2. 統計カウンターのデクリメント
       if (attemptsCount > 0) {
-        const attempts = attemptsSnap.docs.map(d => d.data());
         await decrementStatsForAttempts(attempts);
       }
 
       // 3. Attempts サブコレクションの全削除
-      const batch = writeBatch(db);
-      attemptsSnap.forEach(d => batch.delete(d.ref));
+      for (let i = 0; i < attempts.length; i += ANALYTICS_EVENT_BATCH_SIZE) {
+        const batch = writeBatch(db);
+        attempts.slice(i, i + ANALYTICS_EVENT_BATCH_SIZE).forEach(attempt => {
+          if (attempt.path) {
+            batch.delete(doc(db, attempt.path));
+            queueAttemptDeletedAnalyticsEvent(batch, attempt, user?.uid || user?.email || 'admin', 'user_data_reset');
+          }
+        });
+        await batch.commit();
+      }
       
       // 4. wrong_answers サブコレクションの削除
       const wrongSnap = await getDocs(collection(db, 'users', uid, 'wrong_answers'));
-      wrongSnap.forEach(d => batch.delete(d.ref));
+      for (let i = 0; i < wrongSnap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        wrongSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
 
       // 5. ユーザードキュメントの初期化
       const userRef = doc(db, 'users', uid);
-      batch.update(userRef, {
+      await updateDoc(userRef, {
         xp: 0,
         level: 1,
         title: '算数卒業生',
@@ -550,8 +622,6 @@ export default function AdminPage() {
         nextLevelXp: 52,
         updatedAt: new Date().toISOString()
       });
-
-      await batch.commit();
 
       // 7. リーダーボード（配列形式）の更新
       try {
@@ -612,14 +682,16 @@ export default function AdminPage() {
       const selectedItems = scores.filter(s => selectedScoreIds.has(s.docId));
       let actuallyDeleted = 0;
       
-      for (let i = 0; i < selectedItems.length; i += 400) {
+      for (let i = 0; i < selectedItems.length; i += ANALYTICS_EVENT_BATCH_SIZE) {
         const batch = writeBatch(db);
-        selectedItems.slice(i, i + 400).forEach(s => {
+        selectedItems.slice(i, i + ANALYTICS_EVENT_BATCH_SIZE).forEach(s => {
           if (s.path) {
             batch.delete(doc(db, s.path));
+            queueAttemptDeletedAnalyticsEvent(batch, s, user?.uid || user?.email || 'admin', 'batch_attempt_delete');
             actuallyDeleted++;
           } else if (s.uid && s.docId) {
             batch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
+            queueAttemptDeletedAnalyticsEvent(batch, s, user?.uid || user?.email || 'admin', 'batch_attempt_delete');
             actuallyDeleted++;
           }
         });
@@ -653,6 +725,15 @@ export default function AdminPage() {
 
     try {
       // 1. 全 attempts を削除
+      await setDoc(doc(db, 'analytics_events', `reset_${Date.now()}`), {
+        eventType: 'ALL_DATA_RESET',
+        eventVersion: 1,
+        occurredAt: serverTimestamp(),
+        logicalDate: buildTokyoLogicalDate(),
+        source: 'admin',
+        actor: user?.uid || user?.email || 'admin',
+      });
+
       const attemptsSnap = await getDocs(collectionGroup(db, 'attempts'));
       for (let i = 0; i < attemptsSnap.docs.length; i += 400) {
         const batch = writeBatch(db);

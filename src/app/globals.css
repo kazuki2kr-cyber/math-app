@@ -127,3 +127,35 @@
     @apply font-sans;
   }
 }
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  body.printing-student-report {
+    background: white;
+  }
+
+  body.printing-student-report * {
+    visibility: hidden;
+  }
+
+  body.printing-student-report .student-report-print,
+  body.printing-student-report .student-report-print * {
+    visibility: visible;
+  }
+
+  body.printing-student-report .student-report-print {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    border: 0;
+    box-shadow: none;
+  }
+
+  body.printing-student-report .student-report-no-print {
+    display: none !important;
+  }
+}

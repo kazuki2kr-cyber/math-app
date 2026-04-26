@@ -4,6 +4,11 @@ import type { CorrelationPair, OverviewMetrics, QuestionStat, StudentRank } from
 
 export interface AnalyticsOverviewDoc {
   generatedAt?: unknown;
+  scope?: {
+    type?: 'global' | 'subject' | 'category';
+    value?: string;
+    key?: string;
+  };
   sourceWindow?: {
     startDate?: string;
     endDate?: string;
@@ -107,6 +112,98 @@ export interface QuestionCorrelationsDoc {
   }>;
 }
 
+export interface UnitRankingsDoc {
+  generatedAt?: unknown;
+  unitId: string;
+  minAttempts?: number;
+  rankings?: {
+    topAccuracy?: StudentRank[];
+    worstAccuracy?: StudentRank[];
+    topCorrect?: StudentRank[];
+    worstCorrect?: StudentRank[];
+  };
+}
+
+export interface PublicAnalyticsReportOverviewDoc {
+  generatedAt?: unknown;
+  privacy?: {
+    pii?: false;
+    publishable?: boolean;
+    suppressedReason?: string | null;
+    suppressedLowSupportRows?: boolean;
+    thresholds?: {
+      unitMinUsers?: number;
+      questionMinAttempts?: number;
+      questionMinUsers?: number;
+      correlationMinSupportUsers?: number;
+      correlationMinCoWrongUsers?: number;
+    };
+  };
+  totals?: {
+    totalAttempts?: number;
+    uniqueUsers?: number;
+    avgAccuracy?: number;
+    totalAnswered?: number;
+    totalCorrect?: number;
+    totalStudyTimeSec?: number;
+    dau?: number;
+    wau?: number;
+    mau?: number;
+  };
+}
+
+export interface PublicAnalyticsReportTrendDoc {
+  generatedAt?: unknown;
+  days?: Array<{
+    date: string;
+    totalAttempts: number;
+    uniqueUsers: number;
+    avgAccuracy: number;
+    studyTimeSec: number;
+  }>;
+}
+
+export interface PublicAnalyticsReportUnitDoc {
+  generatedAt?: unknown;
+  unitId: string;
+  unitTitle: string;
+  subject?: string;
+  category?: string;
+  totals?: {
+    totalAttempts?: number;
+    uniqueUsers?: number;
+    avgAccuracy?: number;
+    avgTimeSec?: number;
+    firstAttemptAccuracy?: number;
+    retryImprovementRate?: number;
+    improvementPriorityScore?: number;
+  };
+  reviewQuestions?: Array<{
+    questionId: string;
+    questionOrder?: number;
+    questionText: string;
+    total: number;
+    uniqueUsers: number;
+    accuracy: number;
+    stumbleRate: number;
+  }>;
+  strongCoMistakes?: Array<{
+    questionIdA: string;
+    questionIdB: string;
+    questionTextA: string;
+    questionTextB: string;
+    supportUsers: number;
+    coWrongUsers: number;
+    mistakeRateGivenA: number;
+    mistakeRateGivenB: number;
+  }>;
+}
+
+export function toServingDocId(value: string): string {
+  const encoded = encodeURIComponent(value || 'unknown');
+  return encoded.replace(/\./g, '%2E').slice(0, 200) || 'unknown';
+}
+
 function toStudentRank(item: StudentRank): StudentRank {
   return {
     uid: item.uid,
@@ -190,6 +287,16 @@ export async function fetchAnalyticsOverview(): Promise<AnalyticsOverviewDoc | n
   return snap.exists() ? (snap.data() as AnalyticsOverviewDoc) : null;
 }
 
+export async function fetchAnalyticsOverviewBySubject(subject: string): Promise<AnalyticsOverviewDoc | null> {
+  const snap = await getDoc(doc(db, 'analytics_serving', 'current', 'overview_by_subject', toServingDocId(subject)));
+  return snap.exists() ? (snap.data() as AnalyticsOverviewDoc) : null;
+}
+
+export async function fetchAnalyticsOverviewByCategory(category: string): Promise<AnalyticsOverviewDoc | null> {
+  const snap = await getDoc(doc(db, 'analytics_serving', 'current', 'overview_by_category', toServingDocId(category)));
+  return snap.exists() ? (snap.data() as AnalyticsOverviewDoc) : null;
+}
+
 export async function fetchUnitSummaries(): Promise<UnitSummaryDoc[]> {
   const snap = await getDocs(collection(db, 'analytics_serving', 'current', 'unit_summaries'));
   return snap.docs.map((item) => item.data() as UnitSummaryDoc);
@@ -203,4 +310,24 @@ export async function fetchQuestionAnalysis(unitId: string): Promise<QuestionAna
 export async function fetchQuestionCorrelations(unitId: string): Promise<QuestionCorrelationsDoc | null> {
   const snap = await getDoc(doc(db, 'analytics_serving', 'current', 'question_correlations', unitId));
   return snap.exists() ? (snap.data() as QuestionCorrelationsDoc) : null;
+}
+
+export async function fetchUnitRankings(unitId: string): Promise<UnitRankingsDoc | null> {
+  const snap = await getDoc(doc(db, 'analytics_serving', 'current', 'unit_rankings', unitId));
+  return snap.exists() ? (snap.data() as UnitRankingsDoc) : null;
+}
+
+export async function fetchPublicAnalyticsReportOverview(): Promise<PublicAnalyticsReportOverviewDoc | null> {
+  const snap = await getDoc(doc(db, 'public_analytics_serving', 'current', 'report_overview', 'current'));
+  return snap.exists() ? (snap.data() as PublicAnalyticsReportOverviewDoc) : null;
+}
+
+export async function fetchPublicAnalyticsReportTrends(): Promise<PublicAnalyticsReportTrendDoc | null> {
+  const snap = await getDoc(doc(db, 'public_analytics_serving', 'current', 'report_trends', 'current'));
+  return snap.exists() ? (snap.data() as PublicAnalyticsReportTrendDoc) : null;
+}
+
+export async function fetchPublicAnalyticsReportUnits(): Promise<PublicAnalyticsReportUnitDoc[]> {
+  const snap = await getDocs(collection(db, 'public_analytics_serving', 'current', 'report_units'));
+  return snap.docs.map((item) => item.data() as PublicAnalyticsReportUnitDoc);
 }

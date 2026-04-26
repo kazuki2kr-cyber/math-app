@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions/v1";
+﻿import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { BigQuery } from "@google-cloud/bigquery";
 
@@ -63,6 +63,15 @@ const DEFAULT_CONFIG: AnalyticsConfig = {
   timezone: "Asia/Tokyo",
   servingRoot: "analytics_serving/current",
 };
+
+const PUBLIC_REPORT_ROOT = "public_analytics_serving/current";
+const PUBLIC_REPORT_THRESHOLDS = {
+  unitMinUsers: 5,
+  questionMinAttempts: 10,
+  questionMinUsers: 5,
+  correlationMinSupportUsers: 10,
+  correlationMinCoWrongUsers: 5,
+} as const;
 
 function getAnalyticsConfig(): AnalyticsConfig {
   const cloudRuntimeConfig = process.env.CLOUD_RUNTIME_CONFIG
@@ -153,13 +162,28 @@ function buildAttemptSubmittedEventFromAttempt(params: {
   };
 }
 
-async function runQuery(bigquery: BigQuery, config: AnalyticsConfig, query: string) {
+async function runQuery(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  query: string,
+  params?: Record<string, unknown>
+) {
   const [rows] = await bigquery.query({
     query,
     location: config.location,
     useLegacySql: false,
+    params,
   });
   return rows as any[];
+}
+
+function scopedWhereClause(filter?: { field: "subject" | "category"; value: string }): string {
+  return filter ? `WHERE ${filter.field} = @scopeValue` : "";
+}
+
+function safeServingDocId(value: string): string {
+  const encoded = encodeURIComponent(value || "unknown");
+  return encoded.replace(/\./g, "%2E").slice(0, 200) || "unknown";
 }
 
 function buildFactAttemptsSql(config: AnalyticsConfig): string {
@@ -525,8 +549,8 @@ async function fetchUnitMetadata(): Promise<Map<string, UnitMetadata>> {
     metadata.set(unitDoc.id, {
       unitId: unitDoc.id,
       unitTitle: unitData.title || unitDoc.id,
-      subject: unitData.subject || "数学",
-      category: unitData.category || "その他",
+      subject: unitData.subject || "謨ｰ蟄ｦ",
+      category: unitData.category || "\u305d\u306e\u4ed6",
       questions: questionsSnapshot.docs.map((questionDoc) => {
         const questionData = questionDoc.data() as any;
         return {
@@ -549,7 +573,7 @@ async function fetchUserNames(): Promise<Map<string, string>> {
     const data = userDoc.data() as any;
     names.set(
       userDoc.id,
-      data.displayName || data.name || data.email || "ユーザー"
+      data.displayName || data.name || data.email || "繝ｦ繝ｼ繧ｶ繝ｼ"
     );
   }
 
@@ -701,8 +725,11 @@ async function buildOverviewDoc(
   bigquery: BigQuery,
   config: AnalyticsConfig,
   userNames: Map<string, string>,
-  unitMetadata: Map<string, UnitMetadata>
+  unitMetadata: Map<string, UnitMetadata>,
+  filter?: { field: "subject" | "category"; value: string }
 ) {
+  const whereClause = scopedWhereClause(filter);
+  const params = filter ? { scopeValue: filter.value } : undefined;
   const [totalsRow] = await runQuery(bigquery, config, `
 SELECT
   COUNT(*) AS totalAttempts,
@@ -716,7 +743,8 @@ SELECT
   COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau,
   SAFE_DIVIDE(COUNT(*), NULLIF(COUNT(DISTINCT uid), 0)) AS avgAttemptsPerUser
 FROM ${tableRef(config, "fact_attempts")}
-  `);
+${whereClause}
+  `, params);
 
   const [qualityRow] = await runQuery(bigquery, config, `
 WITH attempts AS (
@@ -731,6 +759,7 @@ WITH attempts AS (
       ORDER BY occurred_at, attempt_id
     ) AS attempt_order
   FROM ${tableRef(config, "fact_attempt_question_results")}
+  ${whereClause}
 ),
 at_risk AS (
   SELECT
@@ -739,6 +768,7 @@ at_risk AS (
     COUNT(*) AS answered_count
   FROM ${tableRef(config, "fact_attempt_question_results")}
   WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 14 DAY)
+    ${filter ? `AND ${filter.field} = @scopeValue` : ""}
   GROUP BY uid
 )
 SELECT
@@ -752,7 +782,7 @@ SELECT
     FROM at_risk
   ) AS atRiskUsers
 FROM attempts
-  `);
+  `, params);
 
   const bySubject = await runQuery(bigquery, config, `
 SELECT
@@ -760,9 +790,10 @@ SELECT
   COUNT(*) AS totalAttempts,
   SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avgAccuracy
 FROM ${tableRef(config, "fact_attempts")}
+${whereClause}
 GROUP BY subject
 ORDER BY totalAttempts DESC
-  `);
+  `, params);
 
   const topAccuracyRows = await runQuery(bigquery, config, `
 SELECT
@@ -771,11 +802,12 @@ SELECT
   AVG(time_sec) AS avgTime,
   COUNT(*) AS attempts
 FROM ${tableRef(config, "fact_attempts")}
+${whereClause}
 GROUP BY uid
 HAVING attempts >= 3
 ORDER BY value DESC, avgTime ASC
 LIMIT 10
-  `);
+  `, params);
 
   const worstAccuracyRows = await runQuery(bigquery, config, `
 SELECT
@@ -784,11 +816,12 @@ SELECT
   AVG(time_sec) AS avgTime,
   COUNT(*) AS attempts
 FROM ${tableRef(config, "fact_attempts")}
+${whereClause}
 GROUP BY uid
 HAVING attempts >= 3
 ORDER BY value ASC, avgTime DESC
 LIMIT 10
-  `);
+  `, params);
 
   const topCorrectRows = await runQuery(bigquery, config, `
 SELECT
@@ -796,10 +829,11 @@ SELECT
   SUM(correct_count) AS value,
   COUNT(*) AS attempts
 FROM ${tableRef(config, "fact_attempts")}
+${whereClause}
 GROUP BY uid
 ORDER BY value DESC, attempts DESC
 LIMIT 10
-  `);
+  `, params);
 
   const worstCorrectRows = await runQuery(bigquery, config, `
 SELECT
@@ -807,20 +841,29 @@ SELECT
   SUM(correct_count) AS value,
   COUNT(*) AS attempts
 FROM ${tableRef(config, "fact_attempts")}
+${whereClause}
 GROUP BY uid
 ORDER BY value ASC, attempts ASC
 LIMIT 10
-  `);
+  `, params);
 
   const currentDate = new Date().toISOString().slice(0, 10);
   const earliestDateQuery = await runQuery(bigquery, config, `
 SELECT
   MIN(CAST(occurred_date AS STRING)) AS startDate
 FROM ${tableRef(config, "fact_attempts")}
-  `);
+${whereClause}
+  `, params);
 
   return {
     generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    scope: filter
+      ? {
+          type: filter.field,
+          value: filter.value,
+          key: safeServingDocId(filter.value),
+        }
+      : { type: "global", value: "all", key: "current" },
     sourceWindow: {
       startDate: earliestDateQuery[0]?.startDate || currentDate,
       endDate: currentDate,
@@ -841,7 +884,7 @@ FROM ${tableRef(config, "fact_attempts")}
       atRiskUsers: Number(qualityRow?.atRiskUsers || 0),
     },
     bySubject: bySubject.map((row) => ({
-      subject: row.subject || "数学",
+      subject: row.subject || "謨ｰ蟄ｦ",
       totalAttempts: Number(row.totalAttempts || 0),
       avgAccuracy: Number(row.avgAccuracy || 0),
     })),
@@ -852,7 +895,7 @@ FROM ${tableRef(config, "fact_attempts")}
         value: Number(row.value || 0),
         displayValue: `${Number(row.value || 0).toFixed(1)}%`,
         avgTime: Number(row.avgTime || 0),
-        rankValue: `${Number(row.avgTime || 0).toFixed(0)}秒`,
+        rankValue: `${Number(row.avgTime || 0).toFixed(0)}\u79d2`,
       })),
       worstAccuracy: worstAccuracyRows.map((row) => ({
         uid: row.uid,
@@ -860,25 +903,652 @@ FROM ${tableRef(config, "fact_attempts")}
         value: Number(row.value || 0),
         displayValue: `${Number(row.value || 0).toFixed(1)}%`,
         avgTime: Number(row.avgTime || 0),
-        rankValue: `${Number(row.avgTime || 0).toFixed(0)}秒`,
+        rankValue: `${Number(row.avgTime || 0).toFixed(0)}\u79d2`,
       })),
       topCorrect: topCorrectRows.map((row) => ({
         uid: row.uid,
         userName: userNames.get(row.uid) || row.uid,
         value: Number(row.value || 0),
-        displayValue: `${Number(row.value || 0).toLocaleString()}問`,
+        displayValue: `${Number(row.value || 0).toLocaleString()}\u554f`,
         rankValue: `${Number(row.attempts || 0)} attempt`,
       })),
       worstCorrect: worstCorrectRows.map((row) => ({
         uid: row.uid,
         userName: userNames.get(row.uid) || row.uid,
         value: Number(row.value || 0),
-        displayValue: `${Number(row.value || 0).toLocaleString()}問`,
+        displayValue: `${Number(row.value || 0).toLocaleString()}\u554f`,
         rankValue: `${Number(row.attempts || 0)} attempt`,
       })),
     },
     metadata: {
       unitsTracked: unitMetadata.size,
+    },
+  };
+}
+
+async function buildScopedOverviewDocs(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  userNames: Map<string, string>,
+  unitMetadata: Map<string, UnitMetadata>
+) {
+  const scopedFactAttempts = `
+WITH scoped_attempts AS (
+  SELECT
+    'subject' AS scope_type,
+    subject AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempts")}
+  WHERE subject IS NOT NULL AND subject != ''
+  UNION ALL
+  SELECT
+    'category' AS scope_type,
+    category AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempts")}
+  WHERE category IS NOT NULL AND category != ''
+)`;
+
+  const scopedQuestionResults = `
+WITH scoped_questions AS (
+  SELECT
+    'subject' AS scope_type,
+    subject AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  WHERE subject IS NOT NULL AND subject != ''
+  UNION ALL
+  SELECT
+    'category' AS scope_type,
+    category AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  WHERE category IS NOT NULL AND category != ''
+)`;
+
+  const [totalsRows, qualityRows, bySubjectRows, rankingRows] = await Promise.all([
+    runQuery(bigquery, config, `
+${scopedFactAttempts}
+SELECT
+  scope_type,
+  scope_value,
+  COUNT(*) AS totalAttempts,
+  COUNT(DISTINCT uid) AS uniqueUsers,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avgAccuracy,
+  SUM(answered_count) AS totalAnswered,
+  SUM(correct_count) AS totalCorrect,
+  SUM(time_sec) AS totalStudyTimeSec,
+  COUNT(DISTINCT IF(occurred_date = CURRENT_DATE('${config.timezone}'), uid, NULL)) AS dau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY), uid, NULL)) AS wau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau,
+  SAFE_DIVIDE(COUNT(*), NULLIF(COUNT(DISTINCT uid), 0)) AS avgAttemptsPerUser,
+  MIN(CAST(occurred_date AS STRING)) AS startDate
+FROM scoped_attempts
+GROUP BY scope_type, scope_value
+ORDER BY scope_type, scope_value
+    `),
+    runQuery(bigquery, config, `
+${scopedQuestionResults},
+attempts AS (
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    unit_id,
+    occurred_at,
+    attempt_id,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value, uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS attempt_order
+  FROM scoped_questions
+),
+quality AS (
+  SELECT
+    scope_type,
+    scope_value,
+    AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS firstAttemptAccuracy,
+    (
+      AVG(IF(attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+      AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL))
+    ) * 100 AS retryImprovementRate
+  FROM attempts
+  GROUP BY scope_type, scope_value
+),
+at_risk AS (
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    AVG(CAST(is_correct AS INT64)) * 100 AS accuracy,
+    COUNT(*) AS answered_count
+  FROM scoped_questions
+  WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 14 DAY)
+  GROUP BY scope_type, scope_value, uid
+),
+at_risk_counts AS (
+  SELECT
+    scope_type,
+    scope_value,
+    COUNTIF(answered_count >= 10 AND accuracy < 50) AS atRiskUsers
+  FROM at_risk
+  GROUP BY scope_type, scope_value
+)
+SELECT
+  quality.scope_type,
+  quality.scope_value,
+  quality.firstAttemptAccuracy,
+  quality.retryImprovementRate,
+  COALESCE(at_risk_counts.atRiskUsers, 0) AS atRiskUsers
+FROM quality
+LEFT JOIN at_risk_counts
+  ON at_risk_counts.scope_type = quality.scope_type
+ AND at_risk_counts.scope_value = quality.scope_value
+    `),
+    runQuery(bigquery, config, `
+${scopedFactAttempts}
+SELECT
+  scope_type,
+  scope_value,
+  subject,
+  COUNT(*) AS totalAttempts,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avgAccuracy
+FROM scoped_attempts
+GROUP BY scope_type, scope_value, subject
+ORDER BY scope_type, scope_value, totalAttempts DESC
+    `),
+    runQuery(bigquery, config, `
+${scopedFactAttempts},
+user_stats AS (
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS accuracy,
+    SUM(correct_count) AS correct_count,
+    AVG(time_sec) AS avg_time_sec,
+    COUNT(*) AS attempts
+  FROM scoped_attempts
+  GROUP BY scope_type, scope_value, uid
+),
+ranked AS (
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    accuracy AS value,
+    avg_time_sec AS avgTime,
+    attempts,
+    'topAccuracy' AS rankKind,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value
+      ORDER BY accuracy DESC, avg_time_sec ASC
+    ) AS rank_num
+  FROM user_stats
+  WHERE attempts >= 3
+  UNION ALL
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    accuracy AS value,
+    avg_time_sec AS avgTime,
+    attempts,
+    'worstAccuracy' AS rankKind,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value
+      ORDER BY accuracy ASC, avg_time_sec DESC
+    ) AS rank_num
+  FROM user_stats
+  WHERE attempts >= 3
+  UNION ALL
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    correct_count AS value,
+    NULL AS avgTime,
+    attempts,
+    'topCorrect' AS rankKind,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value
+      ORDER BY correct_count DESC, attempts DESC
+    ) AS rank_num
+  FROM user_stats
+  UNION ALL
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    correct_count AS value,
+    NULL AS avgTime,
+    attempts,
+    'worstCorrect' AS rankKind,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value
+      ORDER BY correct_count ASC, attempts ASC
+    ) AS rank_num
+  FROM user_stats
+)
+SELECT *
+FROM ranked
+WHERE rank_num <= 10
+ORDER BY scope_type, scope_value, rankKind, rank_num
+    `),
+  ]);
+
+  const scopeKey = (scopeType: string, scopeValue: string) => `${scopeType}:${scopeValue}`;
+  const currentDate = new Date().toISOString().slice(0, 10);
+  const qualityByScope = new Map<string, any>();
+  const bySubjectByScope = new Map<string, any[]>();
+  const rankingsByScope = new Map<string, Record<string, any[]>>();
+
+  for (const row of qualityRows) {
+    qualityByScope.set(scopeKey(String(row.scope_type || ""), String(row.scope_value || "")), row);
+  }
+
+  for (const row of bySubjectRows) {
+    const key = scopeKey(String(row.scope_type || ""), String(row.scope_value || ""));
+    const rows = bySubjectByScope.get(key) || [];
+    rows.push(row);
+    bySubjectByScope.set(key, rows);
+  }
+
+  for (const row of rankingRows) {
+    const key = scopeKey(String(row.scope_type || ""), String(row.scope_value || ""));
+    const rankKind = String(row.rankKind || "");
+    const grouped = rankingsByScope.get(key) || {};
+    grouped[rankKind] = grouped[rankKind] || [];
+    grouped[rankKind].push(row);
+    rankingsByScope.set(key, grouped);
+  }
+
+  const toAccuracyRank = (row: any) => ({
+    uid: row.uid,
+    userName: userNames.get(row.uid) || row.uid,
+    value: Number(row.value || 0),
+    displayValue: `${Number(row.value || 0).toFixed(1)}%`,
+    avgTime: Number(row.avgTime || 0),
+    rankValue: `${Number(row.avgTime || 0).toFixed(0)}\u79d2`,
+  });
+
+  const toCorrectRank = (row: any) => ({
+    uid: row.uid,
+    userName: userNames.get(row.uid) || row.uid,
+    value: Number(row.value || 0),
+    displayValue: `${Number(row.value || 0).toLocaleString()}\u554f`,
+    rankValue: `${Number(row.attempts || 0)} attempt`,
+  });
+
+  const bySubject = new Map<string, any>();
+  const byCategory = new Map<string, any>();
+
+  for (const row of totalsRows) {
+    const scopeType = String(row.scope_type || "");
+    const scopeValue = String(row.scope_value || "");
+    if ((scopeType !== "subject" && scopeType !== "category") || !scopeValue) continue;
+
+    const key = scopeKey(scopeType, scopeValue);
+    const qualityRow = qualityByScope.get(key) || {};
+    const groupedRankings = rankingsByScope.get(key) || {};
+    const docData = {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      scope: {
+        type: scopeType,
+        value: scopeValue,
+        key: safeServingDocId(scopeValue),
+      },
+      sourceWindow: {
+        startDate: row.startDate || currentDate,
+        endDate: currentDate,
+      },
+      totals: {
+        totalAttempts: Number(row.totalAttempts || 0),
+        uniqueUsers: Number(row.uniqueUsers || 0),
+        avgAccuracy: Number(row.avgAccuracy || 0),
+        totalAnswered: Number(row.totalAnswered || 0),
+        totalCorrect: Number(row.totalCorrect || 0),
+        totalStudyTimeSec: Number(row.totalStudyTimeSec || 0),
+        dau: Number(row.dau || 0),
+        wau: Number(row.wau || 0),
+        mau: Number(row.mau || 0),
+        avgAttemptsPerUser: Number(row.avgAttemptsPerUser || 0),
+        firstAttemptAccuracy: Number(qualityRow.firstAttemptAccuracy || 0),
+        retryImprovementRate: Number(qualityRow.retryImprovementRate || 0),
+        atRiskUsers: Number(qualityRow.atRiskUsers || 0),
+      },
+      bySubject: (bySubjectByScope.get(key) || []).map((subjectRow) => ({
+        subject: subjectRow.subject || "隰ｨ・ｰ陝・ｽｦ",
+        totalAttempts: Number(subjectRow.totalAttempts || 0),
+        avgAccuracy: Number(subjectRow.avgAccuracy || 0),
+      })),
+      rankings: {
+        topAccuracy: (groupedRankings.topAccuracy || []).map(toAccuracyRank),
+        worstAccuracy: (groupedRankings.worstAccuracy || []).map(toAccuracyRank),
+        topCorrect: (groupedRankings.topCorrect || []).map(toCorrectRank),
+        worstCorrect: (groupedRankings.worstCorrect || []).map(toCorrectRank),
+      },
+      metadata: {
+        unitsTracked: unitMetadata.size,
+        aggregationMode: "bulk_scoped_overview",
+      },
+    };
+
+    if (scopeType === "subject") {
+      bySubject.set(safeServingDocId(scopeValue), docData);
+    } else {
+      byCategory.set(safeServingDocId(scopeValue), docData);
+    }
+  }
+
+  return { bySubject, byCategory };
+}
+
+async function buildUnitRankingDocs(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  userNames: Map<string, string>
+) {
+  const rows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  uid,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS accuracy,
+  SUM(correct_count) AS correct_count,
+  AVG(time_sec) AS avg_time_sec,
+  COUNT(*) AS attempts
+FROM ${tableRef(config, "fact_attempts")}
+GROUP BY unit_id, uid
+HAVING attempts >= 1
+ORDER BY unit_id, accuracy DESC, avg_time_sec ASC
+  `);
+
+  const grouped = new Map<string, any[]>();
+  for (const row of rows) {
+    const unitId = String(row.unit_id || "");
+    if (!unitId) continue;
+    const list = grouped.get(unitId) || [];
+    list.push(row);
+    grouped.set(unitId, list);
+  }
+
+  const docs = new Map<string, any>();
+  for (const [unitId, list] of grouped.entries()) {
+    const byAccuracyDesc = [...list].sort((left, right) => {
+      const accuracyDiff = Number(right.accuracy || 0) - Number(left.accuracy || 0);
+      if (Math.abs(accuracyDiff) > 0.01) return accuracyDiff;
+      return Number(left.avg_time_sec || 0) - Number(right.avg_time_sec || 0);
+    });
+    const byAccuracyAsc = [...list].sort((left, right) => {
+      const accuracyDiff = Number(left.accuracy || 0) - Number(right.accuracy || 0);
+      if (Math.abs(accuracyDiff) > 0.01) return accuracyDiff;
+      return Number(right.avg_time_sec || 0) - Number(left.avg_time_sec || 0);
+    });
+    const byCorrectDesc = [...list].sort((left, right) => {
+      const correctDiff = Number(right.correct_count || 0) - Number(left.correct_count || 0);
+      if (correctDiff !== 0) return correctDiff;
+      return Number(right.attempts || 0) - Number(left.attempts || 0);
+    });
+    const byCorrectAsc = [...list].sort((left, right) => {
+      const correctDiff = Number(left.correct_count || 0) - Number(right.correct_count || 0);
+      if (correctDiff !== 0) return correctDiff;
+      return Number(left.attempts || 0) - Number(right.attempts || 0);
+    });
+
+    const toAccuracyRank = (row: any) => ({
+      uid: row.uid,
+      userName: userNames.get(row.uid) || row.uid,
+      value: Number(row.accuracy || 0),
+      displayValue: `${Number(row.accuracy || 0).toFixed(1)}%`,
+      avgTime: Number(row.avg_time_sec || 0),
+      rankValue: `${Number(row.avg_time_sec || 0).toFixed(0)}\u79d2`,
+    });
+    const toCorrectRank = (row: any) => ({
+      uid: row.uid,
+      userName: userNames.get(row.uid) || row.uid,
+      value: Number(row.correct_count || 0),
+      displayValue: `${Number(row.correct_count || 0).toLocaleString()}\u554f`,
+      rankValue: `${Number(row.attempts || 0)} attempt`,
+    });
+
+    docs.set(unitId, {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      unitId,
+      minAttempts: 1,
+      rankings: {
+        topAccuracy: byAccuracyDesc.slice(0, 10).map(toAccuracyRank),
+        worstAccuracy: byAccuracyAsc.slice(0, 10).map(toAccuracyRank),
+        topCorrect: byCorrectDesc.slice(0, 10).map(toCorrectRank),
+        worstCorrect: byCorrectAsc.slice(0, 10).map(toCorrectRank),
+      },
+    });
+  }
+
+  return docs;
+}
+
+async function buildPublicReportDocs(
+  bigquery: BigQuery,
+  config: AnalyticsConfig,
+  metadata: Map<string, UnitMetadata>
+) {
+  const [overviewRow] = await runQuery(bigquery, config, `
+SELECT
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT uid) AS unique_users,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+  SUM(answered_count) AS total_answered,
+  SUM(correct_count) AS total_correct,
+  SUM(time_sec) AS total_study_time_sec,
+  COUNT(DISTINCT IF(occurred_date = CURRENT_DATE('${config.timezone}'), uid, NULL)) AS dau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY), uid, NULL)) AS wau,
+  COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau
+FROM ${tableRef(config, "fact_attempts")}
+  `);
+
+  const unitRows = await runQuery(bigquery, config, `
+WITH unit_question_attempts AS (
+  SELECT
+    unit_id,
+    uid,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS question_attempt_order
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+),
+first_retry AS (
+  SELECT
+    unit_id,
+    AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS first_attempt_accuracy,
+    (
+      AVG(IF(question_attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+      AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL))
+    ) * 100 AS retry_improvement_rate
+  FROM unit_question_attempts
+  GROUP BY unit_id
+)
+SELECT
+  attempts.unit_id,
+  ANY_VALUE(attempts.unit_title) AS unit_title,
+  ANY_VALUE(attempts.subject) AS subject,
+  ANY_VALUE(attempts.category) AS category,
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT attempts.uid) AS unique_users,
+  SUM(attempts.answered_count) AS total_answered,
+  SUM(attempts.correct_count) AS total_correct,
+  SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100 AS avg_accuracy,
+  AVG(attempts.time_sec) AS avg_time_sec,
+  COALESCE(ANY_VALUE(fr.first_attempt_accuracy), 0) AS first_attempt_accuracy,
+  COALESCE(ANY_VALUE(fr.retry_improvement_rate), 0) AS retry_improvement_rate,
+  (100 - SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100)
+    * LOG10(COUNT(*) + 10) AS improvement_priority_score
+FROM ${tableRef(config, "fact_attempts")} attempts
+LEFT JOIN first_retry fr
+  ON fr.unit_id = attempts.unit_id
+GROUP BY attempts.unit_id
+HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY improvement_priority_score DESC
+  `);
+
+  const questionRows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  question_id,
+  ANY_VALUE(question_order) AS question_order,
+  COUNT(*) AS total,
+  COUNT(DISTINCT uid) AS unique_users,
+  SUM(CAST(is_correct AS INT64)) AS correct,
+  SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100 AS accuracy
+FROM ${tableRef(config, "fact_attempt_question_results")}
+GROUP BY unit_id, question_id
+HAVING total >= ${PUBLIC_REPORT_THRESHOLDS.questionMinAttempts}
+  AND unique_users >= ${PUBLIC_REPORT_THRESHOLDS.questionMinUsers}
+ORDER BY unit_id, accuracy ASC, total DESC
+  `);
+
+  const correlationRows = await runQuery(bigquery, config, `
+SELECT
+  unit_id,
+  question_id_a,
+  question_id_b,
+  support_users,
+  co_wrong_users,
+  mistake_rate_given_a,
+  mistake_rate_given_b
+FROM ${tableRef(config, "agg_question_pair_current")}
+WHERE support_users >= ${PUBLIC_REPORT_THRESHOLDS.correlationMinSupportUsers}
+  AND co_wrong_users >= ${PUBLIC_REPORT_THRESHOLDS.correlationMinCoWrongUsers}
+ORDER BY unit_id, co_wrong_users DESC, GREATEST(mistake_rate_given_a, mistake_rate_given_b) DESC
+  `);
+
+  const trendRows = await runQuery(bigquery, config, `
+SELECT
+  occurred_date AS date,
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT uid) AS unique_users,
+  SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+  SUM(time_sec) AS study_time_sec
+FROM ${tableRef(config, "fact_attempts")}
+WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY)
+GROUP BY occurred_date
+HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY occurred_date
+  `);
+
+  const questionMap = new Map<string, any[]>();
+  for (const row of questionRows) {
+    const unitId = String(row.unit_id || "");
+    if (!unitId) continue;
+    const unitMeta = metadata.get(unitId);
+    const questionMeta = unitMeta?.questions.find((question) => question.questionId === row.question_id);
+    const list = questionMap.get(unitId) || [];
+    list.push({
+      questionId: row.question_id,
+      questionOrder: Number(row.question_order || questionMeta?.questionOrder || 0),
+      questionText: questionMeta?.questionText || row.question_id,
+      total: Number(row.total || 0),
+      uniqueUsers: Number(row.unique_users || 0),
+      accuracy: Number(row.accuracy || 0),
+      stumbleRate: 100 - Number(row.accuracy || 0),
+    });
+    questionMap.set(unitId, list);
+  }
+
+  const correlationMap = new Map<string, any[]>();
+  for (const row of correlationRows) {
+    const unitId = String(row.unit_id || "");
+    if (!unitId) continue;
+    const unitMeta = metadata.get(unitId);
+    const questionA = unitMeta?.questions.find((question) => question.questionId === row.question_id_a);
+    const questionB = unitMeta?.questions.find((question) => question.questionId === row.question_id_b);
+    const list = correlationMap.get(unitId) || [];
+    list.push({
+      questionIdA: row.question_id_a,
+      questionIdB: row.question_id_b,
+      questionTextA: questionA?.questionText || row.question_id_a,
+      questionTextB: questionB?.questionText || row.question_id_b,
+      supportUsers: Number(row.support_users || 0),
+      coWrongUsers: Number(row.co_wrong_users || 0),
+      mistakeRateGivenA: Number(row.mistake_rate_given_a || 0),
+      mistakeRateGivenB: Number(row.mistake_rate_given_b || 0),
+    });
+    correlationMap.set(unitId, list);
+  }
+
+  const reportUnits = unitRows.map((row) => {
+    const unitId = String(row.unit_id || "");
+    const unitMeta = metadata.get(unitId);
+    const questions = questionMap.get(unitId) || [];
+    return {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      unitId,
+      unitTitle: unitMeta?.unitTitle || row.unit_title || unitId,
+      subject: unitMeta?.subject || row.subject || "謨ｰ蟄ｦ",
+      category: unitMeta?.category || "\u305d\u306e\u4ed6",
+      totals: {
+        totalAttempts: Number(row.total_attempts || 0),
+        uniqueUsers: Number(row.unique_users || 0),
+        avgAccuracy: Number(row.avg_accuracy || 0),
+        avgTimeSec: Number(row.avg_time_sec || 0),
+        firstAttemptAccuracy: Number(row.first_attempt_accuracy || 0),
+        retryImprovementRate: Number(row.retry_improvement_rate || 0),
+        improvementPriorityScore: Number(row.improvement_priority_score || 0),
+      },
+      reviewQuestions: questions.slice(0, 5),
+      strongCoMistakes: (correlationMap.get(unitId) || []).slice(0, 5),
+    };
+  });
+
+  const overviewTotals = {
+    totalAttempts: Number(overviewRow?.total_attempts || 0),
+    uniqueUsers: Number(overviewRow?.unique_users || 0),
+    avgAccuracy: Number(overviewRow?.avg_accuracy || 0),
+    totalAnswered: Number(overviewRow?.total_answered || 0),
+    totalCorrect: Number(overviewRow?.total_correct || 0),
+    totalStudyTimeSec: Number(overviewRow?.total_study_time_sec || 0),
+    dau: Number(overviewRow?.dau || 0),
+    wau: Number(overviewRow?.wau || 0),
+    mau: Number(overviewRow?.mau || 0),
+  };
+  const reportPublishable = overviewTotals.uniqueUsers >= PUBLIC_REPORT_THRESHOLDS.unitMinUsers;
+
+  return {
+    overview: {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      privacy: {
+        pii: false,
+        publishable: reportPublishable,
+        suppressedReason: reportPublishable ? null : "insufficient_unique_users",
+        thresholds: PUBLIC_REPORT_THRESHOLDS,
+        suppressedLowSupportRows: true,
+      },
+      totals: reportPublishable ? overviewTotals : {
+        totalAttempts: 0,
+        uniqueUsers: 0,
+        avgAccuracy: 0,
+        totalAnswered: 0,
+        totalCorrect: 0,
+        totalStudyTimeSec: 0,
+        dau: 0,
+        wau: 0,
+        mau: 0,
+      },
+    },
+    units: reportUnits,
+    trends: {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      days: trendRows.map((row) => ({
+        date: String(row.date?.value || row.date || ""),
+        totalAttempts: Number(row.total_attempts || 0),
+        uniqueUsers: Number(row.unique_users || 0),
+        avgAccuracy: Number(row.avg_accuracy || 0),
+        studyTimeSec: Number(row.study_time_sec || 0),
+      })),
     },
   };
 }
@@ -952,8 +1622,8 @@ GROUP BY unit_id, question_id
       unitId,
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       unitTitle: unitMeta?.unitTitle || row.unit_title || unitId,
-      subject: unitMeta?.subject || row.subject || "数学",
-      category: unitMeta?.category || row.category || "その他",
+      subject: unitMeta?.subject || row.subject || "謨ｰ蟄ｦ",
+      category: unitMeta?.category || "\u305d\u306e\u4ed6",
       totals: {
         totalAttempts: Number(row.total_attempts || 0),
         uniqueUsers: Number(row.unique_users || 0),
@@ -1086,68 +1756,124 @@ ORDER BY unit_id, co_wrong_users DESC, GREATEST(mistake_rate_given_a, mistake_ra
 async function writeServingDocs(
   config: AnalyticsConfig,
   overviewDoc: any,
+  scopedOverviewDocs: {
+    bySubject: Map<string, any>;
+    byCategory: Map<string, any>;
+  },
   unitSummaries: any[],
   questionAnalysisDocs: Map<string, any[]>,
-  correlationDocs: Map<string, any[]>
+  correlationDocs: Map<string, any[]>,
+  unitRankingDocs: Map<string, any>,
+  publicReportDocs: {
+    overview: any;
+    units: any[];
+    trends: any;
+  }
 ) {
   const root = config.servingRoot;
-  const batch = db.batch();
+  let batch = db.batch();
+  let writeCount = 0;
 
-  batch.set(db.doc(`${root}/overview/current`), overviewDoc, { merge: true });
-  batch.set(
-    db.doc(`${root}/manifest/current`),
+  const commitBatch = async () => {
+    if (writeCount === 0) return;
+    await batch.commit();
+    batch = db.batch();
+    writeCount = 0;
+  };
+
+  const setDoc = async (path: string, data: FirebaseFirestore.DocumentData) => {
+    batch.set(db.doc(path), data, { merge: true });
+    writeCount += 1;
+
+    if (writeCount >= 450) {
+      await commitBatch();
+    }
+  };
+
+  await setDoc(`${root}/overview/current`, overviewDoc);
+  await setDoc(
+    `${root}/manifest/current`,
     {
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       version: 1,
       overviewPath: `${root}/overview/current`,
+      overviewBySubjectCollection: `${root}/overview_by_subject`,
+      overviewByCategoryCollection: `${root}/overview_by_category`,
       unitSummaryCollection: `${root}/unit_summaries`,
       questionAnalysisCollection: `${root}/question_analysis`,
       questionCorrelationCollection: `${root}/question_correlations`,
-    },
-    { merge: true }
+      unitRankingCollection: `${root}/unit_rankings`,
+    }
   );
 
+  for (const [subjectKey, docData] of scopedOverviewDocs.bySubject.entries()) {
+    await setDoc(`${root}/overview_by_subject/${subjectKey}`, docData);
+  }
+
+  for (const [categoryKey, docData] of scopedOverviewDocs.byCategory.entries()) {
+    await setDoc(`${root}/overview_by_category/${categoryKey}`, docData);
+  }
+
   for (const summary of unitSummaries) {
-    batch.set(db.doc(`${root}/unit_summaries/${summary.unitId}`), summary, { merge: true });
+    await setDoc(`${root}/unit_summaries/${summary.unitId}`, summary);
+  }
+
+  for (const [unitId, rankingDoc] of unitRankingDocs.entries()) {
+    await setDoc(`${root}/unit_rankings/${unitId}`, rankingDoc);
   }
 
   for (const [unitId, questions] of questionAnalysisDocs.entries()) {
-    batch.set(
-      db.doc(`${root}/question_analysis/${unitId}`),
+    await setDoc(
+      `${root}/question_analysis/${unitId}`,
       {
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
         unitId,
         questions,
-      },
-      { merge: true }
+      }
     );
   }
 
   for (const [unitId, pairs] of correlationDocs.entries()) {
-    batch.set(
-      db.doc(`${root}/question_correlations/${unitId}`),
+    await setDoc(
+      `${root}/question_correlations/${unitId}`,
       {
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
         unitId,
         minSupportUsers: 5,
         minCoWrongUsers: 3,
         pairs: pairs.slice(0, 100),
-      },
-      { merge: true }
+      }
     );
   }
 
-  batch.set(
-    db.doc(`${root}/job_status/daily`),
+  await setDoc(
+    `${root}/job_status/daily`,
     {
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: "success",
       pipelineVersion: 1,
-    },
-    { merge: true }
+    }
   );
 
-  await batch.commit();
+  await setDoc(`${PUBLIC_REPORT_ROOT}/report_overview/current`, publicReportDocs.overview);
+  await setDoc(`${PUBLIC_REPORT_ROOT}/report_trends/current`, publicReportDocs.trends);
+  await setDoc(
+    `${PUBLIC_REPORT_ROOT}/manifest/current`,
+    {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      version: 1,
+      reportOverviewPath: `${PUBLIC_REPORT_ROOT}/report_overview/current`,
+      reportUnitCollection: `${PUBLIC_REPORT_ROOT}/report_units`,
+      reportTrendPath: `${PUBLIC_REPORT_ROOT}/report_trends/current`,
+      thresholds: PUBLIC_REPORT_THRESHOLDS,
+    }
+  );
+
+  for (const unitReport of publicReportDocs.units) {
+    await setDoc(`${PUBLIC_REPORT_ROOT}/report_units/${unitReport.unitId}`, unitReport);
+  }
+
+  await commitBatch();
 }
 
 async function runAnalyticsAggregationInternal() {
@@ -1161,14 +1887,26 @@ async function runAnalyticsAggregationInternal() {
     fetchUserNames(),
   ]);
 
-  const [overviewDoc, unitSummaries, questionAnalysisDocs, correlationDocs] = await Promise.all([
+  const [overviewDoc, scopedOverviewDocs, unitSummaries, questionAnalysisDocs, correlationDocs, unitRankingDocs, publicReportDocs] = await Promise.all([
     buildOverviewDoc(bigquery, config, userNames, unitMetadata),
+    buildScopedOverviewDocs(bigquery, config, userNames, unitMetadata),
     buildUnitSummaries(bigquery, config, unitMetadata),
     buildQuestionAnalysisDocs(bigquery, config, unitMetadata),
     buildCorrelationDocs(bigquery, config, unitMetadata),
+    buildUnitRankingDocs(bigquery, config, userNames),
+    buildPublicReportDocs(bigquery, config, unitMetadata),
   ]);
 
-  await writeServingDocs(config, overviewDoc, unitSummaries, questionAnalysisDocs, correlationDocs);
+  await writeServingDocs(
+    config,
+    overviewDoc,
+    scopedOverviewDocs,
+    unitSummaries,
+    questionAnalysisDocs,
+    correlationDocs,
+    unitRankingDocs,
+    publicReportDocs
+  );
 
   return {
     ok: true,
