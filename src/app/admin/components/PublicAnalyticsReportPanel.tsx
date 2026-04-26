@@ -354,7 +354,7 @@ export default function PublicAnalyticsReportPanel() {
                 {quartileWideQuestions.map((question) => (
                   <article key={`wide-${question.unitId}-${question.questionId}`}>
                     <p>{question.unitTitle}</p>
-                    <MathDisplay math={question.questionText} className="text-[9px] leading-tight" />
+                    <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
                     <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
                   </article>
                 ))}
@@ -365,7 +365,7 @@ export default function PublicAnalyticsReportPanel() {
                 {quartileNarrowQuestions.map((question) => (
                   <article key={`narrow-${question.unitId}-${question.questionId}`}>
                     <p>{question.unitTitle}</p>
-                    <MathDisplay math={question.questionText} className="text-[9px] leading-tight" />
+                    <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
                     <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
                   </article>
                 ))}
@@ -469,6 +469,8 @@ export default function PublicAnalyticsReportPanel() {
               <dd>最初の挑戦で不正解になった割合です。学び始めの理解の引っかかりを示します。</dd>
               <dt>共通つまずき</dt>
               <dd>同じ人たちが一緒に間違えやすい問題の組み合わせです。</dd>
+              <dt>IQR</dt>
+              <dd>生徒ごとの正答率のばらつきです。大きいほど差がつきやすい問題です。</dd>
               <dt>平均時間</dt>
               <dd>この範囲の1演習あたり平均時間は約 {formatNumber(avgTimeSec, 0)} 秒です。</dd>
             </dl>
