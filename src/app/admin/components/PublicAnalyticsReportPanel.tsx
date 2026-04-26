@@ -366,14 +366,21 @@ export default function PublicAnalyticsReportPanel() {
             <h3>みんなが苦戦中の問題</h3>
             <p>つまずき率 = 100% - 正答率</p>
           </div>
-          <div className="report-question-grid">
-            {strugglingQuestions.map((question) => (
+          <div className="report-question-list">
+            {strugglingQuestions.map((question, index) => (
               <article key={`${question.unitTitle}-${question.questionId}`}>
-                <p>{question.unitTitle}</p>
-                <div className="report-math">
-                  <MathDisplay math={question.questionText} className="text-[10px] leading-snug" />
+                <b className="report-question-rank">{index + 1}</b>
+                <div className="report-question-body">
+                  <p>{question.unitTitle}</p>
+                  <div className="report-question-math">
+                    <MathDisplay math={question.questionText} className="text-[10px] leading-snug" />
+                  </div>
                 </div>
-                <span>つまずき率 {formatPercent(question.stumbleRate)} / 回答 {formatNumber(question.total)}件</span>
+                <div className="report-question-score" aria-label={`つまずき率 ${formatPercent(question.stumbleRate)}`}>
+                  <strong>{formatPercent(question.stumbleRate)}</strong>
+                  <span>回答 {formatNumber(question.total)}件</span>
+                  <i style={{ width: `${Math.min(100, Math.max(0, question.stumbleRate * 100))}%` }} />
+                </div>
               </article>
             ))}
             {!strugglingQuestions.length && <p className="report-empty">公開基準を満たす問題データがありません。</p>}
