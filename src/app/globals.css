@@ -401,7 +401,7 @@
   font-size: 0.9em;
 }
 
-.report-quartile-grid article span {
+.report-quartile-meta {
   display: block;
   align-self: start;
   margin-top: 18px;
@@ -649,8 +649,8 @@
     padding: 3px 0;
   }
 
-  .report-quartile-grid article p,
-  .report-quartile-grid article span {
+  .report-quartile-body p,
+  .report-quartile-meta {
     font-size: 7px;
   }
 
@@ -669,7 +669,7 @@
     font-size: 0.8em;
   }
 
-  .report-quartile-grid article span {
+  .report-quartile-meta {
     margin-top: 14px;
     white-space: normal;
   }
