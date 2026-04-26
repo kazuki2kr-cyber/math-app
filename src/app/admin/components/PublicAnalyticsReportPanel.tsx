@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { FileText, Printer, RefreshCw, ShieldCheck } from 'lucide-react';
+import { FileText, Printer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MathDisplay } from '@/components/MathDisplay';
 import {
@@ -56,6 +56,16 @@ function weightedAverage(
   return units.reduce((sum, unit) => sum + selector(unit) * Number(unit.totals?.totalAttempts || 0), 0) / totalWeight;
 }
 
+function sumTrendDays(days: PublicAnalyticsReportTrendDoc['days'] | undefined, selector: (day: NonNullable<PublicAnalyticsReportTrendDoc['days']>[number]) => number): number {
+  return (days || []).reduce((sum, day) => sum + selector(day), 0);
+}
+
+function weightedTrendAccuracy(days: PublicAnalyticsReportTrendDoc['days'] | undefined): number {
+  const totalAttempts = sumTrendDays(days, (day) => Number(day.totalAttempts || 0));
+  if (!totalAttempts) return 0;
+  return sumTrendDays(days, (day) => Number(day.avgAccuracy || 0) * Number(day.totalAttempts || 0)) / totalAttempts;
+}
+
 export default function PublicAnalyticsReportPanel() {
   const [overview, setOverview] = useState<PublicAnalyticsReportOverviewDoc | null>(null);
   const [trends, setTrends] = useState<PublicAnalyticsReportTrendDoc | null>(null);
@@ -77,6 +87,9 @@ export default function PublicAnalyticsReportPanel() {
 
   const activeTotals = selectedCategory?.totals || overview?.totals || {};
   const activeTitle = selectedCategory ? `${selectedCategory.category} レポート` : '全分野レポート';
+  const metricScopeLabel = selectedCategory
+    ? `${selectedCategory.category}のBigQuery集計対象全体`
+    : 'BigQuery集計対象全体';
   const activeTrendDays = trends?.days || [];
   const maxTrendAttempts = useMemo(
     () => Math.max(1, ...activeTrendDays.map((day) => Number(day.totalAttempts || 0))),
@@ -132,6 +145,11 @@ export default function PublicAnalyticsReportPanel() {
     (unit) => Number(unit.totals?.retryImprovementRate || 0)
   );
   const avgTimeSec = weightedAverage(filteredUnits, (unit) => Number(unit.totals?.avgTimeSec || 0));
+  const recentSevenDays = activeTrendDays.slice(-7);
+  const recentAttempts = sumTrendDays(recentSevenDays, (day) => Number(day.totalAttempts || 0));
+  const recentStudyTimeSec = sumTrendDays(recentSevenDays, (day) => Number(day.studyTimeSec || 0));
+  const recentAccuracy = weightedTrendAccuracy(recentSevenDays);
+  const publicQuestionCount = filteredUnits.reduce((sum, unit) => sum + (unit.reviewQuestions || []).length, 0);
 
   const loadReport = async (categoryKey = selectedCategoryKey) => {
     setLoading(true);
@@ -295,12 +313,9 @@ export default function PublicAnalyticsReportPanel() {
             <h2>{activeTitle}</h2>
             <p className="report-muted">生成日時: {formatGeneratedAt(overview.generatedAt)}</p>
           </div>
-          <div className="report-privacy">
-            <ShieldCheck className="h-4 w-4" />
-            k匿名化済み
-          </div>
         </header>
 
+        <p className="report-scope-note">上段の主要指標は{metricScopeLabel}です。</p>
         <div className="report-metrics">
           <ReportMetric label="参加人数" value={`${formatNumber(activeTotals.uniqueUsers)}人`} note="重複を除いた人数" />
           <ReportMetric label="演習回数" value={formatNumber(activeTotals.totalAttempts)} note="提出された演習" />
@@ -308,6 +323,25 @@ export default function PublicAnalyticsReportPanel() {
           <ReportMetric label="学習時間" value={formatStudyTime(activeTotals.totalStudyTimeSec)} note="演習時間の合計" />
           <ReportMetric label="初回正答率" value={formatPercent(firstAttemptAccuracy)} note="最初の挑戦で正解" />
           <ReportMetric label="再挑戦改善" value={formatPercent(retryImprovementRate)} note="再挑戦後の伸び" />
+        </div>
+
+        <div className="report-summary-strip">
+          <div>
+            <span>直近7日の演習</span>
+            <b>{formatNumber(recentAttempts)}回</b>
+          </div>
+          <div>
+            <span>直近7日の正答率</span>
+            <b>{formatPercent(recentAccuracy)}</b>
+          </div>
+          <div>
+            <span>直近7日の学習時間</span>
+            <b>{formatStudyTime(recentStudyTimeSec)}</b>
+          </div>
+          <div>
+            <span>掲載単元 / 問題</span>
+            <b>{formatNumber(filteredUnits.length)} / {formatNumber(publicQuestionCount)}</b>
+          </div>
         </div>
 
         <div className="report-grid">
@@ -428,8 +462,8 @@ export default function PublicAnalyticsReportPanel() {
         </div>
 
         <footer className="report-footer">
-          個人を特定できる情報は含めていません。単元は {thresholds?.unitMinUsers || 5} 人以上、問題は{' '}
-          {thresholds?.questionMinUsers || 5} 人以上かつ {thresholds?.questionMinAttempts || 10} 回以上のデータだけを掲載しています。
+          単元は{thresholds?.unitMinUsers || 5}人以上、問題は{thresholds?.questionMinUsers || 5}人以上かつ
+          {thresholds?.questionMinAttempts || 10}回以上の回答があったものだけをデータとして掲載しています。
         </footer>
       </section>
     </div>
