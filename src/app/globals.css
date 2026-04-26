@@ -347,7 +347,11 @@
 .report-quartile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+}
+
+.report-quartiles {
+  grid-column: 1 / -1;
 }
 
 .report-quartile-grid > div {
@@ -362,11 +366,19 @@
 }
 
 .report-quartile-grid article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  align-items: start;
+  gap: 8px;
   border-top: 1px solid #f3f4f6;
-  padding: 4px 0;
+  padding: 5px 0;
 }
 
-.report-quartile-grid article p {
+.report-quartile-body {
+  min-width: 0;
+}
+
+.report-quartile-body p {
   font-size: 8px;
   font-weight: 700;
   color: #6b7280;
@@ -386,14 +398,17 @@
 }
 
 .report-quartile-math .katex {
-  font-size: 0.95em;
+  font-size: 0.9em;
 }
 
 .report-quartile-grid article span {
   display: block;
-  margin-top: 2px;
+  align-self: start;
+  margin-top: 18px;
   font-size: 8px;
   color: #374151;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .report-table {
@@ -620,7 +635,7 @@
   }
 
   .report-quartile-grid {
-    gap: 6px;
+    gap: 7px;
   }
 
   .report-quartile-grid > div > b {
@@ -629,7 +644,9 @@
   }
 
   .report-quartile-grid article {
-    padding: 2px 0;
+    grid-template-columns: minmax(0, 1fr) 70px;
+    gap: 5px;
+    padding: 3px 0;
   }
 
   .report-quartile-grid article p,
@@ -649,7 +666,12 @@
   }
 
   .report-quartile-math .katex {
-    font-size: 0.86em;
+    font-size: 0.8em;
+  }
+
+  .report-quartile-grid article span {
+    margin-top: 14px;
+    white-space: normal;
   }
 
   .report-question-list {
