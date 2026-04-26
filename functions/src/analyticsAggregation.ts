@@ -1348,6 +1348,83 @@ SELECT
 FROM ${tableRef(config, "fact_attempts")}
   `);
 
+  const insightRows = await runQuery(bigquery, config, `
+WITH scoped_questions AS (
+  SELECT
+    'all' AS scope_type,
+    'all' AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  UNION ALL
+  SELECT
+    'category' AS scope_type,
+    category AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  WHERE category IS NOT NULL AND category != ''
+),
+ordered_questions AS (
+  SELECT
+    scope_type,
+    scope_value,
+    uid,
+    unit_id,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_type, scope_value, uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS attempt_order
+  FROM scoped_questions
+),
+quality AS (
+  SELECT
+    scope_type,
+    scope_value,
+    AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS first_attempt_accuracy,
+    (
+      AVG(IF(attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+      AVG(IF(attempt_order = 1, CAST(is_correct AS INT64), NULL))
+    ) * 100 AS retry_improvement_rate
+  FROM ordered_questions
+  GROUP BY scope_type, scope_value
+),
+question_stats AS (
+  SELECT
+    scope_type,
+    scope_value,
+    unit_id,
+    question_id,
+    COUNT(*) AS total,
+    COUNT(DISTINCT uid) AS unique_users,
+    AVG(CAST(is_correct AS INT64)) * 100 AS accuracy
+  FROM scoped_questions
+  GROUP BY scope_type, scope_value, unit_id, question_id
+),
+persistent AS (
+  SELECT
+    scope_type,
+    scope_value,
+    COUNTIF(
+      total >= ${PUBLIC_REPORT_THRESHOLDS.questionMinAttempts}
+      AND unique_users >= ${PUBLIC_REPORT_THRESHOLDS.questionMinUsers}
+      AND accuracy < 60
+    ) AS persistent_struggle_questions
+  FROM question_stats
+  GROUP BY scope_type, scope_value
+)
+SELECT
+  quality.scope_type,
+  quality.scope_value,
+  100 - COALESCE(quality.first_attempt_accuracy, 0) AS initial_stumble_rate,
+  COALESCE(quality.retry_improvement_rate, 0) AS retry_improvement_rate,
+  COALESCE(persistent.persistent_struggle_questions, 0) AS persistent_struggle_questions
+FROM quality
+LEFT JOIN persistent
+  ON persistent.scope_type = quality.scope_type
+ AND persistent.scope_value = quality.scope_value
+  `);
+
   const unitRows = await runQuery(bigquery, config, `
 WITH unit_question_attempts AS (
   SELECT
@@ -1556,12 +1633,36 @@ ORDER BY category, occurred_date
     categoryTrendMap.set(categoryKey, list);
   }
 
+  const coMistakePairCounts = new Map<string, number>();
+  coMistakePairCounts.set("all", correlationRows.length);
+  for (const row of correlationRows) {
+    const unitMeta = metadata.get(String(row.unit_id || ""));
+    const category = unitMeta?.category || String(row.category || "");
+    if (!category) continue;
+    const categoryKey = safeServingDocId(category);
+    coMistakePairCounts.set(categoryKey, (coMistakePairCounts.get(categoryKey) || 0) + 1);
+  }
+
+  const insightMap = new Map<string, any>();
+  for (const row of insightRows) {
+    const scopeType = String(row.scope_type || "");
+    const scopeValue = String(row.scope_value || "");
+    const key = scopeType === "category" ? safeServingDocId(scopeValue) : "all";
+    insightMap.set(key, {
+      initialStumbleRate: Number(row.initial_stumble_rate || 0),
+      retryImprovementRate: Number(row.retry_improvement_rate || 0),
+      persistentStruggleQuestions: Number(row.persistent_struggle_questions || 0),
+      coMistakePairs: Number(coMistakePairCounts.get(key) || 0),
+    });
+  }
+
   const reportCategories = categoryRows.map((row) => {
     const category = String(row.category || "Other");
+    const categoryKey = safeServingDocId(category);
     return {
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       category,
-      categoryKey: safeServingDocId(category),
+      categoryKey,
       totals: {
         totalAttempts: Number(row.total_attempts || 0),
         uniqueUsers: Number(row.unique_users || 0),
@@ -1574,9 +1675,15 @@ ORDER BY category, occurred_date
         mau: Number(row.mau || 0),
         unitCount: Number(row.unit_count || 0),
       },
+      insights: insightMap.get(categoryKey) || {
+        initialStumbleRate: 0,
+        retryImprovementRate: 0,
+        persistentStruggleQuestions: 0,
+        coMistakePairs: Number(coMistakePairCounts.get(categoryKey) || 0),
+      },
       trends: {
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        days: categoryTrendMap.get(safeServingDocId(category)) || [],
+        days: categoryTrendMap.get(categoryKey) || [],
       },
     };
   });
@@ -1614,6 +1721,17 @@ ORDER BY category, occurred_date
         dau: 0,
         wau: 0,
         mau: 0,
+      },
+      insights: reportPublishable ? insightMap.get("all") || {
+        initialStumbleRate: 0,
+        retryImprovementRate: 0,
+        persistentStruggleQuestions: 0,
+        coMistakePairs: Number(coMistakePairCounts.get("all") || 0),
+      } : {
+        initialStumbleRate: 0,
+        retryImprovementRate: 0,
+        persistentStruggleQuestions: 0,
+        coMistakePairs: 0,
       },
     },
     categories: reportCategories,

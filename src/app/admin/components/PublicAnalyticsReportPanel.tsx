@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { FileText, Printer, RefreshCw, ShieldCheck } from 'lucide-react';
+import { FileText, Printer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MathDisplay } from '@/components/MathDisplay';
 import {
@@ -77,6 +77,9 @@ export default function PublicAnalyticsReportPanel() {
 
   const activeTotals = selectedCategory?.totals || overview?.totals || {};
   const activeTitle = selectedCategory ? `${selectedCategory.category} レポート` : '全分野レポート';
+  const metricScopeLabel = selectedCategory
+    ? `${selectedCategory.category}のBigQuery集計対象全体`
+    : 'BigQuery集計対象全体';
   const activeTrendDays = trends?.days || [];
   const maxTrendAttempts = useMemo(
     () => Math.max(1, ...activeTrendDays.map((day) => Number(day.totalAttempts || 0))),
@@ -132,6 +135,12 @@ export default function PublicAnalyticsReportPanel() {
     (unit) => Number(unit.totals?.retryImprovementRate || 0)
   );
   const avgTimeSec = weightedAverage(filteredUnits, (unit) => Number(unit.totals?.avgTimeSec || 0));
+  const activeInsights = selectedCategory?.insights || overview?.insights || {
+    initialStumbleRate: Math.max(0, 100 - firstAttemptAccuracy),
+    retryImprovementRate,
+    persistentStruggleQuestions: strugglingQuestions.filter((question) => Number(question.stumbleRate || 0) >= 40).length,
+    coMistakePairs: coMistakes.length,
+  };
 
   const loadReport = async (categoryKey = selectedCategoryKey) => {
     setLoading(true);
@@ -295,12 +304,9 @@ export default function PublicAnalyticsReportPanel() {
             <h2>{activeTitle}</h2>
             <p className="report-muted">生成日時: {formatGeneratedAt(overview.generatedAt)}</p>
           </div>
-          <div className="report-privacy">
-            <ShieldCheck className="h-4 w-4" />
-            k匿名化済み
-          </div>
         </header>
 
+        <p className="report-scope-note">上段の主要指標は{metricScopeLabel}です。</p>
         <div className="report-metrics">
           <ReportMetric label="参加人数" value={`${formatNumber(activeTotals.uniqueUsers)}人`} note="重複を除いた人数" />
           <ReportMetric label="演習回数" value={formatNumber(activeTotals.totalAttempts)} note="提出された演習" />
@@ -308,6 +314,25 @@ export default function PublicAnalyticsReportPanel() {
           <ReportMetric label="学習時間" value={formatStudyTime(activeTotals.totalStudyTimeSec)} note="演習時間の合計" />
           <ReportMetric label="初回正答率" value={formatPercent(firstAttemptAccuracy)} note="最初の挑戦で正解" />
           <ReportMetric label="再挑戦改善" value={formatPercent(retryImprovementRate)} note="再挑戦後の伸び" />
+        </div>
+
+        <div className="report-summary-strip">
+          <div>
+            <span>初回つまずき</span>
+            <b>{formatPercent(activeInsights.initialStumbleRate)}</b>
+          </div>
+          <div>
+            <span>再挑戦で改善</span>
+            <b>{formatPercent(activeInsights.retryImprovementRate)}</b>
+          </div>
+          <div>
+            <span>苦戦が残る問題</span>
+            <b>{formatNumber(activeInsights.persistentStruggleQuestions)}問</b>
+          </div>
+          <div>
+            <span>共通つまずき</span>
+            <b>{formatNumber(activeInsights.coMistakePairs)}組</b>
+          </div>
         </div>
 
         <div className="report-grid">
@@ -421,6 +446,10 @@ export default function PublicAnalyticsReportPanel() {
               <dd>その問題で不正解になった割合です。高いほど苦戦しています。</dd>
               <dt>再挑戦改善</dt>
               <dd>初回より再挑戦後にどれだけ正答率が伸びたかを示します。</dd>
+              <dt>初回つまずき</dt>
+              <dd>最初の挑戦で不正解になった割合です。学び始めの理解の引っかかりを示します。</dd>
+              <dt>共通つまずき</dt>
+              <dd>同じ人たちが一緒に間違えやすい問題の組み合わせです。</dd>
               <dt>平均時間</dt>
               <dd>この範囲の1演習あたり平均時間は約 {formatNumber(avgTimeSec, 0)} 秒です。</dd>
             </dl>
@@ -428,8 +457,8 @@ export default function PublicAnalyticsReportPanel() {
         </div>
 
         <footer className="report-footer">
-          個人を特定できる情報は含めていません。単元は {thresholds?.unitMinUsers || 5} 人以上、問題は{' '}
-          {thresholds?.questionMinUsers || 5} 人以上かつ {thresholds?.questionMinAttempts || 10} 回以上のデータだけを掲載しています。
+          単元は{thresholds?.unitMinUsers || 5}人以上、問題は{thresholds?.questionMinUsers || 5}人以上かつ
+          {thresholds?.questionMinAttempts || 10}回以上の回答があったものだけをデータとして掲載しています。
         </footer>
       </section>
     </div>

@@ -136,6 +136,8 @@
 
   body.printing-student-report {
     background: white;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   body.printing-student-report * {
@@ -193,19 +195,11 @@
   color: #6b7280;
 }
 
-.report-privacy {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  border: 1px solid #a7f3d0;
-  border-radius: 6px;
-  background: #ecfdf5;
-  padding: 0 10px;
-  font-size: 12px;
+.report-scope-note {
+  margin-top: 8px;
+  font-size: 10px;
   font-weight: 700;
-  color: #047857;
-  white-space: nowrap;
+  color: #4b5563;
 }
 
 .report-metrics {
@@ -247,6 +241,37 @@
   margin-top: 3px;
   font-size: 9px;
   color: #6b7280;
+}
+
+.report-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid #d1fae5;
+  border-radius: 6px;
+  background: #f0fdf4;
+  padding: 7px 9px;
+}
+
+.report-summary-strip div {
+  min-width: 0;
+}
+
+.report-summary-strip span {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  color: #047857;
+}
+
+.report-summary-strip b {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 900;
+  color: #111827;
 }
 
 .report-grid,
@@ -358,7 +383,7 @@
 .report-question-list article {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) 72px;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
@@ -489,10 +514,10 @@
   .report-a4-sheet {
     width: 194mm;
     min-height: 0;
-    max-height: 281mm;
+    max-height: none;
     padding: 0;
     font-size: 10px;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .report-header h2 {
@@ -510,6 +535,25 @@
 
   .report-metric b {
     font-size: 15px;
+  }
+
+  .report-scope-note {
+    margin-top: 6px;
+    font-size: 8px;
+  }
+
+  .report-summary-strip {
+    gap: 5px;
+    margin-top: 5px;
+    padding: 4px 6px;
+  }
+
+  .report-summary-strip span {
+    font-size: 7px;
+  }
+
+  .report-summary-strip b {
+    font-size: 10px;
   }
 
   .report-grid,
@@ -543,7 +587,8 @@
   }
 
   .report-question-math {
-    max-height: 20px;
+    max-height: none;
+    overflow: visible;
     margin-top: 1px;
     font-size: 9px;
     line-height: 1.25;
@@ -559,7 +604,15 @@
 
   .report-question-score i {
     max-width: 46px;
-    height: 2px;
+    height: 0;
+    border-top: 2px solid #10b981;
+    background: transparent;
+  }
+
+  .report-trend-row i {
+    height: 0;
+    border-top: 7px solid #059669;
+    background: transparent;
   }
 
   .katex {
