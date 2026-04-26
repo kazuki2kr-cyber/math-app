@@ -18,14 +18,7 @@ import {
 
 function formatGeneratedAt(value: unknown): string {
   if (!value) return '未生成';
-  if (typeof value === 'string') return new Date(value).toLocaleString('ja-JP');
-  if (typeof value === 'object' && value !== null && 'toDate' in value) {
-    const timestamp = value as { toDate?: () => Date };
-    if (typeof timestamp.toDate === 'function') {
-      return timestamp.toDate().toLocaleString('ja-JP');
-    }
-  }
-  return '未生成';
+  return toReportDate(value).toLocaleDateString('ja-JP');
 }
 
 function toReportDate(value: unknown): Date {
@@ -336,8 +329,8 @@ export default function PublicAnalyticsReportPanel() {
           <div>
             <p className="report-kicker">Formix Learning Report</p>
             <h2>{activeTitle}</h2>
-            <p className="report-muted">生成日時: {formatGeneratedAt(overview.generatedAt)}</p>
           </div>
+          <p className="report-muted">生成日: {formatGeneratedAt(overview.generatedAt)}</p>
         </header>
 
         <p className="report-scope-note">上段の主要指標は{metricScopeLabel}です。</p>
@@ -441,7 +434,7 @@ export default function PublicAnalyticsReportPanel() {
               <p>直近の日別演習回数</p>
             </div>
             <div className="report-trends">
-              {activeTrendDays.slice(-10).map((day) => (
+              {activeTrendDays.slice(-7).map((day) => (
                 <div key={day.date} className="report-trend-row">
                   <span>{day.date.slice(5)}</span>
                   <div>
