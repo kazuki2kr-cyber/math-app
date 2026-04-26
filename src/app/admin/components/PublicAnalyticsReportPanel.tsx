@@ -322,7 +322,7 @@ export default function PublicAnalyticsReportPanel() {
             <b>{formatPercent(activeInsights.initialStumbleRate)}</b>
           </div>
           <div>
-            <span>再挑戦で改善</span>
+            <span>再挑戦後の変化</span>
             <b>{formatPercent(activeInsights.retryImprovementRate)}</b>
           </div>
           <div>
@@ -444,8 +444,8 @@ export default function PublicAnalyticsReportPanel() {
               <dd>正答率の低さと演習回数を合わせた、復習優先度の目安です。</dd>
               <dt>つまずき率</dt>
               <dd>その問題で不正解になった割合です。高いほど苦戦しています。</dd>
-              <dt>再挑戦改善</dt>
-              <dd>初回より再挑戦後にどれだけ正答率が伸びたかを示します。</dd>
+              <dt>再挑戦変化</dt>
+              <dd>初回と比べて、再挑戦後の正答率がどれだけ変わったかを示します。</dd>
               <dt>初回つまずき</dt>
               <dd>最初の挑戦で不正解になった割合です。学び始めの理解の引っかかりを示します。</dd>
               <dt>共通つまずき</dt>
