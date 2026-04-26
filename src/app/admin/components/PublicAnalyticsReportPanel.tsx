@@ -353,8 +353,10 @@ export default function PublicAnalyticsReportPanel() {
                 <b>差が大きい</b>
                 {quartileWideQuestions.map((question) => (
                   <article key={`wide-${question.unitId}-${question.questionId}`}>
-                    <p>{question.unitTitle}</p>
-                    <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
+                    <div className="report-quartile-body">
+                      <p>{question.unitTitle}</p>
+                      <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
+                    </div>
                     <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
                   </article>
                 ))}
@@ -364,8 +366,10 @@ export default function PublicAnalyticsReportPanel() {
                 <b>差が小さい</b>
                 {quartileNarrowQuestions.map((question) => (
                   <article key={`narrow-${question.unitId}-${question.questionId}`}>
-                    <p>{question.unitTitle}</p>
-                    <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
+                    <div className="report-quartile-body">
+                      <p>{question.unitTitle}</p>
+                      <MathDisplay math={question.questionText} className="report-quartile-math text-[9px] leading-tight" />
+                    </div>
                     <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
                   </article>
                 ))}
