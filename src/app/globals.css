@@ -372,9 +372,21 @@
   color: #6b7280;
 }
 
-.report-quartile-grid article .math-display {
-  max-height: 22px;
-  overflow: hidden;
+.report-quartile-math {
+  display: block;
+  margin-top: 2px;
+  max-height: none;
+  overflow: visible;
+  line-height: 1.25;
+}
+
+.report-quartile-math .katex-display {
+  margin: 2px 0;
+  text-align: left;
+}
+
+.report-quartile-math .katex {
+  font-size: 0.95em;
 }
 
 .report-quartile-grid article span {
@@ -625,9 +637,19 @@
     font-size: 7px;
   }
 
-  .report-quartile-grid article .math-display {
-    max-height: 16px;
-    overflow: hidden;
+  .report-quartile-math {
+    max-height: none;
+    overflow: visible;
+    line-height: 1.18;
+  }
+
+  .report-quartile-math .katex-display {
+    margin: 1px 0;
+    text-align: left;
+  }
+
+  .report-quartile-math .katex {
+    font-size: 0.86em;
   }
 
   .report-question-list {
