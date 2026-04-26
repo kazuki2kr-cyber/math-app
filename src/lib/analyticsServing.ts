@@ -150,6 +150,14 @@ export interface PublicAnalyticsReportOverviewDoc {
     wau?: number;
     mau?: number;
   };
+  insights?: PublicAnalyticsReportInsights;
+}
+
+export interface PublicAnalyticsReportInsights {
+  initialStumbleRate?: number;
+  retryImprovementRate?: number;
+  persistentStruggleQuestions?: number;
+  coMistakePairs?: number;
 }
 
 export interface PublicAnalyticsReportTrendDoc {
@@ -170,6 +178,7 @@ export interface PublicAnalyticsReportCategoryDoc {
   totals?: PublicAnalyticsReportOverviewDoc['totals'] & {
     unitCount?: number;
   };
+  insights?: PublicAnalyticsReportInsights;
 }
 
 export interface PublicAnalyticsReportUnitDoc {

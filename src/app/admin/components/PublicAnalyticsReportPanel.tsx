@@ -56,16 +56,6 @@ function weightedAverage(
   return units.reduce((sum, unit) => sum + selector(unit) * Number(unit.totals?.totalAttempts || 0), 0) / totalWeight;
 }
 
-function sumTrendDays(days: PublicAnalyticsReportTrendDoc['days'] | undefined, selector: (day: NonNullable<PublicAnalyticsReportTrendDoc['days']>[number]) => number): number {
-  return (days || []).reduce((sum, day) => sum + selector(day), 0);
-}
-
-function weightedTrendAccuracy(days: PublicAnalyticsReportTrendDoc['days'] | undefined): number {
-  const totalAttempts = sumTrendDays(days, (day) => Number(day.totalAttempts || 0));
-  if (!totalAttempts) return 0;
-  return sumTrendDays(days, (day) => Number(day.avgAccuracy || 0) * Number(day.totalAttempts || 0)) / totalAttempts;
-}
-
 export default function PublicAnalyticsReportPanel() {
   const [overview, setOverview] = useState<PublicAnalyticsReportOverviewDoc | null>(null);
   const [trends, setTrends] = useState<PublicAnalyticsReportTrendDoc | null>(null);
@@ -145,11 +135,12 @@ export default function PublicAnalyticsReportPanel() {
     (unit) => Number(unit.totals?.retryImprovementRate || 0)
   );
   const avgTimeSec = weightedAverage(filteredUnits, (unit) => Number(unit.totals?.avgTimeSec || 0));
-  const recentSevenDays = activeTrendDays.slice(-7);
-  const recentAttempts = sumTrendDays(recentSevenDays, (day) => Number(day.totalAttempts || 0));
-  const recentStudyTimeSec = sumTrendDays(recentSevenDays, (day) => Number(day.studyTimeSec || 0));
-  const recentAccuracy = weightedTrendAccuracy(recentSevenDays);
-  const publicQuestionCount = filteredUnits.reduce((sum, unit) => sum + (unit.reviewQuestions || []).length, 0);
+  const activeInsights = selectedCategory?.insights || overview?.insights || {
+    initialStumbleRate: Math.max(0, 100 - firstAttemptAccuracy),
+    retryImprovementRate,
+    persistentStruggleQuestions: strugglingQuestions.filter((question) => Number(question.stumbleRate || 0) >= 40).length,
+    coMistakePairs: coMistakes.length,
+  };
 
   const loadReport = async (categoryKey = selectedCategoryKey) => {
     setLoading(true);
@@ -327,20 +318,20 @@ export default function PublicAnalyticsReportPanel() {
 
         <div className="report-summary-strip">
           <div>
-            <span>直近7日の演習</span>
-            <b>{formatNumber(recentAttempts)}回</b>
+            <span>初回つまずき</span>
+            <b>{formatPercent(activeInsights.initialStumbleRate)}</b>
           </div>
           <div>
-            <span>直近7日の正答率</span>
-            <b>{formatPercent(recentAccuracy)}</b>
+            <span>再挑戦で改善</span>
+            <b>{formatPercent(activeInsights.retryImprovementRate)}</b>
           </div>
           <div>
-            <span>直近7日の学習時間</span>
-            <b>{formatStudyTime(recentStudyTimeSec)}</b>
+            <span>苦戦が残る問題</span>
+            <b>{formatNumber(activeInsights.persistentStruggleQuestions)}問</b>
           </div>
           <div>
-            <span>掲載単元 / 問題</span>
-            <b>{formatNumber(filteredUnits.length)} / {formatNumber(publicQuestionCount)}</b>
+            <span>共通つまずき</span>
+            <b>{formatNumber(activeInsights.coMistakePairs)}組</b>
           </div>
         </div>
 
@@ -455,6 +446,10 @@ export default function PublicAnalyticsReportPanel() {
               <dd>その問題で不正解になった割合です。高いほど苦戦しています。</dd>
               <dt>再挑戦改善</dt>
               <dd>初回より再挑戦後にどれだけ正答率が伸びたかを示します。</dd>
+              <dt>初回つまずき</dt>
+              <dd>最初の挑戦で不正解になった割合です。学び始めの理解の引っかかりを示します。</dd>
+              <dt>共通つまずき</dt>
+              <dd>同じ人たちが一緒に間違えやすい問題の組み合わせです。</dd>
               <dt>平均時間</dt>
               <dd>この範囲の1演習あたり平均時間は約 {formatNumber(avgTimeSec, 0)} 秒です。</dd>
             </dl>
