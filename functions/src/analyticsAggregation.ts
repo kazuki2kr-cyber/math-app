@@ -1488,6 +1488,64 @@ HAVING total >= ${PUBLIC_REPORT_THRESHOLDS.questionMinAttempts}
 ORDER BY unit_id, accuracy ASC, total DESC
   `);
 
+  const quartileRows = await runQuery(bigquery, config, `
+WITH scoped_questions AS (
+  SELECT
+    'all' AS scope_type,
+    'all' AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  UNION ALL
+  SELECT
+    'category' AS scope_type,
+    category AS scope_value,
+    *
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+  WHERE category IS NOT NULL AND category != ''
+),
+user_question AS (
+  SELECT
+    scope_type,
+    scope_value,
+    unit_id,
+    question_id,
+    uid,
+    COUNT(*) AS attempts,
+    AVG(CAST(is_correct AS INT64)) * 100 AS user_accuracy
+  FROM scoped_questions
+  GROUP BY scope_type, scope_value, unit_id, question_id, uid
+),
+question_distribution AS (
+  SELECT
+    scope_type,
+    scope_value,
+    unit_id,
+    question_id,
+    COUNT(*) AS unique_users,
+    SUM(attempts) AS total,
+    AVG(user_accuracy) AS accuracy,
+    APPROX_QUANTILES(user_accuracy, 4)[OFFSET(1)] AS q1_accuracy,
+    APPROX_QUANTILES(user_accuracy, 4)[OFFSET(3)] AS q3_accuracy
+  FROM user_question
+  GROUP BY scope_type, scope_value, unit_id, question_id
+)
+SELECT
+  scope_type,
+  scope_value,
+  unit_id,
+  question_id,
+  unique_users,
+  total,
+  accuracy,
+  q1_accuracy,
+  q3_accuracy,
+  q3_accuracy - q1_accuracy AS iqr
+FROM question_distribution
+WHERE unique_users >= ${PUBLIC_REPORT_THRESHOLDS.questionMinUsers}
+  AND total >= ${PUBLIC_REPORT_THRESHOLDS.questionMinAttempts}
+ORDER BY scope_type, scope_value, iqr DESC, total DESC
+  `);
+
   const correlationRows = await runQuery(bigquery, config, `
 SELECT
   unit_id,
@@ -1633,6 +1691,49 @@ ORDER BY category, occurred_date
     categoryTrendMap.set(categoryKey, list);
   }
 
+  const quartileMap = new Map<string, { wide: any[]; narrow: any[] }>();
+  const quartileCandidates = quartileRows
+    .map((row) => {
+      const unitId = String(row.unit_id || "");
+      const unitMeta = metadata.get(unitId);
+      const questionMeta = unitMeta?.questions.find((question) => question.questionId === row.question_id);
+      const scopeType = String(row.scope_type || "");
+      const scopeValue = String(row.scope_value || "");
+      const key = scopeType === "category" ? safeServingDocId(scopeValue) : "all";
+      return {
+        key,
+        unitId,
+        unitTitle: unitMeta?.unitTitle || unitId,
+        questionId: String(row.question_id || ""),
+        questionOrder: Number(questionMeta?.questionOrder || 0),
+        questionText: questionMeta?.questionText || String(row.question_id || ""),
+        category: unitMeta?.category || scopeValue,
+        total: Number(row.total || 0),
+        uniqueUsers: Number(row.unique_users || 0),
+        accuracy: Number(row.accuracy || 0),
+        q1Accuracy: Number(row.q1_accuracy || 0),
+        q3Accuracy: Number(row.q3_accuracy || 0),
+        iqr: Number(row.iqr || 0),
+      };
+    })
+    .filter((question) => question.unitId && question.questionId);
+
+  const quartileKeys = new Set(quartileCandidates.map((question) => question.key));
+  for (const key of quartileKeys) {
+    const scoped = quartileCandidates.filter((question) => question.key === key);
+    const stripKey = ({ key: _key, ...question }: any) => question;
+    quartileMap.set(key, {
+      wide: [...scoped]
+        .sort((left, right) => right.iqr - left.iqr || right.total - left.total)
+        .slice(0, 3)
+        .map(stripKey),
+      narrow: [...scoped]
+        .sort((left, right) => left.iqr - right.iqr || right.total - left.total)
+        .slice(0, 3)
+        .map(stripKey),
+    });
+  }
+
   const coMistakePairCounts = new Map<string, number>();
   coMistakePairCounts.set("all", correlationRows.length);
   for (const row of correlationRows) {
@@ -1653,6 +1754,7 @@ ORDER BY category, occurred_date
       retryImprovementRate: Number(row.retry_improvement_rate || 0),
       persistentStruggleQuestions: Number(row.persistent_struggle_questions || 0),
       coMistakePairs: Number(coMistakePairCounts.get(key) || 0),
+      quartileQuestions: quartileMap.get(key) || { wide: [], narrow: [] },
     });
   }
 
@@ -1680,6 +1782,7 @@ ORDER BY category, occurred_date
         retryImprovementRate: 0,
         persistentStruggleQuestions: 0,
         coMistakePairs: Number(coMistakePairCounts.get(categoryKey) || 0),
+        quartileQuestions: quartileMap.get(categoryKey) || { wide: [], narrow: [] },
       },
       trends: {
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1727,11 +1830,13 @@ ORDER BY category, occurred_date
         retryImprovementRate: 0,
         persistentStruggleQuestions: 0,
         coMistakePairs: Number(coMistakePairCounts.get("all") || 0),
+        quartileQuestions: quartileMap.get("all") || { wide: [], narrow: [] },
       } : {
         initialStumbleRate: 0,
         retryImprovementRate: 0,
         persistentStruggleQuestions: 0,
         coMistakePairs: 0,
+        quartileQuestions: { wide: [], narrow: [] },
       },
     },
     categories: reportCategories,

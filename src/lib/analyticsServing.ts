@@ -158,6 +158,25 @@ export interface PublicAnalyticsReportInsights {
   retryImprovementRate?: number;
   persistentStruggleQuestions?: number;
   coMistakePairs?: number;
+  quartileQuestions?: {
+    wide?: PublicAnalyticsQuartileQuestion[];
+    narrow?: PublicAnalyticsQuartileQuestion[];
+  };
+}
+
+export interface PublicAnalyticsQuartileQuestion {
+  unitId: string;
+  unitTitle: string;
+  questionId: string;
+  questionOrder?: number;
+  questionText: string;
+  category?: string;
+  total: number;
+  uniqueUsers: number;
+  accuracy: number;
+  q1Accuracy: number;
+  q3Accuracy: number;
+  iqr: number;
 }
 
 export interface PublicAnalyticsReportTrendDoc {

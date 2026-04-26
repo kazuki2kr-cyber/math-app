@@ -6,13 +6,10 @@ import { Button } from '@/components/ui/button';
 import { MathDisplay } from '@/components/MathDisplay';
 import {
   fetchPublicAnalyticsReportCategories,
-  fetchPublicAnalyticsReportCategoryTrends,
   fetchPublicAnalyticsReportOverview,
-  fetchPublicAnalyticsReportTrends,
   fetchPublicAnalyticsReportUnits,
   type PublicAnalyticsReportCategoryDoc,
   type PublicAnalyticsReportOverviewDoc,
-  type PublicAnalyticsReportTrendDoc,
   type PublicAnalyticsReportUnitDoc,
 } from '@/lib/analyticsServing';
 
@@ -26,6 +23,32 @@ function formatGeneratedAt(value: unknown): string {
     }
   }
   return '未生成';
+}
+
+function toReportDate(value: unknown): Date {
+  if (typeof value === 'string') return new Date(value);
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    const timestamp = value as { toDate?: () => Date };
+    if (typeof timestamp.toDate === 'function') return timestamp.toDate();
+  }
+  return new Date();
+}
+
+function formatFilenameTimestamp(value: unknown): string {
+  const date = toReportDate(value);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '_',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+  ].join('');
+}
+
+function sanitizeFileSegment(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '').slice(0, 48) || '全分野';
 }
 
 function formatNumber(value: unknown, digits = 0): string {
@@ -58,7 +81,6 @@ function weightedAverage(
 
 export default function PublicAnalyticsReportPanel() {
   const [overview, setOverview] = useState<PublicAnalyticsReportOverviewDoc | null>(null);
-  const [trends, setTrends] = useState<PublicAnalyticsReportTrendDoc | null>(null);
   const [categories, setCategories] = useState<PublicAnalyticsReportCategoryDoc[]>([]);
   const [units, setUnits] = useState<PublicAnalyticsReportUnitDoc[]>([]);
   const [selectedCategoryKey, setSelectedCategoryKey] = useState('all');
@@ -77,14 +99,10 @@ export default function PublicAnalyticsReportPanel() {
 
   const activeTotals = selectedCategory?.totals || overview?.totals || {};
   const activeTitle = selectedCategory ? `${selectedCategory.category} レポート` : '全分野レポート';
+  const reportScopeName = selectedCategory?.category || '全分野';
   const metricScopeLabel = selectedCategory
     ? `${selectedCategory.category}のBigQuery集計対象全体`
     : 'BigQuery集計対象全体';
-  const activeTrendDays = trends?.days || [];
-  const maxTrendAttempts = useMemo(
-    () => Math.max(1, ...activeTrendDays.map((day) => Number(day.totalAttempts || 0))),
-    [activeTrendDays]
-  );
 
   const featuredUnits = useMemo(
     () =>
@@ -141,14 +159,15 @@ export default function PublicAnalyticsReportPanel() {
     persistentStruggleQuestions: strugglingQuestions.filter((question) => Number(question.stumbleRate || 0) >= 40).length,
     coMistakePairs: coMistakes.length,
   };
+  const quartileWideQuestions = activeInsights.quartileQuestions?.wide || [];
+  const quartileNarrowQuestions = activeInsights.quartileQuestions?.narrow || [];
 
   const loadReport = async (categoryKey = selectedCategoryKey) => {
     setLoading(true);
     setMessage(null);
     try {
-      const [overviewDoc, trendDoc, categoryDocs, unitDocs] = await Promise.all([
+      const [overviewDoc, categoryDocs, unitDocs] = await Promise.all([
         fetchPublicAnalyticsReportOverview(),
-        fetchPublicAnalyticsReportTrends(),
         fetchPublicAnalyticsReportCategories(),
         fetchPublicAnalyticsReportUnits(),
       ]);
@@ -156,13 +175,6 @@ export default function PublicAnalyticsReportPanel() {
       setOverview(overviewDoc);
       setCategories(categoryDocs.sort((left, right) => left.category.localeCompare(right.category, 'ja')));
       setUnits(unitDocs);
-
-      if (categoryKey !== 'all') {
-        const categoryTrend = await fetchPublicAnalyticsReportCategoryTrends(categoryKey);
-        setTrends(categoryTrend || { days: [] });
-      } else {
-        setTrends(trendDoc);
-      }
 
       setLoaded(true);
     } catch (error) {
@@ -173,25 +185,20 @@ export default function PublicAnalyticsReportPanel() {
     }
   };
 
-  const handleCategoryChange = async (categoryKey: string) => {
+  const handleCategoryChange = (categoryKey: string) => {
     setSelectedCategoryKey(categoryKey);
-    if (!loaded) return;
-
-    if (categoryKey === 'all') {
-      const trendDoc = await fetchPublicAnalyticsReportTrends();
-      setTrends(trendDoc);
-      return;
-    }
-
-    const categoryTrend = await fetchPublicAnalyticsReportCategoryTrends(categoryKey);
-    setTrends(categoryTrend || { days: [] });
   };
 
   const printReport = () => {
+    const previousTitle = document.title;
+    const filename = `${formatFilenameTimestamp(overview?.generatedAt)}_Formix_${sanitizeFileSegment(reportScopeName)}_分析レポート`;
+
     document.body.classList.add('printing-student-report');
+    document.title = filename;
 
     const cleanup = () => {
       document.body.classList.remove('printing-student-report');
+      document.title = previousTitle;
       window.removeEventListener('afterprint', cleanup);
     };
 
@@ -264,7 +271,7 @@ export default function PublicAnalyticsReportPanel() {
           <select
             id="report-category"
             value={selectedCategoryKey}
-            onChange={(event) => void handleCategoryChange(event.target.value)}
+            onChange={(event) => handleCategoryChange(event.target.value)}
             className="h-9 rounded-md border bg-white px-3 text-sm"
           >
             <option value="all">全分野</option>
@@ -336,22 +343,34 @@ export default function PublicAnalyticsReportPanel() {
         </div>
 
         <div className="report-grid">
-          <section className="report-panel">
+          <section className="report-panel report-quartiles">
             <div className="report-section-title">
-              <h3>最近の学習量</h3>
-              <p>直近の日別演習回数</p>
+              <h3>差がつきやすい問題</h3>
+              <p>四分位範囲が大きい/小さい問題</p>
             </div>
-            <div className="report-trends">
-              {activeTrendDays.slice(-10).map((day) => (
-                <div key={day.date} className="report-trend-row">
-                  <span>{day.date.slice(5)}</span>
-                  <div>
-                    <i style={{ width: `${Math.max(4, (Number(day.totalAttempts || 0) / maxTrendAttempts) * 100)}%` }} />
-                  </div>
-                  <b>{formatNumber(day.totalAttempts)}</b>
-                </div>
-              ))}
-              {!activeTrendDays.length && <p className="report-empty">公開基準を満たす日別データがありません。</p>}
+            <div className="report-quartile-grid">
+              <div>
+                <b>差が大きい</b>
+                {quartileWideQuestions.map((question) => (
+                  <article key={`wide-${question.unitId}-${question.questionId}`}>
+                    <p>{question.unitTitle}</p>
+                    <MathDisplay math={question.questionText} className="text-[9px] leading-tight" />
+                    <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
+                  </article>
+                ))}
+                {!quartileWideQuestions.length && <p className="report-empty">公開基準を満たす四分位データがありません。</p>}
+              </div>
+              <div>
+                <b>差が小さい</b>
+                {quartileNarrowQuestions.map((question) => (
+                  <article key={`narrow-${question.unitId}-${question.questionId}`}>
+                    <p>{question.unitTitle}</p>
+                    <MathDisplay math={question.questionText} className="text-[9px] leading-tight" />
+                    <span>IQR {formatNumber(question.iqr, 1)} / 正答率 {formatPercent(question.accuracy)}</span>
+                  </article>
+                ))}
+                {!quartileNarrowQuestions.length && <p className="report-empty">公開基準を満たす四分位データがありません。</p>}
+              </div>
             </div>
           </section>
 
