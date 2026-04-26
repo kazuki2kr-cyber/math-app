@@ -344,6 +344,46 @@
   font-weight: 800;
 }
 
+.report-quartile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.report-quartile-grid > div {
+  min-width: 0;
+}
+
+.report-quartile-grid > div > b {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10px;
+  color: #111827;
+}
+
+.report-quartile-grid article {
+  border-top: 1px solid #f3f4f6;
+  padding: 4px 0;
+}
+
+.report-quartile-grid article p {
+  font-size: 8px;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.report-quartile-grid article .math-display {
+  max-height: 22px;
+  overflow: hidden;
+}
+
+.report-quartile-grid article span {
+  display: block;
+  margin-top: 2px;
+  font-size: 8px;
+  color: #374151;
+}
+
 .report-table {
   width: 100%;
   border-collapse: collapse;
@@ -565,6 +605,29 @@
 
   .report-panel {
     padding: 7px;
+  }
+
+  .report-quartile-grid {
+    gap: 6px;
+  }
+
+  .report-quartile-grid > div > b {
+    margin-bottom: 3px;
+    font-size: 8px;
+  }
+
+  .report-quartile-grid article {
+    padding: 2px 0;
+  }
+
+  .report-quartile-grid article p,
+  .report-quartile-grid article span {
+    font-size: 7px;
+  }
+
+  .report-quartile-grid article .math-display {
+    max-height: 16px;
+    overflow: hidden;
   }
 
   .report-question-list {
