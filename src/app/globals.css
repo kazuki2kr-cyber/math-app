@@ -224,7 +224,7 @@
 
 .report-metric p,
 .report-section-title p,
-.report-question-grid article p,
+.report-question-list article p,
 .report-pairs article p {
   color: #6b7280;
 }
@@ -349,37 +349,86 @@
   margin-top: 12px;
 }
 
-.report-question-grid {
+.report-question-list {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 
-.report-question-grid article,
-.report-pairs article {
-  border-radius: 5px;
-  background: #f9fafb;
+.report-question-list article {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
   padding: 7px;
 }
 
-.report-question-grid article p,
+.report-question-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.report-question-body {
+  min-width: 0;
+}
+
+.report-question-list article p,
 .report-pairs article p {
   font-size: 9px;
   font-weight: 700;
 }
 
-.report-math {
-  height: 34px;
+.report-question-math {
+  max-height: 31px;
   overflow: hidden;
   margin-top: 3px;
   font-size: 10px;
+  line-height: 1.35;
 }
 
-.report-question-grid article span {
-  display: block;
-  margin-top: 4px;
-  font-size: 9px;
+.report-question-score {
+  position: relative;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
   color: #374151;
+}
+
+.report-question-score strong {
+  font-size: 13px;
+  line-height: 1;
+  color: #111827;
+}
+
+.report-question-score span {
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.report-question-score i {
+  display: block;
+  width: 100%;
+  max-width: 54px;
+  height: 3px;
+  border-radius: 999px;
+  background: #10b981;
+}
+
+.report-pairs article {
+  border-radius: 5px;
+  background: #f9fafb;
+  padding: 7px;
 }
 
 .report-pairs {
@@ -474,12 +523,43 @@
     padding: 7px;
   }
 
-  .report-question-grid {
-    gap: 5px;
+  .report-question-list {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
-  .report-math {
-    height: 28px;
+  .report-question-list article {
+    grid-template-columns: 18px minmax(0, 1fr) 64px;
+    gap: 6px;
+    padding: 4px 5px;
+    border-radius: 4px;
+    break-inside: avoid;
+  }
+
+  .report-question-rank {
+    width: 16px;
+    height: 16px;
+    font-size: 8px;
+  }
+
+  .report-question-math {
+    max-height: 20px;
+    margin-top: 1px;
+    font-size: 9px;
+    line-height: 1.25;
+  }
+
+  .report-question-score strong {
+    font-size: 11px;
+  }
+
+  .report-question-score span {
+    font-size: 7px;
+  }
+
+  .report-question-score i {
+    max-width: 46px;
+    height: 2px;
   }
 
   .katex {
