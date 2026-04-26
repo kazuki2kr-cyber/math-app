@@ -131,7 +131,7 @@
 @media print {
   @page {
     size: A4;
-    margin: 8mm;
+    margin: 6mm;
   }
 
   body.printing-student-report {
@@ -581,40 +581,64 @@
 
 @media print {
   .report-a4-sheet {
-    width: 194mm;
+    width: 198mm;
     min-height: 0;
     max-height: none;
     padding: 0;
-    font-size: 10px;
+    font-size: 9px;
     overflow: visible;
   }
 
+  .report-header {
+    padding-bottom: 5px;
+  }
+
+  .report-kicker {
+    font-size: 9px;
+  }
+
   .report-header h2 {
-    font-size: 20px;
+    margin-top: 0;
+    font-size: 18px;
+  }
+
+  .report-muted {
+    margin-top: 1px;
+    font-size: 9px;
   }
 
   .report-metrics {
-    gap: 5px;
-    margin-top: 8px;
+    gap: 4px;
+    margin-top: 6px;
   }
 
   .report-metric {
-    padding: 5px;
+    padding: 4px 5px;
+  }
+
+  .report-metric p {
+    font-size: 8px;
   }
 
   .report-metric b {
-    font-size: 15px;
+    margin-top: 1px;
+    font-size: 14px;
+  }
+
+  .report-metric span {
+    margin-top: 1px;
+    font-size: 7px;
   }
 
   .report-scope-note {
-    margin-top: 6px;
+    margin-top: 5px;
     font-size: 8px;
   }
 
   .report-summary-strip {
-    gap: 5px;
-    margin-top: 5px;
-    padding: 4px 6px;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 3px 6px;
   }
 
   .report-summary-strip span {
@@ -628,16 +652,29 @@
   .report-grid,
   .report-bottom-grid,
   .report-questions {
-    gap: 7px;
-    margin-top: 8px;
+    gap: 6px;
+    margin-top: 6px;
   }
 
   .report-panel {
-    padding: 7px;
+    padding: 6px;
+    break-inside: avoid;
+  }
+
+  .report-section-title {
+    margin-bottom: 5px;
+  }
+
+  .report-section-title h3 {
+    font-size: 12px;
+  }
+
+  .report-section-title p {
+    font-size: 8px;
   }
 
   .report-quartile-grid {
-    gap: 7px;
+    gap: 6px;
   }
 
   .report-quartile-grid > div > b {
@@ -677,14 +714,14 @@
   }
 
   .report-question-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px;
   }
 
   .report-question-list article {
-    grid-template-columns: 18px minmax(0, 1fr) 64px;
-    gap: 6px;
-    padding: 4px 5px;
+    grid-template-columns: 16px minmax(0, 1fr) 58px;
+    gap: 5px;
+    padding: 4px;
     border-radius: 4px;
     break-inside: avoid;
   }
@@ -699,12 +736,12 @@
     max-height: none;
     overflow: visible;
     margin-top: 1px;
-    font-size: 9px;
-    line-height: 1.25;
+    font-size: 8px;
+    line-height: 1.2;
   }
 
   .report-question-score strong {
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .report-question-score span {
@@ -712,16 +749,75 @@
   }
 
   .report-question-score i {
-    max-width: 46px;
+    max-width: 42px;
     height: 0;
     border-top: 2px solid #10b981;
     background: transparent;
   }
 
+  .report-table {
+    font-size: 8px;
+  }
+
+  .report-table th {
+    padding: 3px 4px;
+  }
+
+  .report-table td {
+    padding: 3px 4px;
+  }
+
+  .report-trends {
+    gap: 3px;
+  }
+
+  .report-trend-row {
+    grid-template-columns: 34px 1fr 28px;
+    gap: 6px;
+    font-size: 8px;
+  }
+
   .report-trend-row i {
     height: 0;
-    border-top: 7px solid #059669;
+    border-top: 6px solid #059669;
     background: transparent;
+  }
+
+  .report-pairs {
+    gap: 4px;
+  }
+
+  .report-pairs article {
+    padding: 5px;
+  }
+
+  .report-pairs article div {
+    height: 26px;
+  }
+
+  .report-pairs article p,
+  .report-pairs article b,
+  .report-question-list article p {
+    font-size: 7px;
+  }
+
+  .report-glossary dl {
+    grid-template-columns: 52px 1fr;
+    gap: 2px 6px;
+    font-size: 8px;
+    line-height: 1.28;
+  }
+
+  .report-empty {
+    padding: 6px;
+    font-size: 8px;
+  }
+
+  .report-footer {
+    margin-top: 5px;
+    padding-top: 4px;
+    font-size: 7px;
+    line-height: 1.25;
   }
 
   .katex {
