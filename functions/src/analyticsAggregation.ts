@@ -1511,6 +1511,7 @@ user_question AS (
     question_id,
     uid,
     COUNT(*) AS attempts,
+    SUM(CAST(is_correct AS INT64)) AS correct,
     AVG(CAST(is_correct AS INT64)) * 100 AS user_accuracy
   FROM scoped_questions
   GROUP BY scope_type, scope_value, unit_id, question_id, uid
@@ -1523,7 +1524,8 @@ question_distribution AS (
     question_id,
     COUNT(*) AS unique_users,
     SUM(attempts) AS total,
-    AVG(user_accuracy) AS accuracy,
+    SUM(correct) AS correct,
+    SAFE_DIVIDE(SUM(correct), NULLIF(SUM(attempts), 0)) * 100 AS accuracy,
     APPROX_QUANTILES(user_accuracy, 4)[OFFSET(1)] AS q1_accuracy,
     APPROX_QUANTILES(user_accuracy, 4)[OFFSET(3)] AS q3_accuracy
   FROM user_question
