@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsTestUser, completeDrill, dismissLevelUpModal } from './helpers';
+import { loginAsTestUser, completeDrill, dismissLevelUpModal, clickAnswerOption } from './helpers';
 
 test.describe('ドリル演習', () => {
   test.beforeEach(async ({ page }) => {
@@ -50,7 +50,7 @@ test.describe('ドリル演習', () => {
     await page.waitForURL(/\/drill\/test_unit$/, { timeout: 15000 });
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
-    await page.locator('button', { hasText: '2' }).first().click();
+    await clickAnswerOption(page, '2');
 
     const completeBtn = page.locator('button', { hasText: '演習を完了する' });
     await expect(completeBtn).toBeEnabled({ timeout: 5000 });
@@ -68,7 +68,7 @@ test.describe('ドリル演習', () => {
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
     // Q1 を選択
-    await page.locator('button', { hasText: '2' }).first().click();
+    await clickAnswerOption(page, '99');
 
     // 「次の問題へ」ボタンが表示される（最後の問題ではない）
     const nextBtn = page.locator('button', { hasText: '次の問題へ' });
@@ -87,7 +87,7 @@ test.describe('ドリル演習', () => {
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
     // Q1 を選択して次へ
-    await page.locator('button', { hasText: '2' }).first().click();
+    await clickAnswerOption(page, '99');
     await page.locator('button', { hasText: '次の問題へ' }).click();
     await page.getByText(/Question 2/).waitFor({ timeout: 5000 });
 
@@ -134,7 +134,7 @@ test.describe('ドリル演習', () => {
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
     // 不正解の選択肢 "1" を選択
-    await page.locator('button', { hasText: '1' }).first().click();
+    await clickAnswerOption(page, '1');
     await page.locator('button', { hasText: '演習を完了する' }).click();
 
     await page.waitForURL(/\/result\/test_unit/, { timeout: 15000 });
@@ -144,7 +144,10 @@ test.describe('ドリル演習', () => {
     await page.waitForURL('/', { timeout: 15000 });
 
     // 復習ボタンが表示されるはず
-    const reviewBtn = page.locator('button', { hasText: /間違えた問題のみ復習/ });
+    const reviewBtn = page
+      .locator('.group', { hasText: 'テスト単元' })
+      .first()
+      .locator('button', { hasText: /間違えた問題のみ復習/ });
     await expect(reviewBtn).toBeVisible({ timeout: 10000 });
   });
 
@@ -171,7 +174,7 @@ test.describe('ドリル演習', () => {
     await page.waitForURL(/\/drill\/test_unit$/, { timeout: 15000 });
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
-    await page.locator('button', { hasText: '1' }).first().click(); // 不正解
+    await clickAnswerOption(page, '1'); // 不正解
     await page.locator('button', { hasText: '演習を完了する' }).click();
     await page.waitForURL(/\/result\/test_unit/, { timeout: 15000 });
     await page.getByText('Result').waitFor({ timeout: 20000 });
@@ -180,14 +183,15 @@ test.describe('ドリル演習', () => {
     await page.waitForURL('/', { timeout: 15000 });
 
     // Step2: 復習モードで正解する
-    const reviewBtn = page.locator('button', { hasText: /間違えた問題のみ復習/ });
+    const targetUnitCard = page.locator('.group', { hasText: 'テスト単元' }).first();
+    const reviewBtn = targetUnitCard.locator('button', { hasText: /間違えた問題のみ復習/ });
     await reviewBtn.waitFor({ timeout: 10000 });
     await reviewBtn.click();
 
     await page.waitForURL(/\/drill\/test_unit\?mode=wrong/, { timeout: 15000 });
     await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
-    await page.locator('button', { hasText: '2' }).first().click(); // 正解
+    await clickAnswerOption(page, '2'); // 正解
     await page.locator('button', { hasText: '演習を完了する' }).click();
 
     await page.waitForURL(/\/result\/test_unit/, { timeout: 15000 });
@@ -196,10 +200,7 @@ test.describe('ドリル演習', () => {
     await page.locator('button', { hasText: 'ダッシュボードに戻る' }).click();
     await page.waitForURL('/', { timeout: 15000 });
 
-    // totalCorrect が累積されているか（ランキング行で "1" が表示）
-    const myRankRow = page
-      .locator('.flex', { has: page.locator('span', { hasText: 'You' }) })
-      .first();
-    await expect(myRankRow).toContainText('1', { timeout: 15000 });
+    // 復習で正解すると wrongQuestionIds が空になり、復習ボタンが消える。
+    await expect(targetUnitCard.locator('button', { hasText: /間違えた問題のみ復習/ })).not.toBeVisible({ timeout: 10000 });
   });
 });

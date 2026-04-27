@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 
 admin.initializeApp();
 
@@ -146,8 +146,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const unitId = (rawUnitId || "").trim();
 
   // time の検証: 1秒以上 86400秒以下（クライアント改ざん防止）
-  const time = Math.round(Number(rawTime));
-  if (!unitId || !Number.isFinite(time) || time < 1 || time > 86400 || !Array.isArray(answers)) {
+  const rawTimeNumber = Number(rawTime);
+  const time = Math.max(1, Math.round(rawTimeNumber));
+  if (!unitId || !Number.isFinite(rawTimeNumber) || rawTimeNumber < 0 || time > 86400 || !Array.isArray(answers)) {
     console.error("[processDrillResult] Missing required parameters", { unitId, rawTime, answers });
     throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
   }
@@ -273,8 +274,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     // --- 2. トランザクションによるデータ更新 ---
     const result = await db.runTransaction(async (transaction) => {
     const userRef = db.doc(`users/${uid}`);
-    const statsRef = db.doc(`units/${unitId}/stats/questions`);
-    const globalStatsRef = db.doc("stats/global");
     
     // Idempotency: attemptIdを使ってすでに記録が存在するか確認
     const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
@@ -445,8 +444,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     delete baseUpdates.unitStats;
     delete baseUpdates.lastAttemptTimes;
 
-    const statsPath = new admin.firestore.FieldPath("unitStats", unitId);
-    const lastAttemptPath = new admin.firestore.FieldPath("lastAttemptTimes", unitId);
+    const statsPath = new FieldPath("unitStats", unitId);
+    const lastAttemptPath = new FieldPath("lastAttemptTimes", unitId);
 
     // 修正: この SDK バージョンの Transaction.update () は引数を最大3つまでしか受け取らない
     //（docRef, data オブジェクト）または（docRef, fieldPath, value）形式。
@@ -469,29 +468,14 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       ]
     });
 
-    // Stats (Aggregated)
-    const statsUpdate: any = {};
-    safeCorrectQuestions.forEach((q: any) => {
-      statsUpdate[`${q.id}.correct`] = FieldValue.increment(1);
-      statsUpdate[`${q.id}.total`] = FieldValue.increment(1);
-    });
-    safeWrongQuestions.forEach((q: any) => {
-      statsUpdate[`${q.id}.total`] = FieldValue.increment(1);
-    });
-    transaction.set(statsRef, statsUpdate, { merge: true });
-
-    // Global Stats (管理画面用の集計データ)
-    const globalStatsUpdate: any = {
-      totalDrills: FieldValue.increment(1),
-      totalCorrect: FieldValue.increment(safeCorrectQuestions.length),
-      totalAnswered: FieldValue.increment(safeCorrectQuestions.length + safeWrongQuestions.length),
-      updatedAt: dateStr
-    };
-    // 新規参加者（初めてスコアを獲得するユーザー）の場合、カウンターをインクリメント
+    // Keep only the lightweight participant counter here. Drill/correct totals
+    // are derived from analytics_events by the BigQuery aggregation pipeline.
     if (isHighScore && currentTotalScore === 0) {
-      globalStatsUpdate.totalParticipants = FieldValue.increment(1);
+      transaction.set(db.doc("stats/global"), {
+        totalParticipants: FieldValue.increment(1),
+        updatedAt: dateStr,
+      }, { merge: true });
     }
-    transaction.set(globalStatsRef, globalStatsUpdate, { merge: true });
     transaction.set(analyticsEventRef, buildAttemptSubmittedAnalyticsEvent({
       now,
       attemptId: attemptDocId,

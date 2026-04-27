@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, increment, serverTimestamp } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
@@ -181,20 +181,6 @@ export default function AdminPage() {
       const snap = await getDocs(collection(db, 'units'));
       const unitsArray = snap.docs.map(d => d.data());
       
-      // stats/questions ドキュメントを一括取得 (collectionGroupを使用)
-      // IDが 'questions' のドキュメントのみを対象とする
-      const statsSnap = await getDocs(query(collectionGroup(db, 'stats')));
-      const statsMap: Record<string, any> = {};
-      
-      statsSnap.forEach(sDoc => {
-        if (sDoc.id === 'questions') {
-          // パスから unitId を抽出: units/{unitId}/stats/questions
-          const pathParts = sDoc.ref.path.split('/');
-          const unitId = pathParts[1];
-          statsMap[unitId] = sDoc.data();
-        }
-      });
-
       // stats/global を取得（総プレイ回数など）
       try {
         const globalStatsDoc = await getDoc(doc(db, 'stats', 'global'));
@@ -212,7 +198,7 @@ export default function AdminPage() {
         return {
           ...unit,
           questions,
-          stats: statsMap[unit.id] || null
+          stats: null
         };
       }));
 
@@ -359,57 +345,6 @@ export default function AdminPage() {
     setLoading(false);
   };
 
-  // --- Stats デクリメント（Attempt削除時にstatsカウンターを連動） ---
-  const decrementStatsForAttempts = async (attempts: any[]) => {
-    // unitId ごとに集計
-    const unitDecrements: Record<string, { totalDec: number; correctDec: number; perQuestion: Record<string, { total: number; correct: number }> }> = {};
-    let globalDrillsDec = 0;
-    let globalCorrectDec = 0;
-    let globalAnsweredDec = 0;
-
-    for (const att of attempts) {
-      if (!att.unitId || !att.details || !Array.isArray(att.details)) continue;
-      if (!unitDecrements[att.unitId]) {
-        unitDecrements[att.unitId] = { totalDec: 0, correctDec: 0, perQuestion: {} };
-      }
-      const ud = unitDecrements[att.unitId];
-      globalDrillsDec++;
-      for (const d of att.details) {
-        if (!d.qId) continue;
-        if (!ud.perQuestion[d.qId]) ud.perQuestion[d.qId] = { total: 0, correct: 0 };
-        ud.perQuestion[d.qId].total++;
-        ud.totalDec++;
-        globalAnsweredDec++;
-        if (d.isCorrect) {
-          ud.perQuestion[d.qId].correct++;
-          ud.correctDec++;
-          globalCorrectDec++;
-        }
-      }
-    }
-
-    // バッチで stats を更新
-    const batch = writeBatch(db);
-    for (const [unitId, ud] of Object.entries(unitDecrements)) {
-      const statsRef = doc(db, 'units', unitId, 'stats', 'questions');
-      const updates: Record<string, any> = {};
-      for (const [qId, qd] of Object.entries(ud.perQuestion)) {
-        updates[`${qId}.total`] = increment(-qd.total);
-        if (qd.correct > 0) updates[`${qId}.correct`] = increment(-qd.correct);
-      }
-      batch.update(statsRef, updates);
-    }
-    // stats/global を更新
-    if (globalDrillsDec > 0) {
-      batch.update(doc(db, 'stats', 'global'), {
-        totalDrills: increment(-globalDrillsDec),
-        totalCorrect: increment(-globalCorrectDec),
-        totalAnswered: increment(-globalAnsweredDec),
-      });
-    }
-    await batch.commit();
-  };
-
   const handleDeleteScore = async (s: any) => {
     if (!window.confirm('この得点データ(Attempt)を削除しますか？\n(獲得XPも差し引かれ、レベルが再計算される場合があります)')) return;
     setLoading(true);
@@ -456,13 +391,6 @@ export default function AdminPage() {
       if (queuedDelete) {
         queueAttemptDeletedAnalyticsEvent(deleteBatch, s, user?.uid || user?.email || 'admin', 'single_attempt_delete');
         await deleteBatch.commit();
-      }
-
-      // 3. 統計カウンターの更新
-      try {
-        await decrementStatsForAttempts([s]);
-      } catch (statsErr) {
-        console.warn('Stats decrement failed (non-critical):', statsErr);
       }
 
       setScores(scores.filter(score => score.docId !== s.docId));
@@ -583,11 +511,6 @@ export default function AdminPage() {
       const attemptsCount = attemptsSnap.size;
       const attempts = attemptsSnap.docs.map(d => ({ docId: d.id, path: d.ref.path, ...d.data() }));
 
-      // 2. 統計カウンターのデクリメント
-      if (attemptsCount > 0) {
-        await decrementStatsForAttempts(attempts);
-      }
-
       // 3. Attempts サブコレクションの全削除
       for (let i = 0; i < attempts.length; i += ANALYTICS_EVENT_BATCH_SIZE) {
         const batch = writeBatch(db);
@@ -698,13 +621,6 @@ export default function AdminPage() {
         await batch.commit();
       }
 
-      // stats カウンターを連動デクリメント
-      try {
-        await decrementStatsForAttempts(selectedItems);
-      } catch (statsErr) {
-        console.warn('Stats decrement failed (non-critical):', statsErr);
-      }
-
       setScores(scores.filter(s => !selectedScoreIds.has(s.docId)));
       setSelectedScoreIds(new Set());
       setMessage(`${actuallyDeleted}件の得点データを削除しました。`);
@@ -743,24 +659,9 @@ export default function AdminPage() {
 
       // 2. stats/global をリセット
       await setDoc(doc(db, 'stats', 'global'), {
-        totalDrills: 0,
-        totalCorrect: 0,
-        totalAnswered: 0,
         totalParticipants: 0,
         updatedAt: new Date().toISOString()
       });
-
-      // 3. 各単元の stats/questions をリセット
-      const statsSnap = await getDocs(collectionGroup(db, 'stats'));
-      for (let i = 0; i < statsSnap.docs.length; i += 400) {
-        const batch = writeBatch(db);
-        statsSnap.docs.slice(i, i + 400).forEach(d => {
-          if (d.id === 'questions') {
-            batch.set(d.ref, {});
-          }
-        });
-        await batch.commit();
-      }
 
       // 4. ユーザーデータをリセット（XP、スコア、unitStats）
       const usersSnap = await getDocs(collection(db, 'users'));
@@ -802,7 +703,7 @@ export default function AdminPage() {
         console.warn('wrong_answers の削除に失敗しました (非致命的):', e);
       }
 
-      setGlobalStats({ totalDrills: 0, totalCorrect: 0, totalAnswered: 0, totalParticipants: 0 });
+      setGlobalStats({ totalParticipants: 0 });
       setScores([]);
       setMessage('✅ すべてのプレイデータをリセットしました。');
       fetchUnits();
