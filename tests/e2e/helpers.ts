@@ -41,6 +41,20 @@ export async function dismissLevelUpModal(page: Page): Promise<void> {
   }
 }
 
+async function resolveAnswerForCurrentQuestion(page: Page, preferredAnswer: string): Promise<string> {
+  if (await findAnswerButton(page, preferredAnswer)) {
+    return preferredAnswer;
+  }
+
+  for (const answer of ['2', '4', '6']) {
+    if (await findAnswerButton(page, answer)) {
+      return answer;
+    }
+  }
+
+  return preferredAnswer;
+}
+
 /**
  * 利用規約モーダルが表示されている場合に同意して閉じる。
  */
@@ -68,6 +82,34 @@ async function dismissTermsModal(page: Page): Promise<void> {
  * @param unitCardText - ユニットカードに表示されるタイトルテキスト
  * @param answers - 問題ごとに選択するボタンテキストの配列（問題数分）
  */
+async function findAnswerButton(page: Page, answer: string) {
+  const buttons = page.locator('button');
+  const count = await buttons.count();
+
+  for (let i = 0; i < count; i++) {
+    const button = buttons.nth(i);
+    if (!(await button.isVisible().catch(() => false))) continue;
+
+    const lines = (await button.innerText().catch(() => ''))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines[lines.length - 1] === answer) {
+      return button;
+    }
+  }
+
+  return null;
+}
+
+export async function clickAnswerOption(page: Page, answer: string): Promise<void> {
+  const button = await findAnswerButton(page, answer);
+  if (!button) {
+    throw new Error(`Answer option not found: ${answer}`);
+  }
+  await button.click();
+}
+
 export async function completeDrill(
   page: Page,
   unitCardText: string,
@@ -88,7 +130,8 @@ export async function completeDrill(
   await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
 
   for (let i = 0; i < answers.length; i++) {
-    await page.locator('button', { hasText: answers[i] }).first().click();
+    const answer = await resolveAnswerForCurrentQuestion(page, answers[i]);
+    await clickAnswerOption(page, answer);
 
     if (i < answers.length - 1) {
       // 最後以外は「次の問題へ」をクリック
