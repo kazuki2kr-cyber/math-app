@@ -7,6 +7,12 @@ import { db } from '@/lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import MaintenancePage from './MaintenancePage';
 
+const KANJI_BLOCKED_UIDS = new Set([
+  'GdZWuEXgwjg1RM2GWe89JlKMwe33',
+  'mZYmoEhniqTAvsrH7CGHMCirJ253',
+  'fZKbQvIP9KTx16LxWZgll43KoD02',
+]);
+
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
@@ -40,7 +46,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
     // 特定のUIDを漢字モードからブロック
     const isKanjiMode = pathname.startsWith('/yamato') || pathname.startsWith('/kanji');
-    if (user?.uid === 'GdZWuEXgwjg1RM2GWe89JlKMwe33' && isKanjiMode) {
+    if (user?.uid && KANJI_BLOCKED_UIDS.has(user.uid) && isKanjiMode) {
       router.push('/');
     }
   }, [user, loading, maintenanceLoading, maintenance, router, pathname]);
