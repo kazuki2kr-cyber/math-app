@@ -11,6 +11,7 @@ const KANJI_BLOCKED_UIDS = new Set([
   'GdZWuEXgwjg1RM2GWe89JlKMwe33',
   'mZYmoEhniqTAvsrH7CGHMCirJ253',
   'fZKbQvIP9KTx16LxWZgll43KoD02',
+  '0fAMQvaKxjZM2auCl948z5IstiD2',
 ]);
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {

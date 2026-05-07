@@ -118,11 +118,30 @@ Codex は Claude のスラッシュコマンドをそのまま実行するわけ
 - `frontend-skill`: ランディングページ、強いビジュアル設計、UI のアートディレクションが主題のときに使う
 - `security-best-practices`: JavaScript / TypeScript / Next.js / React の一般的なセキュリティベストプラクティス確認が必要なときに使う
 
+### Google 公式スキル
+
+Google 公式の `google/skills` 由来の Codex グローバルスキルを導入済み。
+math.app は Firebase / Google Cloud / BigQuery などを扱うため、該当サービスを設計・変更・レビューする場合は、リポジトリ固有スキルを優先したうえで、不足する公式サービス観点をこれらのスキルで補う。
+
+- `firebase-basics`: Firebase 全般。math.app では必ず `firebase-best-practices` を先に確認し、公式 Firebase 観点の補助として使う
+- `gemini-api`: Gemini API / Agent Platform 連携を扱う場合
+- `bigquery-basics`: BigQuery 連携、分析基盤、エクスポート、クエリ設計を扱う場合
+- `cloud-run-basics`: Cloud Run への移行、補助サービス、コンテナ実行環境を扱う場合
+- `cloud-sql-basics` / `alloydb-basics`: Google Cloud の RDB を扱う場合
+- `gke-basics`: GKE / Kubernetes を扱う場合
+- `google-cloud-recipe-auth`: Google Cloud 認証、ADC、サービスアカウント、権限まわりを扱う場合
+- `google-cloud-recipe-onboarding`: 新しい Google Cloud プロジェクトや API 有効化の初期設定を扱う場合
+- `google-cloud-networking-observability`: Google Cloud ネットワークや監視を扱う場合
+- `google-cloud-waf-security`: Google Cloud Well-Architected Framework のセキュリティ観点が必要な場合
+- `google-cloud-waf-reliability`: 信頼性、可用性、復旧設計を扱う場合
+- `google-cloud-waf-cost-optimization`: Google Cloud コスト最適化を扱う場合
+
 ### Codex での具体的な使い分け
 
 - 通常のフロント実装: まず既存実装と `GUIDELINES.md` を優先し、必要なら `frontend-skill` を補助利用する
 - React アニメーション: `gsap-react` を優先し、見た目の完成度が重要なら `frontend-skill` も併用する
 - Firebase 変更: `firebase-best-practices` を必須、セキュリティ懸念が強い場合は `security-audit` も併用する
+- Google Cloud / Firebase / BigQuery 変更: repo 固有スキルを優先し、該当する Google 公式スキルを補助利用する
 - セキュリティ診断: まず `security-audit`、必要に応じて `security-best-practices` の Next.js / React / general web security 観点を追加する
 - CSV / PDF 系データ整備: 対応する repo スキルを必ず優先し、グローバルスキルでは代替しない
 

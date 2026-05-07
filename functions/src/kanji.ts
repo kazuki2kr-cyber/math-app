@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import vision from "@google-cloud/vision";
 
 const db = admin.firestore();
@@ -341,6 +341,22 @@ function getKanjiTitle(level: number): string {
 // ==========================================
 // 文字認識 ＆ 判定 (Document Text Detection)
 // ==========================================
+function clampScore(score: unknown): number {
+  const numericScore = Number(score || 0);
+  if (!Number.isFinite(numericScore)) return 0;
+  return Math.min(100, Math.max(0, Math.round(numericScore)));
+}
+
+function calculateKanjiTotalScore(
+  unitStats: Record<string, any>,
+  activeKanjiUnitIds: Set<string>
+): number {
+  return Object.entries(unitStats || {}).reduce((total, [statsUnitId, stats]) => {
+    if (!activeKanjiUnitIds.has(statsUnitId)) return total;
+    return total + clampScore((stats as any)?.maxScore);
+  }, 0);
+}
+
 export const recognizeKanjiBatch = functions
   .region("us-central1")
   .runWith({ timeoutSeconds: 120, memory: '1GB' })
@@ -395,6 +411,9 @@ export const recognizeKanjiBatch = functions
         throw new functions.https.HttpsError("not-found", "単元が見つかりません。");
       }
       const unitData = unitDoc.data()!;
+      if (unitData.subject !== "kanji") {
+        throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji mode.");
+      }
       let allQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
       if (allQuestions.length === 0) {
         const qSnap = await db.collection(`units/${unitId}/questions`).get();
@@ -557,6 +576,8 @@ export const recognizeKanjiBatch = functions
     // 5. XP・レベル計算 (1問正解60XP、コンボボーナス別途があれば入れる。今回はベースの60XPのみとする)
     const baseTotal = correctQuestions.length * 60;
     const finalXpGain = baseTotal;
+    const activeKanjiUnitSnap = await db.collection("units").where("subject", "==", "kanji").get();
+    const activeKanjiUnitIds = new Set(activeKanjiUnitSnap.docs.map((doc) => doc.id));
 
     // 6. Firestore の書き込み (Users, Leaderboard etc)
     let newLevel = 1;
@@ -605,6 +626,16 @@ export const recognizeKanjiBatch = functions
       correctQuestions.forEach(q => currentWrong.delete(q.id));
       wrongQuestions.forEach(q => currentWrong.add(q.id));
       const newWrongQuestionIds = Array.from(currentWrong);
+      const previousKanjiUnitStats = userSnap.exists ? userSnap.data()!.kanjiUnitStats || {} : {};
+      const nextKanjiUnitStats = {
+        ...previousKanjiUnitStats,
+        [unitId]: {
+          maxScore: Math.max(existingMaxScore, serverScore),
+          drillCount: (existingKanjiStats.drillCount || 0) + 1,
+          wrongQuestionIds: newWrongQuestionIds
+        }
+      };
+      const recalculatedKanjiTotalScore = calculateKanjiTotalScore(nextKanjiUnitStats, activeKanjiUnitIds);
 
       const userUpdate: any = {
         kanjiXp: newTotalXp,
@@ -615,6 +646,7 @@ export const recognizeKanjiBatch = functions
         kanjiNextLevelXp: newLevelData.nextLevelXp,
         kanjiUpdatedAt: Timestamp.now().toDate().toISOString(),
         kanjiIcon: "📜", // 文学・漢字を表すアイコン
+        kanjiTotalScore: recalculatedKanjiTotalScore,
         kanjiUnitStats: {
           ...(userSnap.exists ? userSnap.data()!.kanjiUnitStats || {} : {}),
           [unitId]: {
@@ -624,11 +656,6 @@ export const recognizeKanjiBatch = functions
           }
         }
       };
-
-      if (isHighScore) {
-        const diff = serverScore - existingMaxScore;
-        userUpdate.kanjiTotalScore = FieldValue.increment(diff);
-      }
 
       transaction.set(userRef, userUpdate, { merge: true });
 
