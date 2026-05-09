@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Medal, BookOpen, PenTool } from 'lucide-react';
+import { LogOut, Trophy, Medal, BookOpen, PenTool } from 'lucide-react';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -54,20 +54,7 @@ export default function KanjiDashboard() {
         const unitsSnap = await getDocs(collection(db, 'units'));
         const allUnits = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
         // subject が kanji のものだけを抽出
-        let kanjiUnits = allUnits.filter(u => u.subject === 'kanji' || u.subject === '漢字');
-        
-        // 検証用: データが空の場合はサンプルを表示
-        if (kanjiUnits.length === 0) {
-          kanjiUnits = [
-            {
-              id: 'sample-kanji-1',
-              title: '一年生のかん字（一）',
-              category: 'サンプル単元',
-              totalQuestions: 3,
-              subject: 'kanji'
-            }
-          ];
-        }
+        const kanjiUnits = allUnits.filter(u => u.subject === 'kanji' || u.subject === '漢字');
 
         kanjiUnits.sort((a, b) => a.title.localeCompare(b.title, 'ja', { numeric: true }));
 
@@ -154,8 +141,12 @@ export default function KanjiDashboard() {
 
               {units.length === 0 ? (
                 <Card className="border-dashed border-2 shadow-none bg-white/50 border-orange-900/20">
-                  <CardContent className="flex flex-col items-center justify-center p-16 text-orange-900/60">
-                    <p className="text-lg">利用可能な漢字単元がありません。</p>
+                  <CardContent className="flex flex-col items-center justify-center p-16 text-center text-orange-900/60">
+                    <BookOpen className="mb-4 h-10 w-10 text-orange-900/30" />
+                    <p className="text-lg font-bold text-orange-950">問題がありません</p>
+                    <p className="mt-2 text-sm leading-relaxed">
+                      漢字ドリルの問題が登録されると、ここに単元一覧が表示されます。
+                    </p>
                   </CardContent>
                 </Card>
               ) : (
@@ -263,49 +254,6 @@ export default function KanjiDashboard() {
                 )}
               </div>
 
-              {season1Archive?.topXpRankings?.length > 0 && (
-                <Card className="shadow-sm overflow-hidden bg-white/95 border border-amber-200">
-                  <CardHeader className="pb-3 bg-amber-50/70 border-b border-amber-100">
-                    <CardTitle className="text-base font-black text-orange-950 flex items-center gap-2">
-                      <Trophy className="w-5 h-5 text-amber-600" /> Season 1 獲得XP上位
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="divide-y divide-amber-100/80">
-                      {season1Archive.topXpRankings.slice(0, 10).map((rankUser: any, index: number) => {
-                        const certified = hasSeason1Badge(rankUser);
-
-                        return (
-                          <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
-                            <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
-                            {certified ? (
-                              <div className="relative h-8 w-8 flex-shrink-0 overflow-hidden rounded-full bg-amber-50">
-                                <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="32px" className="object-contain" />
-                              </div>
-                            ) : (
-                              <div className="h-8 w-8 flex-shrink-0 rounded-full bg-orange-50 flex items-center justify-center">
-                                <PenTool className="h-4 w-4 text-orange-500" />
-                              </div>
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-bold text-gray-800">
-                                {rankUser.name}
-                                {certified && <span className="ml-2 text-[9px] font-black text-amber-700">認証</span>}
-                              </p>
-                              <p className="text-[10px] font-semibold text-orange-900/60">Lv.{rankUser.level || 1}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-base font-black text-orange-950 leading-none">{(rankUser.xp || 0).toLocaleString()}</p>
-                              <p className="text-[9px] font-bold uppercase tracking-widest text-orange-900/40 mt-1">XP</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Ranking Section */}
               {!showRanking ? (
                 <Card className="shadow-sm border-t-4 border-t-orange-400 overflow-hidden bg-white/95 border border-orange-900/10">
@@ -400,6 +348,49 @@ export default function KanjiDashboard() {
                         })}
                       </div>
                     )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {season1Archive?.topXpRankings?.length > 0 && (
+                <Card className="shadow-sm overflow-hidden bg-white/95 border border-amber-200">
+                  <CardHeader className="pb-3 bg-amber-50/70 border-b border-amber-100">
+                    <CardTitle className="text-base font-black text-orange-950 flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-amber-600" /> Season 1 獲得XP上位
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="divide-y divide-amber-100/80">
+                      {season1Archive.topXpRankings.slice(0, 10).map((rankUser: any, index: number) => {
+                        const certified = hasSeason1Badge(rankUser);
+
+                        return (
+                          <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
+                            <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
+                            {certified ? (
+                              <div className="relative h-8 w-8 flex-shrink-0 overflow-hidden rounded-full bg-amber-50">
+                                <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="32px" className="object-contain" />
+                              </div>
+                            ) : (
+                              <div className="h-8 w-8 flex-shrink-0 rounded-full bg-orange-50 flex items-center justify-center">
+                                <PenTool className="h-4 w-4 text-orange-500" />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-bold text-gray-800">
+                                {rankUser.name}
+                                {certified && <span className="ml-2 text-[9px] font-black text-amber-700">認証</span>}
+                              </p>
+                              <p className="text-[10px] font-semibold text-orange-900/60">Lv.{rankUser.level || 1}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-base font-black text-orange-950 leading-none">{(rankUser.xp || 0).toLocaleString()}</p>
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-orange-900/40 mt-1">XP</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </CardContent>
                 </Card>
               )}
