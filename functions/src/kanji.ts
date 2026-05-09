@@ -5,6 +5,7 @@ import vision from "@google-cloud/vision";
 
 const db = admin.firestore();
 const visionClient = new vision.ImageAnnotatorClient();
+const KANJI_ACCESS_MAX_FAILURES = 3;
 
 interface RecognizedCharacter {
   text: string;
@@ -357,6 +358,79 @@ function calculateKanjiTotalScore(
   }, 0);
 }
 
+function getKanjiAccessPassword(): string {
+  return String(process.env.KANJI_ACCESS_PASSWORD || "");
+}
+
+export const verifyKanjiAccessPassword = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+    }
+
+    const uid = context.auth.uid;
+    const password = String((data as { password?: unknown })?.password || "");
+    const userRef = db.doc(`users/${uid}`);
+    const expectedPassword = getKanjiAccessPassword();
+    if (!expectedPassword) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "漢字モードのパスワードが設定されていません。"
+      );
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const userSnap = await transaction.get(userRef);
+      const userData = userSnap.exists ? userSnap.data() || {} : {};
+
+      if (userData.kanjiAccessBlocked === true) {
+        return { granted: false, blocked: true, remainingAttempts: 0 };
+      }
+
+      if (userData.kanjiAccessGranted === true) {
+        return {
+          granted: true,
+          blocked: false,
+          remainingAttempts: KANJI_ACCESS_MAX_FAILURES,
+        };
+      }
+
+      if (password === expectedPassword) {
+        transaction.set(userRef, {
+          kanjiAccessGranted: true,
+          kanjiAccessFailedCount: 0,
+          kanjiAccessBlocked: false,
+          kanjiAccessGrantedAt: Timestamp.now().toDate().toISOString(),
+        }, { merge: true });
+
+        return {
+          granted: true,
+          blocked: false,
+          remainingAttempts: KANJI_ACCESS_MAX_FAILURES,
+        };
+      }
+
+      const failedCount = Math.min(
+        Number(userData.kanjiAccessFailedCount || 0) + 1,
+        KANJI_ACCESS_MAX_FAILURES
+      );
+      const blocked = failedCount >= KANJI_ACCESS_MAX_FAILURES;
+
+      transaction.set(userRef, {
+        kanjiAccessFailedCount: failedCount,
+        kanjiAccessBlocked: blocked,
+        kanjiAccessLastFailedAt: Timestamp.now().toDate().toISOString(),
+      }, { merge: true });
+
+      return {
+        granted: false,
+        blocked,
+        remainingAttempts: Math.max(0, KANJI_ACCESS_MAX_FAILURES - failedCount),
+      };
+    });
+  });
+
 export const recognizeKanjiBatch = functions
   .region("us-central1")
   .runWith({ timeoutSeconds: 120, memory: '1GB' })
@@ -377,6 +451,14 @@ export const recognizeKanjiBatch = functions
 
     const uid = context.auth.uid;
     const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+    const accessSnap = await db.doc(`users/${uid}`).get();
+    const accessData = accessSnap.exists ? accessSnap.data() || {} : {};
+    if (accessData.kanjiAccessBlocked === true || accessData.kanjiAccessGranted !== true) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "このユーザーは漢字モードを利用できません。"
+      );
+    }
 
     // base64のプレフィックスを取り除く
     const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
