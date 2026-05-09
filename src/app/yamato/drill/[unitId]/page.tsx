@@ -98,6 +98,8 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   const [startTime, setStartTime] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const hasSubmittedRef = useRef(false);
   const [hasStrokes, setHasStrokes] = useState(false);
 
   useEffect(() => {
@@ -183,7 +185,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   }, [mode, router, unitId, user]);
 
   const handleNext = async () => {
-    if (!canvasRef.current || !hasStrokes || isSubmitting || isSubmittingRef.current) return;
+    if (!canvasRef.current || !hasStrokes || isSubmitting || isSubmittingRef.current || hasSubmittedRef.current) return;
 
     const currentQ = questions[currentIndex];
     const dataURL = canvasRef.current.toDataURL();
@@ -411,11 +413,14 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   };
 
   const handleSubmit = async (currentAnswers: Record<string, string>) => {
-    if (isSubmittingRef.current) return;
+    if (isSubmittingRef.current || hasSubmittedRef.current) return;
     isSubmittingRef.current = true;
+    hasSubmittedRef.current = true;
     setIsSubmitting(true);
+    setHasSubmitted(true);
     const timeSpentString = ((Date.now() - startTime) / 1000).toFixed(0);
     const timeSpent = parseInt(timeSpentString);
+    let completed = false;
 
     try {
       const { composedImageBase64, layout } = await buildOcrPayload(currentAnswers);
@@ -474,6 +479,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       // デバッグ用に提出した画像も一部表示できるよう保存
       sessionStorage.setItem('kanji_composed_image', composedImageBase64);
 
+      completed = true;
       router.push(`/yamato/result/${unitId}`);
       
     } catch (e: unknown) {
@@ -486,8 +492,12 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             : '不明なエラー';
       alert(`提出中にエラーが発生しました: ${message}`);
     } finally {
-      setIsSubmitting(false);
-      isSubmittingRef.current = false;
+      if (!completed) {
+        setIsSubmitting(false);
+        setHasSubmitted(false);
+        isSubmittingRef.current = false;
+        hasSubmittedRef.current = false;
+      }
     }
   };
 
@@ -608,7 +618,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             <div className="w-full max-w-[340px] mt-4">
               <Button 
                 onClick={handleNext}
-                disabled={!hasStrokes || isSubmitting}
+                disabled={!hasStrokes || isSubmitting || hasSubmitted}
                 className="w-full h-14 text-lg font-bold bg-orange-600 hover:bg-orange-700 text-white shadow-md disabled:bg-orange-200 disabled:text-orange-400"
               >
                 {isSubmitting ? (
