@@ -779,6 +779,7 @@ async function updateKanjiLeaderboard(uid: string, userName: string, icon: strin
   if (!userData) return;
 
   const totalScore = userData.kanjiTotalScore || 0;
+  const season1Badge = userData.kanjiSeasonBadges?.season1 || userData.kanjiSeason1Badge || null;
 
   const leaderboardSnap = await leaderboardRef.get();
   let rankings: any[] = [];
@@ -787,7 +788,16 @@ async function updateKanjiLeaderboard(uid: string, userName: string, icon: strin
   }
 
   const existingIdx = rankings.findIndex((r: any) => r.uid === uid);
-  const entry = { uid, name: userName, totalScore, xp, icon, level };
+  const entry = {
+    uid,
+    name: userName,
+    totalScore,
+    xp,
+    icon,
+    level,
+    certified: Boolean(season1Badge || userData.kanjiSeason1Certified === true),
+    badgeImageUrl: season1Badge?.badgeImageUrl || (userData.kanjiSeason1Certified === true ? "/images/kanji-season1-badge.png" : null),
+  };
 
   if (existingIdx >= 0) {
     rankings[existingIdx] = entry;

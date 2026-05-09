@@ -19,12 +19,19 @@ interface Unit {
   subject?: string;
 }
 
+const SEASON1_BADGE_URL = '/images/kanji-season1-badge.png';
+
+function hasSeason1Badge(data: any) {
+  return Boolean(data?.kanjiSeasonBadges?.season1 || data?.kanjiSeason1Certified === true || data?.certified === true);
+}
+
 export default function KanjiDashboard() {
   const { user, logout } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState<any>(null);
   const [overallRanking, setOverallRanking] = useState<any[]>([]);
+  const [season1Archive, setSeason1Archive] = useState<any>(null);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
   const router = useRouter();
@@ -37,6 +44,11 @@ export default function KanjiDashboard() {
         const uDoc = await getDoc(doc(db, 'users', user.uid));
         if (uDoc.exists()) {
           setUserData(uDoc.data());
+        }
+
+        const season1Doc = await getDoc(doc(db, 'leaderboards', 'kanjiSeason1'));
+        if (season1Doc.exists()) {
+          setSeason1Archive(season1Doc.data());
         }
 
         const unitsSnap = await getDocs(collection(db, 'units'));
@@ -221,6 +233,17 @@ export default function KanjiDashboard() {
                 
                 {userData ? (
                   <div className="flex flex-col gap-3">
+                    {hasSeason1Badge(userData) && (
+                      <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+                        <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-full bg-amber-100">
+                          <Image src={SEASON1_BADGE_URL} alt="Season 1 認証バッジ" fill sizes="56px" className="object-contain" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Season 1 Certified</p>
+                          <p className="text-sm font-black text-orange-950">Lv.100 到達認証</p>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex justify-between items-end border-b border-orange-100 pb-2">
                       <span className="text-xs text-orange-900/60 font-bold tracking-wider">称号 / レベル</span>
                       <div className="text-right">
@@ -239,6 +262,49 @@ export default function KanjiDashboard() {
                   </p>
                 )}
               </div>
+
+              {season1Archive?.topXpRankings?.length > 0 && (
+                <Card className="shadow-sm overflow-hidden bg-white/95 border border-amber-200">
+                  <CardHeader className="pb-3 bg-amber-50/70 border-b border-amber-100">
+                    <CardTitle className="text-base font-black text-orange-950 flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-amber-600" /> Season 1 獲得XP上位
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="divide-y divide-amber-100/80">
+                      {season1Archive.topXpRankings.slice(0, 10).map((rankUser: any, index: number) => {
+                        const certified = hasSeason1Badge(rankUser);
+
+                        return (
+                          <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
+                            <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
+                            {certified ? (
+                              <div className="relative h-8 w-8 flex-shrink-0 overflow-hidden rounded-full bg-amber-50">
+                                <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="32px" className="object-contain" />
+                              </div>
+                            ) : (
+                              <div className="h-8 w-8 flex-shrink-0 rounded-full bg-orange-50 flex items-center justify-center">
+                                <PenTool className="h-4 w-4 text-orange-500" />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-bold text-gray-800">
+                                {rankUser.name}
+                                {certified && <span className="ml-2 text-[9px] font-black text-amber-700">認証</span>}
+                              </p>
+                              <p className="text-[10px] font-semibold text-orange-900/60">Lv.{rankUser.level || 1}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-base font-black text-orange-950 leading-none">{(rankUser.xp || 0).toLocaleString()}</p>
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-orange-900/40 mt-1">XP</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Ranking Section */}
               {!showRanking ? (
@@ -313,6 +379,11 @@ export default function KanjiDashboard() {
                                 <div>
                                   <p className="font-bold text-gray-800 truncate text-sm flex items-center">
                                     {rankUser.name}
+                                    {hasSeason1Badge(rankUser) && (
+                                      <span className="relative ml-1.5 inline-block h-5 w-5 flex-shrink-0 overflow-hidden rounded-full align-middle bg-amber-50" title="Season 1 認証">
+                                        <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="20px" className="object-contain" />
+                                      </span>
+                                    )}
                                     {isCurrentUser && <span className="ml-2 text-[10px] bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded-full uppercase">You</span>}
                                   </p>
                                   <p className="text-[10px] text-orange-900/60 font-mono font-semibold">Lv.{rankUser.level || 1} / {rankUser.xp || 0} XP</p>

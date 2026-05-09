@@ -3,9 +3,9 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus } from 'lucide-react';
+import { Archive, Loader2, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { deleteField, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { deleteField, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 interface KanjiUsersTabProps {
   users: any[];
@@ -34,6 +34,78 @@ const KANJI_ACCESS_FIELDS = {
   kanjiAccessGrantedAt: deleteField(),
   kanjiAccessLastFailedAt: deleteField(),
 };
+
+const KANJI_SEASON1_ID = 'season1';
+const KANJI_SEASON1_BADGE_URL = '/images/kanji-season1-badge.png';
+
+function getUserName(user: any) {
+  return user.displayName || user.name || user.email || '名称未設定';
+}
+
+function getSeason1BadgeFields(user: any, archivedAt: string) {
+  const level = Number(user.kanjiLevel || 1);
+  if (level < 100) return {};
+
+  const badge = {
+    seasonId: KANJI_SEASON1_ID,
+    label: 'Season 1 認証',
+    title: '万葉の匠',
+    awardedAt: archivedAt,
+    level,
+    xp: Number(user.kanjiXp || 0),
+    badgeImageUrl: KANJI_SEASON1_BADGE_URL,
+  };
+
+  return {
+    kanjiSeasonBadges: {
+      [KANJI_SEASON1_ID]: badge,
+    },
+    kanjiSeason1Certified: true,
+    kanjiSeason1Badge: badge,
+  };
+}
+
+function buildSeason1Archive(users: any[], archivedAt: string) {
+  const participants = users.filter((user) => user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined);
+  const topXpRankings = participants
+    .map((user) => ({
+      uid: user.docId,
+      name: getUserName(user),
+      xp: Number(user.kanjiXp || 0),
+      level: Number(user.kanjiLevel || 1),
+      totalScore: Number(user.kanjiTotalScore || 0),
+      certified: Number(user.kanjiLevel || 1) >= 100,
+      badgeImageUrl: Number(user.kanjiLevel || 1) >= 100 ? KANJI_SEASON1_BADGE_URL : null,
+    }))
+    .sort((a, b) => {
+      if (b.xp !== a.xp) return b.xp - a.xp;
+      return b.totalScore - a.totalScore;
+    })
+    .slice(0, 10);
+
+  const certifiedUsers = participants
+    .filter((user) => Number(user.kanjiLevel || 1) >= 100)
+    .map((user) => ({
+      uid: user.docId,
+      name: getUserName(user),
+      xp: Number(user.kanjiXp || 0),
+      level: Number(user.kanjiLevel || 1),
+      totalScore: Number(user.kanjiTotalScore || 0),
+      badgeImageUrl: KANJI_SEASON1_BADGE_URL,
+    }))
+    .sort((a, b) => b.level - a.level || b.xp - a.xp);
+
+  return {
+    seasonId: KANJI_SEASON1_ID,
+    title: '漢字 Season 1',
+    archivedAt,
+    badgeImageUrl: KANJI_SEASON1_BADGE_URL,
+    participantCount: participants.length,
+    certifiedCount: certifiedUsers.length,
+    topXpRankings,
+    certifiedUsers,
+  };
+}
 
 export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage }: KanjiUsersTabProps) {
   const getKanjiAccessStatus = (user: any) => {
@@ -75,13 +147,18 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
   };
 
   const handleResetKanjiData = async (uid: string, name: string) => {
-    if (!window.confirm(`${name} の漢字関連データをすべて初期化しますか？\n\n数学のXPやレベル、試行履歴には影響しません。`)) {
+    if (!window.confirm(`${name} の漢字関連データをすべて初期化しますか？\n\nLv.100以上の場合はSeason 1認証バッジを残します。\n数学のXPやレベル、試行履歴には影響しません。`)) {
       return;
     }
 
     try {
+      const archivedAt = new Date().toISOString();
+      const targetUser = users.find((u) => u.docId === uid) || {};
       const userRef = doc(db, 'users', uid);
-      await updateDoc(userRef, KANJI_DATA_FIELDS);
+      await updateDoc(userRef, {
+        ...KANJI_DATA_FIELDS,
+        ...getSeason1BadgeFields(targetUser, archivedAt),
+      });
 
       const lbRef = doc(db, 'leaderboards', 'kanji');
       const lbSnap = await getDoc(lbRef);
@@ -116,25 +193,55 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
     }
   };
 
-  const handleResetAllKanjiData = async () => {
-    if (!window.confirm('【警告】全員の漢字関連データをすべて初期化しますか？\n\n・数学のXPやレベルには影響しません。\n・この操作は取り消せません。')) {
+  const handleArchiveSeason1 = async () => {
+    if (!window.confirm('現在の漢字データを Season 1 として保存しますか？\n\n・獲得XP上位10名をダッシュボードに残します\n・Lv.100以上のユーザーにSeason 1認証バッジを付与します\n・この操作だけではデータは削除しません')) {
       return;
     }
 
     try {
+      const archivedAt = new Date().toISOString();
+      await setDoc(doc(db, 'leaderboards', 'kanjiSeason1'), buildSeason1Archive(users, archivedAt));
+
+      const certifiedUsers = users.filter((user) => Number(user.kanjiLevel || 1) >= 100);
+      for (const user of certifiedUsers) {
+        await updateDoc(doc(db, 'users', user.docId), getSeason1BadgeFields(user, archivedAt));
+      }
+
+      setMessage(`✅ Season 1を保存しました。XP上位10名と認証バッジ対象${certifiedUsers.length}名を記録しました。`);
+      refreshUsers();
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`エラー: ${e.message}`);
+    }
+  };
+
+  const handleResetAllKanjiData = async () => {
+    if (!window.confirm('【警告】全員の漢字関連データをすべて初期化しますか？\n\n実行前に現在のデータをSeason 1として保存し、Lv.100以上には認証バッジを付与します。\n・数学のXPやレベルには影響しません。\n・この操作は取り消せません。')) {
+      return;
+    }
+
+    try {
+      const archivedAt = new Date().toISOString();
+      const archive = buildSeason1Archive(users, archivedAt);
+      await setDoc(doc(db, 'leaderboards', 'kanjiSeason1'), archive);
+
       const batchedUids = users
         .filter((u) => u.kanjiXp !== undefined || u.kanjiUnitStats !== undefined)
         .map((u) => u.docId);
 
       for (const uid of batchedUids) {
+        const targetUser = users.find((u) => u.docId === uid) || {};
         const userRef = doc(db, 'users', uid);
-        await updateDoc(userRef, KANJI_DATA_FIELDS);
+        await updateDoc(userRef, {
+          ...KANJI_DATA_FIELDS,
+          ...getSeason1BadgeFields(targetUser, archivedAt),
+        });
       }
 
       const lbRef = doc(db, 'leaderboards', 'kanji');
-      await updateDoc(lbRef, { rankings: [] });
+      await setDoc(lbRef, { rankings: [], updatedAt: archivedAt }, { merge: true });
 
-      setMessage(`✅ 全員（${batchedUids.length}名）の漢字データを初期化しました。`);
+      setMessage(`✅ Season 1を保存し、全員（${batchedUids.length}名）の漢字データを初期化しました。認証バッジ対象: ${archive.certifiedCount}名。`);
       refreshUsers();
     } catch (e: any) {
       console.error(e);
@@ -149,17 +256,27 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
           <div>
             <CardTitle className="text-orange-950">ユーザー管理（漢字データ・認証状態）</CardTitle>
             <CardDescription className="mr-4">
-              各ユーザーの数学データを保持したまま、漢字スコアや漢字モード認証状態を管理できます。
+              Season 1の記録を残しつつ、数学データを保持したまま漢字スコアや認証状態を管理できます。
             </CardDescription>
           </div>
-          <Button
-            variant="destructive"
-            onClick={handleResetAllKanjiData}
-            disabled={loading || users.length === 0}
-            className="flex-shrink-0 bg-red-600 hover:bg-red-700 text-white shadow-sm font-bold"
-          >
-            <UserMinus className="w-4 h-4 mr-2" /> 全員のデータを一括リセット
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row lg:flex-shrink-0">
+            <Button
+              variant="outline"
+              onClick={handleArchiveSeason1}
+              disabled={loading || users.length === 0}
+              className="border-amber-300 text-amber-800 hover:bg-amber-50 bg-white shadow-sm font-bold"
+            >
+              <Archive className="w-4 h-4 mr-2" /> Season 1を保存
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleResetAllKanjiData}
+              disabled={loading || users.length === 0}
+              className="bg-red-600 hover:bg-red-700 text-white shadow-sm font-bold"
+            >
+              <UserMinus className="w-4 h-4 mr-2" /> 保存して一括リセット
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -179,7 +296,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
               const hasKanjiData = user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined;
               const accessStatus = getKanjiAccessStatus(user);
               const AccessIcon = accessStatus.Icon;
-              const name = user.displayName || user.name || '名称未設定';
+              const name = getUserName(user);
+              const hasSeason1Badge = user.kanjiSeasonBadges?.season1 || user.kanjiSeason1Certified === true;
 
               return (
                 <div
@@ -189,6 +307,11 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
                   <div className="min-w-0">
                     <h3 className="font-bold text-orange-950 flex flex-wrap items-center gap-2">
                       {name}
+                      {hasSeason1Badge && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800">
+                          Season 1 認証
+                        </span>
+                      )}
                       <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono">
                         UID: {user.docId}
                       </span>
