@@ -3,7 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Archive, Loader2, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus } from 'lucide-react';
+import { Archive, Ban, Loader2, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { deleteField, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
@@ -176,6 +176,29 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
     }
   };
 
+  const handleBlockKanjiAccess = async (uid: string, name: string) => {
+    if (!window.confirm(`${name} を漢字モードからブロックしますか？\n\n・認証状態をリセットします\n・パスワード入力画面にも進めなくなります\n・管理者が「認証状態リセット」を行うと再度利用可能になります`)) {
+      return;
+    }
+
+    try {
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        kanjiAccessGranted: deleteField(),
+        kanjiAccessBlocked: true,
+        kanjiAccessFailedCount: 3,
+        kanjiAccessGrantedAt: deleteField(),
+        kanjiAccessLastFailedAt: deleteField(),
+      });
+
+      setMessage(`✅ ${name} を漢字モードからブロックしました。`);
+      refreshUsers();
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`エラー: ${e.message}`);
+    }
+  };
+
   const handleResetKanjiAccess = async (uid: string, name: string) => {
     if (!window.confirm(`${name} の漢字モード認証状態をリセットしますか？\n\n・ブロック状態を解除します\n・失敗回数を0回に戻します\n・次回アクセス時にパスワード入力が必要になります\n・漢字XPやスコアには影響しません`)) {
       return;
@@ -338,6 +361,14 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
                       className="border-amber-200 text-amber-700 hover:bg-amber-50"
                     >
                       <RotateCcw className="w-4 h-4 mr-2" /> 認証状態リセット
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleBlockKanjiAccess(user.docId, name)}
+                      disabled={user.kanjiAccessBlocked === true}
+                      className="border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40"
+                    >
+                      <Ban className="w-4 h-4 mr-2" /> リセット＋ブロック
                     </Button>
                     <Button
                       variant="outline"
