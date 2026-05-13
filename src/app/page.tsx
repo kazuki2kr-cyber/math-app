@@ -75,8 +75,9 @@ export default function Home() {
       setError(null);
       try {
         // 1. Fetch units with caching
-        const CACHE_KEY = 'math_units_cache';
+        const CACHE_KEY = 'math_units_cache_v2';
         const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day
+        localStorage.removeItem('math_units_cache'); // v1 cleanup
         const cachedUnits = localStorage.getItem(CACHE_KEY);
         let unitsData: Unit[] = [];
         
