@@ -9,7 +9,8 @@
       "Bash(python -c ' *)",
       "Bash(python -c \"import sys; [print\\(l.encode\\('utf-8', errors='replace'\\).decode\\('utf-8', errors='replace'\\)\\) for l in sys.stdin]\")",
       "Bash(find *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
