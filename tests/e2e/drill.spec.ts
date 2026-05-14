@@ -79,6 +79,61 @@ test.describe('ドリル演習', () => {
     await expect(page.getByText(/Question 2/)).toBeVisible({ timeout: 5000 });
   });
 
+  test('計算用紙は次の問題で破棄され、結果送信データに含まれない', async ({ page }) => {
+    const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
+    await unitCard.waitFor({ timeout: 10000 });
+    await unitCard.locator('button', { hasText: '演習開始' }).click();
+    await page.waitForURL(/\/drill\/test_unit_multi/, { timeout: 15000 });
+    await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
+
+    await page.getByRole('button', { name: '計算用紙を開く' }).click();
+    const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
+    await expect(undoButton).toBeDisabled({ timeout: 5000 });
+
+    const canvas = page.locator('section[aria-hidden="false"] canvas');
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Scratch paper canvas was not visible');
+
+    await page.mouse.move(box.x + 24, box.y + 24);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 160, box.y + 120);
+    await page.mouse.up();
+    await expect(undoButton).toBeEnabled({ timeout: 5000 });
+
+    await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
+    await page.getByRole('button', { name: '計算用紙を開く' }).click();
+    await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
+
+    await page.locator('button.w-full.text-left').first().click();
+    await page.locator('button', { hasText: '次の問題へ' }).click();
+    await page.getByText(/Question 2/).waitFor({ timeout: 5000 });
+
+    await page.getByRole('button', { name: '計算用紙を開く' }).click();
+    await expect(undoButton).toBeDisabled({ timeout: 5000 });
+    await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
+
+    await page.locator('button.w-full.text-left').first().click();
+    await page.locator('button', { hasText: '次の問題へ' }).click();
+    await page.getByText(/Question 3/).waitFor({ timeout: 5000 });
+    await page.locator('button.w-full.text-left').first().click();
+    await page.locator('button', { hasText: '演習を完了する' }).click();
+
+    await page.waitForURL(/\/result\/test_unit_multi/, { timeout: 15000 });
+    const storedResult = await page.evaluate(() => {
+      const raw = sessionStorage.getItem('drillResult');
+      return raw ? JSON.parse(raw) : null;
+    });
+
+    expect(storedResult).toMatchObject({
+      unitId: 'test_unit_multi',
+      totalQuestions: 3,
+    });
+    expect(storedResult).not.toHaveProperty('scratchPaper');
+    expect(storedResult).not.toHaveProperty('handwriting');
+    expect(JSON.stringify(storedResult)).not.toContain('data:image');
+  });
+
   test('「前の問題へ」ボタンで前の問題に戻れる', async ({ page }) => {
     const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
     await unitCard.waitFor({ timeout: 10000 });

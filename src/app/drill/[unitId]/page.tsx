@@ -6,9 +6,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { MathDisplay } from '@/components/MathDisplay';
+import { HandwritingCanvasRef } from '@/components/HandwritingCanvas';
+import { ScratchPaperOverlay } from '@/components/ScratchPaperOverlay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
-import { Clock, ArrowRight, XCircle, ChevronLeft } from 'lucide-react';
+import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 
 // Firestore から取得する生データ（answer_index を含む）
@@ -66,6 +68,10 @@ export default function DrillPage() {
   const [startTime, setStartTime] = useState<number>(0);
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isScratchPaperOpen, setIsScratchPaperOpen] = useState(false);
+  const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
+  const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
+  const currentQuestionId = unit?.questions?.[currentIndex]?.id ?? null;
 
   useEffect(() => {
     async function fetchUnit() {
@@ -156,6 +162,14 @@ export default function DrillPage() {
     };
   }, [unit, currentIndex, startTime]);
 
+  useEffect(() => {
+    if (!currentQuestionId) return;
+
+    setIsScratchPaperOpen(false);
+    scratchPaperRef.current?.clear();
+    setHasScratchStrokes(false);
+  }, [currentQuestionId]);
+
   const handleSelectOption = (index: number) => {
     setSelectedOption(index);
     setQuestionSelections(prev => ({ ...prev, [currentIndex]: index }));
@@ -242,13 +256,29 @@ export default function DrillPage() {
       <div className="max-w-3xl mx-auto w-full space-y-6">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={cancelDrill} className="text-muted-foreground hover:text-destructive transition-colors">
             <XCircle className="w-5 h-5 mr-1.5" strokeWidth={1.5} /> <span className="font-medium">中断する</span>
           </Button>
-          <div className="flex items-center text-primary font-mono text-xl bg-primary/10 px-4 py-1.5 rounded-full border border-primary/20 shadow-inner">
-            <Clock className="w-5 h-5 mr-2" />
-            {Math.floor(elapsed / 60).toString().padStart(2, '0')}:{(elapsed % 60).toString().padStart(2, '0')}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="計算用紙を開く"
+              onClick={() => setIsScratchPaperOpen(true)}
+              className="relative h-10 border-primary/20 bg-white/80 px-3 text-primary shadow-sm hover:bg-primary/5"
+            >
+              <NotebookPen className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">計算用紙</span>
+              {hasScratchStrokes && (
+                <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-[#F8FAEB]" />
+              )}
+            </Button>
+            <div className="flex items-center text-primary font-mono text-lg sm:text-xl bg-primary/10 px-3 sm:px-4 py-1.5 rounded-full border border-primary/20 shadow-inner">
+              <Clock className="w-5 h-5 mr-2" />
+              {Math.floor(elapsed / 60).toString().padStart(2, '0')}:{(elapsed % 60).toString().padStart(2, '0')}
+            </div>
           </div>
         </div>
 
@@ -329,6 +359,12 @@ export default function DrillPage() {
         </Card>
 
       </div>
+      <ScratchPaperOverlay
+        ref={scratchPaperRef}
+        open={isScratchPaperOpen}
+        onClose={() => setIsScratchPaperOpen(false)}
+        onChange={setHasScratchStrokes}
+      />
     </div>
   );
 }
