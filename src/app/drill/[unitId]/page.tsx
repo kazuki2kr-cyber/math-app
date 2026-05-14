@@ -362,6 +362,9 @@ export default function DrillPage() {
       <ScratchPaperOverlay
         ref={scratchPaperRef}
         open={isScratchPaperOpen}
+        questionText={currentQ.question_text}
+        questionNumber={currentIndex + 1}
+        totalQuestions={unit.questions?.length || 0}
         onClose={() => setIsScratchPaperOpen(false)}
         onChange={setHasScratchStrokes}
       />
