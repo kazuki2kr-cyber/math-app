@@ -89,6 +89,7 @@ test.describe('ドリル演習', () => {
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
+    await expect(page.locator('section[aria-hidden="false"]').getByText('Q1/3')).toBeVisible();
 
     const canvas = page.locator('section[aria-hidden="false"] canvas');
     const box = await canvas.boundingBox();

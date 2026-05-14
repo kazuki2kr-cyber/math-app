@@ -3,16 +3,20 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Eraser, RotateCcw, X } from 'lucide-react';
 import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
+import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 
 interface ScratchPaperOverlayProps {
   open: boolean;
+  questionText: string;
+  questionNumber: number;
+  totalQuestions: number;
   onClose: () => void;
   onChange?: (hasStrokes: boolean) => void;
 }
 
 export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaperOverlayProps>(
-  ({ open, onClose, onChange }, ref) => {
+  ({ open, questionText, questionNumber, totalQuestions, onClose, onChange }, ref) => {
     const [hasStrokes, setHasStrokes] = useState(false);
     const canvasRef = useRef<HandwritingCanvasRef>(null);
 
@@ -106,6 +110,17 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
               >
                 <X className="h-5 w-5" />
               </Button>
+            </div>
+          </div>
+
+          <div className="shrink-0 border-b border-gray-200 bg-white px-3 py-2 md:px-5">
+            <div className="flex min-h-10 items-center gap-3 overflow-x-auto">
+              <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary">
+                Q{questionNumber}/{totalQuestions}
+              </span>
+              <div className="min-w-0 flex-1 text-sm leading-snug text-gray-950 [&_.katex-display]:my-0 [&_.katex]:text-[1em]">
+                <MathDisplay math={questionText} />
+              </div>
             </div>
           </div>
 
