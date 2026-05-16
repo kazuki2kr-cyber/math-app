@@ -6,6 +6,19 @@ import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/Handwritin
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 
+const STROKE_WIDTH_STORAGE_KEY = 'formix:scratch-paper-stroke-width';
+const STROKE_WIDTH_OPTIONS = [
+  { id: 'standard', label: '標準', width: 4 },
+  { id: 'thin', label: '細い', width: 2.5 },
+  { id: 'extraThin', label: 'かなり細い', width: 1.5 },
+] as const;
+
+type StrokeWidthId = (typeof STROKE_WIDTH_OPTIONS)[number]['id'];
+
+function isStrokeWidthId(value: string | null): value is StrokeWidthId {
+  return STROKE_WIDTH_OPTIONS.some((option) => option.id === value);
+}
+
 interface ScratchPaperOverlayProps {
   open: boolean;
   questionText: string;
@@ -18,7 +31,14 @@ interface ScratchPaperOverlayProps {
 export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaperOverlayProps>(
   ({ open, questionText, questionNumber, totalQuestions, onClose, onChange }, ref) => {
     const [hasStrokes, setHasStrokes] = useState(false);
+    const [strokeWidthId, setStrokeWidthId] = useState<StrokeWidthId>(() => {
+      if (typeof window === 'undefined') return 'standard';
+
+      const savedStrokeWidth = window.localStorage.getItem(STROKE_WIDTH_STORAGE_KEY);
+      return isStrokeWidthId(savedStrokeWidth) ? savedStrokeWidth : 'standard';
+    });
     const canvasRef = useRef<HandwritingCanvasRef>(null);
+    const selectedStrokeWidth = STROKE_WIDTH_OPTIONS.find((option) => option.id === strokeWidthId)?.width ?? 4;
 
     const handleChange = (nextHasStrokes: boolean) => {
       setHasStrokes(nextHasStrokes);
@@ -53,6 +73,10 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
       };
     }, [open, onClose]);
 
+    useEffect(() => {
+      window.localStorage.setItem(STROKE_WIDTH_STORAGE_KEY, strokeWidthId);
+    }, [strokeWidthId]);
+
     const handleClear = () => {
       canvasRef.current?.clear();
       handleChange(false);
@@ -66,13 +90,39 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
         }`}
       >
         <div className="flex h-full flex-col bg-[#fbfbf7]">
-          <div className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 bg-white/95 px-3 shadow-sm backdrop-blur md:px-5">
+          <div className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur md:px-5">
             <div>
               <p className="text-sm font-bold text-gray-900">計算用紙</p>
               <p className="text-xs text-gray-500">次の問題へ進むと消えます</p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              <div
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
+                aria-label="ペンの太さ"
+              >
+                {STROKE_WIDTH_OPTIONS.map((option) => {
+                  const isSelected = strokeWidthId === option.id;
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      tabIndex={open ? 0 : -1}
+                      aria-label={`ペンの太さ: ${option.label}`}
+                      aria-pressed={isSelected}
+                      onClick={() => setStrokeWidthId(option.id)}
+                      className={`h-8 rounded-md px-2 text-xs font-bold transition-colors ${
+                        isSelected
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -130,7 +180,7 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
               width="100%"
               height="100%"
               onChange={handleChange}
-              strokeWidth={4}
+              strokeWidth={selectedStrokeWidth}
               strokeColor="#111827"
               className="h-full w-full !rounded-none !border-gray-200 !shadow-none"
             />
