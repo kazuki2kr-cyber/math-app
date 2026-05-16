@@ -576,27 +576,32 @@ function AnalyticsHighlights({ overview }: { overview: AnalyticsOverviewDoc | nu
   if (!totals) return null;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">稼働人数</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.dau || 0).toLocaleString()}</p>
-        <p className="text-[11px] text-muted-foreground mt-1">DAU / WAU {Number(totals.wau || 0).toLocaleString()} / MAU {Number(totals.mau || 0).toLocaleString()}</p>
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">参加人数</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.uniqueUsers || 0).toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground mt-1">重複を除いた累計ユーザー数</p>
+        </div>
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">学習量</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.totalStudyTimeSec || 0).toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground mt-1">総学習時間(秒) / 1人平均 {Number(totals.avgAttemptsPerUser || 0).toFixed(1)} attempt</p>
+        </div>
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">初回理解</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.firstAttemptAccuracy || 0).toFixed(1)}%</p>
+          <p className="text-[11px] text-muted-foreground mt-1">再挑戦改善率 {Number(totals.retryImprovementRate || 0).toFixed(1)}%</p>
+        </div>
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">要注意</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.atRiskUsers || 0).toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground mt-1">全期間で正答率が低い生徒数</p>
+        </div>
       </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">学習量</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.totalStudyTimeSec || 0).toLocaleString()}</p>
-        <p className="text-[11px] text-muted-foreground mt-1">総学習時間(秒) / 1人平均 {Number(totals.avgAttemptsPerUser || 0).toFixed(1)} attempt</p>
-      </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">初回理解</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.firstAttemptAccuracy || 0).toFixed(1)}%</p>
-        <p className="text-[11px] text-muted-foreground mt-1">再挑戦改善率 {Number(totals.retryImprovementRate || 0).toFixed(1)}%</p>
-      </div>
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">要注意</p>
-        <p className="mt-2 text-2xl font-black text-gray-900">{Number(totals.atRiskUsers || 0).toLocaleString()}</p>
-        <p className="text-[11px] text-muted-foreground mt-1">直近で正答率が低い生徒数</p>
-      </div>
+      <p className="px-1 text-[11px] text-muted-foreground">
+        上段の指標は、BigQuery に同期済みの全期間データを対象に集計しています。
+      </p>
     </div>
   );
 }

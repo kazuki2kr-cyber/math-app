@@ -767,8 +767,7 @@ at_risk AS (
     AVG(CAST(is_correct AS INT64)) * 100 AS accuracy,
     COUNT(*) AS answered_count
   FROM ${tableRef(config, "fact_attempt_question_results")}
-  WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 14 DAY)
-    ${filter ? `AND ${filter.field} = @scopeValue` : ""}
+  ${whereClause}
   GROUP BY uid
 )
 SELECT

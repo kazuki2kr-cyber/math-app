@@ -42,13 +42,12 @@ The current SQL already expects reset/delete events, but admin operations do not
 
 | Display | UI source | Serving doc field | BigQuery source / formula | Filtered today | Contains PII | Student report safe | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Active users / DAU | `AnalyticsHighlights` | `overview.totals.dau` | `COUNT(DISTINCT IF(occurred_date = CURRENT_DATE('Asia/Tokyo'), uid, NULL))` from `fact_attempts` | No | Aggregated uid count | Yes if k >= threshold | Currently global only. |
-| WAU / MAU | `AnalyticsHighlights` | `overview.totals.wau`, `overview.totals.mau` | Distinct uid counts for last 7 / 30 days from `fact_attempts` | No | Aggregated uid count | Yes if k >= threshold | Currently global only. |
+| Participants | `AnalyticsHighlights` | `overview.totals.uniqueUsers` | `COUNT(DISTINCT uid)` from `fact_attempts` | No | Aggregated uid count | Yes if k >= threshold | All-time top highlight metric. |
 | Study time | `AnalyticsHighlights` | `overview.totals.totalStudyTimeSec` | `SUM(time_sec)` from `fact_attempts` | No | No | Yes | Display is seconds. Consider formatting minutes/hours. |
 | Attempts per user | `AnalyticsHighlights` | `overview.totals.avgAttemptsPerUser` | `COUNT(*) / COUNT(DISTINCT uid)` from `fact_attempts` | No | Aggregated uid count | Yes if k >= threshold | Currently global only. |
 | First attempt accuracy | `AnalyticsHighlights` | `overview.totals.firstAttemptAccuracy` | `AVG(is_correct WHERE first uid/unit/question attempt) * 100` from `fact_attempt_question_results` | No | Aggregated uid-based metric | Yes if k >= threshold | Good metric; needs clearer label. |
 | Retry improvement rate | `AnalyticsHighlights` | `overview.totals.retryImprovementRate` | `AVG(retry is_correct) - AVG(first is_correct)` from `fact_attempt_question_results` | No | Aggregated uid-based metric | Yes if k >= threshold | Can be negative. UI should explain that. |
-| At-risk users | `AnalyticsHighlights` | `overview.totals.atRiskUsers` | Count users with at least 10 answers and <50% accuracy in last 14 days | No | Aggregated sensitive student status | No for student report | Admin-only. Do not include in public reports. |
+| At-risk users | `AnalyticsHighlights` | `overview.totals.atRiskUsers` | Count users with at least 10 answers and <50% accuracy across all synced attempts | No | Aggregated sensitive student status | No for student report | Admin-only. Do not include in public reports. |
 
 ### Overview KPI Cards
 
