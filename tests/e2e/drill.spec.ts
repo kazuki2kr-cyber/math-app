@@ -90,6 +90,12 @@ test.describe('ドリル演習', () => {
     const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
     await expect(page.locator('section[aria-hidden="false"]').getByText('Q1/3')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'ペンの太さ: 標準' })).toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByRole('button', { name: 'ペンの太さ: かなり細い' }).click();
+    await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
+    const savedStrokeWidth = await page.evaluate(() => window.localStorage.getItem('formix:scratch-paper-stroke-width'));
+    expect(savedStrokeWidth).toBe('extraThin');
 
     const canvas = page.locator('section[aria-hidden="false"] canvas');
     const box = await canvas.boundingBox();
@@ -112,6 +118,7 @@ test.describe('ドリル演習', () => {
 
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
 
     await page.locator('button.w-full.text-left').first().click();
@@ -132,7 +139,9 @@ test.describe('ドリル演習', () => {
     });
     expect(storedResult).not.toHaveProperty('scratchPaper');
     expect(storedResult).not.toHaveProperty('handwriting');
+    expect(storedResult).not.toHaveProperty('strokeWidth');
     expect(JSON.stringify(storedResult)).not.toContain('data:image');
+    expect(JSON.stringify(storedResult)).not.toContain('extraThin');
   });
 
   test('「前の問題へ」ボタンで前の問題に戻れる', async ({ page }) => {
