@@ -807,7 +807,15 @@ export default function Home() {
                 onChange={(e) => setFeedbackText(e.target.value)}
                 maxLength={1000}
                 rows={7}
-                placeholder="例: この単元でまだ出会えていない問題がありそうです"
+                placeholder={`例:
+【ほしい機能・気づいたこと】
+○○のような機能が欲しいです。
+
+【どの画面・どの単元で】
+ダッシュボード / ○○の単元
+
+【理由】
+○○のときに使いやすくなると思ったからです。`}
                 className="w-full resize-none rounded-xl border border-gray-200 bg-white p-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
                 autoFocus
               />
