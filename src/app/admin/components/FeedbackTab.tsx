@@ -2,12 +2,13 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { MessageSquare, RefreshCw } from 'lucide-react';
+import { MessageSquare, RefreshCw, Trash2 } from 'lucide-react';
 
 interface FeedbackTabProps {
   feedbackItems: any[];
   loading: boolean;
   onRefresh: () => void;
+  onDeleteFeedback: (feedback: any) => void;
 }
 
 function formatDate(value: any) {
@@ -17,7 +18,7 @@ function formatDate(value: any) {
   return date.toLocaleString('ja-JP');
 }
 
-export default function FeedbackTab({ feedbackItems, loading, onRefresh }: FeedbackTabProps) {
+export default function FeedbackTab({ feedbackItems, loading, onRefresh, onDeleteFeedback }: FeedbackTabProps) {
   return (
     <div className="space-y-4 mt-4">
       <div className="flex items-center justify-between gap-3">
@@ -43,6 +44,7 @@ export default function FeedbackTab({ feedbackItems, loading, onRefresh }: Feedb
               <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">内容</th>
               <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">ページ</th>
               <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">状態</th>
+              <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider text-center">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -69,11 +71,23 @@ export default function FeedbackTab({ feedbackItems, loading, onRefresh }: Feedb
                     {item.status || 'new'}
                   </span>
                 </td>
+                <td className="px-4 py-4 text-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => onDeleteFeedback(item)}
+                    className="h-8 px-2 text-[10px] font-bold text-red-500 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" />
+                    削除
+                  </Button>
+                </td>
               </tr>
             ))}
             {feedbackItems.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-gray-400 italic">
+                <td colSpan={6} className="px-4 py-12 text-center text-gray-400 italic">
                   まだフィードバックはありません。
                 </td>
               </tr>

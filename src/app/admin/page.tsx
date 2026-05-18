@@ -155,6 +155,24 @@ export default function AdminPage() {
     setLoading(false);
   };
 
+  const handleDeleteFeedback = async (feedback: any) => {
+    if (!feedback?.id) return;
+    const preview = String(feedback.message || '').slice(0, 80);
+    if (!window.confirm(`このフィードバックを削除しますか？\n\n${preview}`)) return;
+
+    setLoading(true);
+    setMessage('');
+    try {
+      await deleteDoc(doc(db, 'user_feedback', feedback.id));
+      setFeedbackItems(prev => prev.filter(item => item.id !== feedback.id));
+      setMessage('フィードバックを削除しました。');
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`フィードバックの削除に失敗しました: ${e.message || e}`);
+    }
+    setLoading(false);
+  };
+
   const handleUpdateMaintenance = async () => {
     setMaintenanceUpdateLoading(true);
     try {
@@ -1016,6 +1034,7 @@ export default function AdminPage() {
           feedbackItems={feedbackItems}
           loading={loading}
           onRefresh={fetchFeedback}
+          onDeleteFeedback={handleDeleteFeedback}
         />
       )}
 
