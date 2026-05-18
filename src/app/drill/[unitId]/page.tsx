@@ -258,6 +258,7 @@ export default function DrillPage() {
         unitId,
         unitTitle: unit.title,
         totalQuestions: unit.questions?.length || 0,
+        mode: unit.mode,
         time: finalTime,
         answers: allAnswers,
       };

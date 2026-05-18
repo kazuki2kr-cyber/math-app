@@ -8,6 +8,8 @@ const db = admin.firestore();
 const auth = admin.auth();
 const STANDARD_XP_QUESTION_COUNT = 10;
 
+type DrillMode = "standard" | "wrong" | "all";
+
 type AttemptSubmittedQuestionResult = {
   questionId: string;
   questionOrder: number;
@@ -20,6 +22,14 @@ function clampString(value: unknown, maxLength: number): string {
 
 function buildLogicalDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function calculateServerScore(correctCount: number, totalAnswered: number, mode: DrillMode): number {
+  if (mode === "all") {
+    return totalAnswered > 0 ? Math.min(100, Math.round((correctCount / totalAnswered) * 100)) : 0;
+  }
+
+  return Math.min(100, correctCount * 10);
 }
 
 function buildAttemptSubmittedAnalyticsEvent(params: {
@@ -35,6 +45,7 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
   xpGain: number;
   correctCount: number;
   answeredCount: number;
+  mode: DrillMode;
   questionResults: AttemptSubmittedQuestionResult[];
 }) {
   return {
@@ -53,6 +64,7 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
     xpGain: params.xpGain,
     correctCount: params.correctCount,
     answeredCount: params.answeredCount,
+    mode: params.mode,
     source: "processDrillResult",
     questionResults: params.questionResults,
   };
@@ -180,8 +192,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("permission-denied", "このサービスの対象外アカウントです。");
   }
 
-  const { attemptId, unitId: rawUnitId, time: rawTime, answers } = data as any;
+  const { attemptId, unitId: rawUnitId, time: rawTime, answers, mode: rawMode } = data as any;
   const unitId = (rawUnitId || "").trim();
+  const drillMode: DrillMode = rawMode === "all" ? "all" : rawMode === "wrong" ? "wrong" : "standard";
 
   // time の検証: 1秒以上 86400秒以下（クライアント改ざん防止）
   const rawTimeNumber = Number(rawTime);
@@ -278,9 +291,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   }
 
   const totalAnswered = safeAnswers.length;
-  const serverScore: number = totalAnswered > 0
-    ? Math.min(100, Math.round((safeCorrectQuestions.length / totalAnswered) * 100))
-    : 0;
+  const serverScore = calculateServerScore(safeCorrectQuestions.length, totalAnswered, drillMode);
 
   // XP計算（正解順序によるコンボボーナスを含む）
   let baseTotal = 0;
@@ -507,6 +518,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     transaction.set(attemptRef, {
       uid, userName, // Admin画面でAttemptsベースの集計をするためにuid/userNameを保存
       unitId, unitTitle, score: serverScore, time, date: dateStr,
+      mode: drillMode,
       xpGain: finalXpGain,
       answeredCount: totalAnswered,
       expireAt: Timestamp.fromDate(expireAt),
@@ -537,6 +549,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       xpGain: finalXpGain,
       correctCount: safeCorrectQuestions.length,
       answeredCount: safeCorrectQuestions.length + safeWrongQuestions.length,
+      mode: drillMode,
       questionResults: questionResultsForAnalytics,
     }));
 

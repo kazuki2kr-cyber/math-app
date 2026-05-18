@@ -17,6 +17,7 @@ interface StoredDrillData {
   unitId: string;
   unitTitle: string;
   totalQuestions: number;
+  mode?: 'standard' | 'wrong' | 'all';
   time: number;
   answers: Array<{ questionId: string; selectedOptionText: string }>;
 }
@@ -104,6 +105,7 @@ export default function ResultPage() {
           attemptId: parsed.attemptId,
           unitId,
           unitTitle: parsed.unitTitle,
+          mode: parsed.mode || 'standard',
           time: parsed.time,
           answers: parsed.answers,
         }),

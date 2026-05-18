@@ -12,9 +12,15 @@
 
 const STANDARD_XP_QUESTION_COUNT = 10;
 
-/** スコア計算: 問題数に依存しない正答率ベース */
-function calculateScore(correctCount: number, totalAnswered: number): number {
-  return totalAnswered > 0 ? Math.min(100, Math.round((correctCount / totalAnswered) * 100)) : 0;
+type DrillMode = 'standard' | 'wrong' | 'all';
+
+/** スコア計算: 通常・間違い直しは10点刻み、全問演習は割合ベース */
+function calculateScore(correctCount: number, totalAnswered: number, mode: DrillMode = 'standard'): number {
+  if (mode === 'all') {
+    return totalAnswered > 0 ? Math.min(100, Math.round((correctCount / totalAnswered) * 100)) : 0;
+  }
+
+  return Math.min(100, correctCount * 10);
 }
 
 /** XP 逓減レート: drillCount（0始まり）に基づく乗算係数 */
@@ -95,13 +101,17 @@ function updateWrongAnswers(
 // ─────────────────────────────────────────────────────────
 
 describe('スコア計算 (calculateScore)', () => {
-  test('全問正解 (10問) → 100点', () => expect(calculateScore(10, 10)).toBe(100));
-  test('半分正解 (5/10) → 50点', () => expect(calculateScore(5, 10)).toBe(50));
-  test('全問不正解 (0/10) → 0点', () => expect(calculateScore(0, 10)).toBe(0));
-  test('1/10 正解 → 10点', () => expect(calculateScore(1, 10)).toBe(10));
-  test('15/30 正解 → 50点', () => expect(calculateScore(15, 30)).toBe(50));
-  test('29/30 正解は四捨五入される', () => expect(calculateScore(29, 30)).toBe(97));
-  test('totalAnswered=0 の場合は 0点', () => expect(calculateScore(0, 0)).toBe(0));
+  test('通常演習: 1問だけ正解した場合は10点', () => expect(calculateScore(1, 1, 'standard')).toBe(10));
+  test('通常演習: 5問正解した場合は50点', () => expect(calculateScore(5, 5, 'standard')).toBe(50));
+  test('通常演習: 10問正解した場合は100点', () => expect(calculateScore(10, 10, 'standard')).toBe(100));
+  test('通常演習: 11問以上正解しても100点で上限', () => expect(calculateScore(15, 15, 'standard')).toBe(100));
+  test('間違い直し: 1問だけ正解した場合は10点', () => expect(calculateScore(1, 1, 'wrong')).toBe(10));
+  test('間違い直し: 3問正解した場合は30点', () => expect(calculateScore(3, 3, 'wrong')).toBe(30));
+  test('全問演習: 1問だけの単元を全問正解した場合は100点', () => expect(calculateScore(1, 1, 'all')).toBe(100));
+  test('全問演習: 15/30 正解 → 50点', () => expect(calculateScore(15, 30, 'all')).toBe(50));
+  test('全問演習: 29/30 正解は四捨五入される', () => expect(calculateScore(29, 30, 'all')).toBe(97));
+  test('全問演習: 50問全問正解でも100点で上限', () => expect(calculateScore(50, 50, 'all')).toBe(100));
+  test('totalAnswered=0 の場合は 0点', () => expect(calculateScore(0, 0, 'all')).toBe(0));
 });
 
 describe('XP 逓減レート (getXpRateMultiplier)', () => {
