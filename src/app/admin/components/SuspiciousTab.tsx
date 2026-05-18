@@ -30,12 +30,11 @@ export default function SuspiciousTab({
   onDeleteScore, onIgnoreSuspicious, onBatchAction,
   onSetUnitForStats, onSwitchToAnalytics, onRefresh,
 }: SuspiciousTabProps) {
-  const QUESTIONS_PER_DRILL = 10;
-
   const suspiciousScores = scores
     .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
     .map(s => {
-      const avgPerQ = s.time / QUESTIONS_PER_DRILL;
+      const answeredCount = s.answeredCount || (Array.isArray(s.details) ? s.details.length : 10);
+      const avgPerQ = s.time / Math.max(1, answeredCount);
       let flag: 'red' | 'yellow' | 'green' = 'green';
       if (avgPerQ <= 3) flag = 'red';
       else if (avgPerQ <= 5) flag = 'yellow';

@@ -2,10 +2,11 @@
 
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp'; import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle } from 'lucide-react';
 import Image from 'next/image';
-import { db } from '@/lib/firebase';
+import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
@@ -58,6 +59,10 @@ export default function Home() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsChecked, setTermsChecked] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackStatus, setFeedbackStatus] = useState('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -183,6 +188,28 @@ export default function Home() {
     router.push(`/drill/${unitId}`);
   };
 
+  const handleSubmitFeedback = async () => {
+    const message = feedbackText.trim();
+    if (!message || feedbackSubmitting) return;
+    setFeedbackSubmitting(true);
+    setFeedbackStatus('');
+    try {
+      const submitFeedback = httpsCallable(functions, 'submitFeedback');
+      await submitFeedback({
+        message,
+        pagePath: typeof window !== 'undefined' ? window.location.pathname : '/',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      });
+      setFeedbackText('');
+      setFeedbackStatus('送信しました。ありがとうございます。');
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
+      setFeedbackStatus('送信に失敗しました。時間をおいてもう一度お試しください。');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
   // ランキング読み込み（ボタン押下時のみ）
   const loadRanking = async () => {
     if (!user) return;
@@ -264,6 +291,16 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFeedbackModalOpen(true)}
+            className="inline-flex border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 font-bold"
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            <span className="hidden md:inline">意見を送る</span>
+            <span className="md:hidden">意見</span>
+          </Button>
           <span className="text-sm font-medium text-gray-700 hidden sm:inline-block bg-gray-100 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-muted-foreground font-normal ml-1">さん</span>
           </span>
@@ -492,6 +529,15 @@ export default function Home() {
                               <PlayCircle className="w-4 h-4 mr-2" />
                               演習開始
                             </Button>
+                            <Button
+                              variant="outline"
+                              className="w-full shadow-sm hover:shadow-md transition-shadow border-primary/20 bg-white text-primary text-xs font-bold"
+                              onClick={() => router.push(`/drill/${unit.id}?mode=all`)}
+                              disabled={totalQ === 0}
+                            >
+                              <PlayCircle className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                              全問に取り組む ({totalQ}問)
+                            </Button>
                             {wrongAnswers[unit.id] > 0 && (
                               <Button
                                 variant="secondary"
@@ -628,6 +674,31 @@ export default function Home() {
                   </CardContent>
                 </Card>
               )}
+
+              <Card className="shadow-sm border-t-4 border-t-primary overflow-hidden bg-white/95">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-extrabold text-gray-900 flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-primary" />
+                    フィードバック
+                  </CardTitle>
+                  <CardDescription className="text-xs leading-relaxed">
+                    Formix を少しずつみんなで良くしていくための入り口です。<br />
+                    小さな気づきも歓迎しています！
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-gray-600">
+                  <Button
+                    onClick={() => setIsFeedbackModalOpen(true)}
+                    className="w-full shadow-sm font-bold"
+                  >
+                    <MessageSquare className="w-4 h-4 mr-2" />
+                    フィードバックを書く
+                  </Button>
+                  {feedbackStatus && (
+                    <p className="text-xs font-medium text-primary">{feedbackStatus}</p>
+                  )}
+                </CardContent>
+              </Card>
             </div>
 
           </div>
@@ -706,6 +777,60 @@ export default function Home() {
             >
               {savingTerms ? '処理中...' : '同意して学習を始める'}
             </Button>
+          </div>
+        </div>
+      )}
+
+      {isFeedbackModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl scale-in-center">
+            <div className="p-6 border-b bg-gray-50 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5 text-primary" />
+                  フィードバックを送る
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">Formixを少しずつ良くするための入口です。</p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setIsFeedbackModalOpen(false)} className="hover:bg-gray-200">
+                <XCircle className="w-5 h-5" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="rounded-xl border border-primary/10 bg-primary/5 p-4 text-sm leading-relaxed text-gray-700 space-y-2">
+                <p>些細なことでも送ってください。アプリケーションに対する率直な感想、あったら嬉しい機能、気が付いた不具合やバグなど、小さな一言でも助かります。</p>
+                <p>開発コスト、運用負荷、セキュリティなどを考えながら可能な限り実装していきます。</p>
+                <p>多くの意見があるほど優先順位を決めやすくなります。どんな内容でも遠慮なく送ってください。</p>
+              </div>
+              <textarea
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                maxLength={1000}
+                rows={7}
+                placeholder="例: この単元でまだ出会えていない問題がありそうです"
+                className="w-full resize-none rounded-xl border border-gray-200 bg-white p-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                autoFocus
+              />
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] text-muted-foreground">{feedbackText.length}/1000</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={() => setIsFeedbackModalOpen(false)} disabled={feedbackSubmitting}>
+                    閉じる
+                  </Button>
+                  <Button
+                    onClick={handleSubmitFeedback}
+                    disabled={!feedbackText.trim() || feedbackSubmitting}
+                    className="font-bold shadow-sm"
+                  >
+                    {feedbackSubmitting ? '送信中...' : '送信する'}
+                    <Send className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
+              </div>
+              {feedbackStatus && (
+                <p className="text-xs font-medium text-primary">{feedbackStatus}</p>
+              )}
+            </div>
           </div>
         </div>
       )}

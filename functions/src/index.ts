@@ -6,12 +6,17 @@ admin.initializeApp();
 
 const db = admin.firestore();
 const auth = admin.auth();
+const STANDARD_XP_QUESTION_COUNT = 10;
 
 type AttemptSubmittedQuestionResult = {
   questionId: string;
   questionOrder: number;
   isCorrect: boolean;
 };
+
+function clampString(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
 
 function buildLogicalDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -113,7 +118,40 @@ export const setAdminClaim = functions.region("us-central1").https.onCall(async 
 });
 
 // ==========================================
-// 2. processDrillResult — 演習結果の統合処理
+// 2. submitFeedback — アプリ内フィードバックの受付
+// ==========================================
+export const submitFeedback = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+  }
+
+  const message = clampString((data as any)?.message, 1000);
+  const pagePath = clampString((data as any)?.pagePath, 200) || "/";
+  const userAgent = clampString((data as any)?.userAgent, 300);
+
+  if (message.length < 2) {
+    throw new functions.https.HttpsError("invalid-argument", "フィードバック本文を入力してください。");
+  }
+
+  const now = Timestamp.now();
+  await db.collection("user_feedback").add({
+    message,
+    pagePath,
+    userAgent,
+    source: "formix",
+    status: "new",
+    uid: context.auth.uid,
+    userName: context.auth.token?.name || "",
+    userEmail: context.auth.token?.email || "",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return { success: true };
+});
+
+// ==========================================
+// 3. processDrillResult — 演習結果の統合処理
 // ==========================================
 // 選択肢をパース（Firestore の options フィールドが文字列の場合も対応）
 function parseOptionsServer(options: any): string[] {
@@ -240,7 +278,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   }
 
   const totalAnswered = safeAnswers.length;
-  const serverScore: number = Math.min(100, safeCorrectQuestions.length * 10);
+  const serverScore: number = totalAnswered > 0
+    ? Math.min(100, Math.round((safeCorrectQuestions.length / totalAnswered) * 100))
+    : 0;
 
   // XP計算（正解順序によるコンボボーナスを含む）
   let baseTotal = 0;
@@ -260,7 +300,14 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   if (correctRatio === 1) multiplier = 1.5;
   else if (correctRatio >= 0.7) multiplier = 1.0;
   else if (correctRatio >= 0.5) multiplier = 0.5;
-  const preMultiplierXp = baseTotal + comboTotal;
+  // 全問モードで50問以上を解いても、XPの上限は標準の10問演習と同等に抑える。
+  // base は線形、combo は連続正解が問題数の二乗で増えるため二乗スケールで正規化する。
+  const questionCountFactor = totalAnswered > 0
+    ? Math.min(1, STANDARD_XP_QUESTION_COUNT / totalAnswered)
+    : 0;
+  const normalizedBaseTotal = Math.round(baseTotal * questionCountFactor);
+  const normalizedComboTotal = Math.round(comboTotal * questionCountFactor * questionCountFactor);
+  const preMultiplierXp = normalizedBaseTotal + normalizedComboTotal;
   // finalXpGain・xpDetails はトランザクション内で drillCount 参照後に確定
 
   // alreadyProcessed 時に返すための結果オブジェクト（問題の詳細を含む）
@@ -350,8 +397,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     const finalXpGain = Math.floor(preMultiplierXp * multiplier * xpRateMultiplier);
     const xpDetailsResult = {
-      base: baseTotal,
-      combo: comboTotal,
+      base: normalizedBaseTotal,
+      combo: normalizedComboTotal,
       multiplier,
       multiplierBonus: finalXpGain - preMultiplierXp,
       finalXp: finalXpGain,
@@ -461,6 +508,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       uid, userName, // Admin画面でAttemptsベースの集計をするためにuid/userNameを保存
       unitId, unitTitle, score: serverScore, time, date: dateStr,
       xpGain: finalXpGain,
+      answeredCount: totalAnswered,
       expireAt: Timestamp.fromDate(expireAt),
       details: [
         ...safeCorrectQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),

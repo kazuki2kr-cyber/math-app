@@ -10,9 +10,11 @@
 // functions/src/index.ts から抜き出した純粋ロジック
 // ─────────────────────────────────────────────────────────
 
-/** スコア計算: min(100, 正解数 × 10) */
-function calculateScore(correctCount: number): number {
-  return Math.min(100, correctCount * 10);
+const STANDARD_XP_QUESTION_COUNT = 10;
+
+/** スコア計算: 問題数に依存しない正答率ベース */
+function calculateScore(correctCount: number, totalAnswered: number): number {
+  return totalAnswered > 0 ? Math.min(100, Math.round((correctCount / totalAnswered) * 100)) : 0;
 }
 
 /** XP 逓減レート: drillCount（0始まり）に基づく乗算係数 */
@@ -57,7 +59,14 @@ function calculateXpComponents(answerOrder: boolean[]): {
   const correctCount = answerOrder.filter(Boolean).length;
   const multiplier = getCorrectRatioMultiplier(correctCount, totalAnswered);
 
-  return { baseTotal, comboTotal, multiplier };
+  const questionCountFactor = totalAnswered > 0
+    ? Math.min(1, STANDARD_XP_QUESTION_COUNT / totalAnswered)
+    : 0;
+  return {
+    baseTotal: Math.round(baseTotal * questionCountFactor),
+    comboTotal: Math.round(comboTotal * questionCountFactor * questionCountFactor),
+    multiplier,
+  };
 }
 
 /** 最終 XP: floor((base + combo) × 倍率 × 逓減レート) */
@@ -86,12 +95,13 @@ function updateWrongAnswers(
 // ─────────────────────────────────────────────────────────
 
 describe('スコア計算 (calculateScore)', () => {
-  test('全問正解 (10問) → 100点', () => expect(calculateScore(10)).toBe(100));
-  test('半分正解 (5問) → 50点', () => expect(calculateScore(5)).toBe(50));
-  test('全問不正解 (0問) → 0点', () => expect(calculateScore(0)).toBe(0));
-  test('1問正解 → 10点', () => expect(calculateScore(1)).toBe(10));
-  test('10問超え正解でも 100 にクランプされる', () => expect(calculateScore(15)).toBe(100));
-  test('9問正解 → 90点', () => expect(calculateScore(9)).toBe(90));
+  test('全問正解 (10問) → 100点', () => expect(calculateScore(10, 10)).toBe(100));
+  test('半分正解 (5/10) → 50点', () => expect(calculateScore(5, 10)).toBe(50));
+  test('全問不正解 (0/10) → 0点', () => expect(calculateScore(0, 10)).toBe(0));
+  test('1/10 正解 → 10点', () => expect(calculateScore(1, 10)).toBe(10));
+  test('15/30 正解 → 50点', () => expect(calculateScore(15, 30)).toBe(50));
+  test('29/30 正解は四捨五入される', () => expect(calculateScore(29, 30)).toBe(97));
+  test('totalAnswered=0 の場合は 0点', () => expect(calculateScore(0, 0)).toBe(0));
 });
 
 describe('XP 逓減レート (getXpRateMultiplier)', () => {
@@ -152,6 +162,20 @@ describe('XP コンボ計算 (calculateXpComponents)', () => {
     expect(baseTotal).toBe(10);
     expect(comboTotal).toBe(1);
   });
+
+  test('全問正解 30問は10問相当に正規化される', () => {
+    const { baseTotal, comboTotal, multiplier } = calculateXpComponents(Array(30).fill(true));
+    expect(baseTotal).toBe(100);
+    expect(comboTotal).toBe(52);
+    expect(multiplier).toBe(1.5);
+  });
+
+  test('全問正解 50問でも10問相当の上限内に収まる', () => {
+    const { baseTotal, comboTotal, multiplier } = calculateXpComponents(Array(50).fill(true));
+    expect(baseTotal).toBe(100);
+    expect(comboTotal).toBeLessThanOrEqual(55);
+    expect(multiplier).toBe(1.5);
+  });
 });
 
 describe('最終 XP 計算 (calculateFinalXp)', () => {
@@ -178,6 +202,23 @@ describe('最終 XP 計算 (calculateFinalXp)', () => {
   test('1問正解・初回 (1問構成): XP = floor((10+1) * 1.5 * 1.0) = 16', () => {
     const xp = calculateFinalXp([true], 0);
     expect(xp).toBe(16);
+  });
+
+  test('30問全問正解・初回でも10問満点時と同程度に正規化される', () => {
+    const xp = calculateFinalXp(Array(30).fill(true), 0);
+    expect(xp).toBe(Math.floor((100 + 52) * 1.5));
+  });
+
+  test('50問全問正解・初回でも10問満点時のXPを超えない', () => {
+    const tenQuestionXp = calculateFinalXp(Array(10).fill(true), 0);
+    const fiftyQuestionXp = calculateFinalXp(Array(50).fill(true), 0);
+    expect(fiftyQuestionXp).toBeLessThanOrEqual(tenQuestionXp);
+  });
+
+  test('100問全問正解・初回でも10問満点時のXPを超えない', () => {
+    const tenQuestionXp = calculateFinalXp(Array(10).fill(true), 0);
+    const hundredQuestionXp = calculateFinalXp(Array(100).fill(true), 0);
+    expect(hundredQuestionXp).toBeLessThanOrEqual(tenQuestionXp);
   });
 });
 

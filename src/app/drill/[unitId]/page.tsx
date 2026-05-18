@@ -13,6 +13,10 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter }
 import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 
+const STANDARD_DRILL_QUESTION_COUNT = 10;
+
+type DrillMode = 'standard' | 'wrong' | 'all';
+
 // Firestore から取得する生データ（answer_index を含む）
 // answer_index は選択肢シャッフル処理のみに使用し、状態には保持しない
 interface RawQuestion {
@@ -36,6 +40,7 @@ interface Unit {
   id: string;
   title: string;
   questions?: Question[];
+  mode: DrillMode;
 }
 
 export default function DrillPage() {
@@ -73,6 +78,25 @@ export default function DrillPage() {
   const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
   const currentQuestionId = unit?.questions?.[currentIndex]?.id ?? null;
 
+  const getSeenHistoryKey = () => `math_seen_questions_v1:${user?.uid || 'guest'}:${unitId}`;
+
+  const readSeenQuestionIds = () => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem(getSeenHistoryKey()) || '[]');
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const recordSeenQuestionIds = (questionIds: string[]) => {
+    if (typeof window === 'undefined' || unit?.mode === 'wrong') return;
+    const current = readSeenQuestionIds();
+    const merged = Array.from(new Set([...current, ...questionIds]));
+    localStorage.setItem(getSeenHistoryKey(), JSON.stringify(merged.slice(-500)));
+  };
+
   useEffect(() => {
     async function fetchUnit() {
       try {
@@ -92,7 +116,8 @@ export default function DrillPage() {
           }));
 
           let filteredQuestions = [...parsedQuestions];
-          const mode = new URLSearchParams(window.location.search).get('mode');
+          const rawMode = new URLSearchParams(window.location.search).get('mode');
+          const mode: DrillMode = rawMode === 'wrong' ? 'wrong' : rawMode === 'all' ? 'all' : 'standard';
 
           if (mode === 'wrong' && user) {
             const userDocRef = doc(db, 'users', user.uid);
@@ -122,11 +147,29 @@ export default function DrillPage() {
             return a;
           };
 
-          // 問題をシャッフルして最大10問を抽出
-          const shuffledQuestions = fisherYatesShuffle(filteredQuestions).slice(0, 10);
+          let selectedQuestions: RawQuestion[];
+          if (mode === 'all') {
+            selectedQuestions = fisherYatesShuffle(filteredQuestions);
+          } else if (mode === 'standard') {
+            const seenIds = new Set(readSeenQuestionIds());
+            const unseenQuestions = filteredQuestions.filter(q => !seenIds.has(String(q.id)));
+            const seenQuestions = filteredQuestions.filter(q => seenIds.has(String(q.id)));
+
+            if (unseenQuestions.length === 0) {
+              localStorage.removeItem(getSeenHistoryKey());
+              selectedQuestions = fisherYatesShuffle(filteredQuestions).slice(0, STANDARD_DRILL_QUESTION_COUNT);
+            } else {
+              selectedQuestions = [
+                ...fisherYatesShuffle(unseenQuestions),
+                ...fisherYatesShuffle(seenQuestions),
+              ].slice(0, STANDARD_DRILL_QUESTION_COUNT);
+            }
+          } else {
+            selectedQuestions = fisherYatesShuffle(filteredQuestions).slice(0, STANDARD_DRILL_QUESTION_COUNT);
+          }
 
           // 選択肢をシャッフル（answer_index はここでのみ参照し、状態には含めない）
-          const finalQuestions: Question[] = shuffledQuestions.map((q) => ({
+          const finalQuestions: Question[] = selectedQuestions.map((q) => ({
             id: q.id,
             question_text: q.question_text,
             options: fisherYatesShuffle(q.options),
@@ -134,7 +177,7 @@ export default function DrillPage() {
             // answer_index は意図的に除外
           }));
 
-          setUnit({ id: unitId, title: rawUnit.title, questions: finalQuestions });
+          setUnit({ id: unitId, title: rawUnit.title, questions: finalQuestions, mode });
           setStartTime(Date.now());
         } else {
           setError('指定された単元が見つかりません。');
@@ -219,6 +262,7 @@ export default function DrillPage() {
         answers: allAnswers,
       };
 
+      recordSeenQuestionIds(allAnswers.map(answer => answer.questionId));
       sessionStorage.setItem('drillResult', JSON.stringify(drillResult));
       router.push(`/result/${unitId}`);
     }
@@ -296,6 +340,8 @@ export default function DrillPage() {
           <CardHeader className="px-8 pt-8 pb-4">
             <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
               Question {currentIndex + 1} <span className="opacity-50 mx-1">/</span> {unit.questions?.length || 0}
+              {unit.mode === 'all' && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">全問</span>}
+              {unit.mode === 'standard' && <span className="ml-2 rounded-full bg-green-50 px-2 py-0.5 text-[10px] text-green-700">未出題優先</span>}
             </CardDescription>
             <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
               <MathDisplay math={currentQ.question_text} />

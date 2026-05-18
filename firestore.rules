@@ -123,6 +123,12 @@ service cloud.firestore {
       allow create: if false;
     }
 
+    match /user_feedback/{id} {
+      // 生徒からの投稿は Cloud Functions (Admin SDK) 経由のみ。閲覧は管理者に限定。
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
+    }
+
     // ------------------------------------------
     // 5. 分析キャッシュ (管理者のみ)
     // ------------------------------------------

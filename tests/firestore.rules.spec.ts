@@ -303,6 +303,42 @@ describe('Firestore Security Rules', () => {
   });
 
   // ─────────────────────────────────────────────────────
+  // user_feedback
+  // ─────────────────────────────────────────────────────
+
+  test('一般ユーザーは user_feedback を読み取れない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'user_feedback', 'fb1'), {
+        uid: aliceId,
+        message: '改善要望',
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'user_feedback', 'fb1');
+    await expect(getDoc(ref)).rejects.toThrow();
+  });
+
+  test('一般ユーザーは user_feedback に直接書き込めない', async () => {
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'user_feedback', 'fb1');
+    await expect(setDoc(ref, { message: '直接投稿' })).rejects.toThrow();
+  });
+
+  test('管理者は user_feedback を読み取れる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'user_feedback', 'fb1'), {
+        uid: aliceId,
+        message: '改善要望',
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const ref = doc(adminContext.firestore(), 'user_feedback', 'fb1');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+  });
+
+  // ─────────────────────────────────────────────────────
   // config/maintenance（全ユーザー読み取り可）
   // ─────────────────────────────────────────────────────
 

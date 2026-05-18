@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History } from 'lucide-react';
+import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History, MessageSquare } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
@@ -16,6 +16,7 @@ import ScoresTab from './components/ScoresTab';
 import XpTab from './components/XpTab';
 import SuspiciousTab from './components/SuspiciousTab';
 import RolesTab from './components/RolesTab';
+import FeedbackTab from './components/FeedbackTab';
 import 'katex/dist/katex.min.css';
 
 const ANALYTICS_EVENT_BATCH_SIZE = 200;
@@ -75,7 +76,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'roles' | 'changelog'>('roles');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'feedback' | 'roles' | 'changelog'>('roles');
   const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
@@ -83,6 +84,7 @@ export default function AdminPage() {
   const [hasMoreAttempts, setHasMoreAttempts] = useState(true);
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [feedbackItems, setFeedbackItems] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
   const [suspiciousFilter, setSuspiciousFilter] = useState<'red' | 'yellow' | 'all'>('red');
   const [displayScoresCount, setDisplayScoresCount] = useState(50);
@@ -117,6 +119,7 @@ export default function AdminPage() {
     if (activeTab === 'units') fetchUnits();
     if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
     if (activeTab === 'xp') fetchUsers();
+    if (activeTab === 'feedback') fetchFeedback();
     if (activeTab === 'roles') {
       fetchAdminList();
       fetchMaintenanceStatus();
@@ -136,6 +139,20 @@ export default function AdminPage() {
     } catch (err) {
       console.error('Failed to fetch maintenance status:', err);
     }
+  };
+
+  const fetchFeedback = async () => {
+    if (!isAdmin) return;
+    setLoading(true);
+    setMessage('');
+    try {
+      const snap = await getDocs(query(collection(db, 'user_feedback'), orderBy('createdAt', 'desc'), limit(100)));
+      setFeedbackItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error(e);
+      setMessage('フィードバックの取得に失敗しました。');
+    }
+    setLoading(false);
   };
 
   const handleUpdateMaintenance = async () => {
@@ -458,11 +475,11 @@ export default function AdminPage() {
 
     setLoading(true);
     try {
-      const QUESTIONS_PER_DRILL = 10;
       const suspiciousScores = scores
         .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
         .map(s => {
-          const avgPerQ = s.time / QUESTIONS_PER_DRILL;
+          const answeredCount = s.answeredCount || (Array.isArray(s.details) ? s.details.length : 10);
+          const avgPerQ = s.time / Math.max(1, answeredCount);
           let flag: 'red' | 'yellow' | 'green' = 'green';
           if (avgPerQ <= 3) flag = 'red';
           else if (avgPerQ <= 5) flag = 'yellow';
@@ -872,6 +889,13 @@ export default function AdminPage() {
           <BarChart className="inline w-4 h-4 mr-2" />
           統計・分析
         </button>
+        <button
+          onClick={() => setActiveTab('feedback')}
+          className={`px-4 py-2 font-medium ${activeTab === 'feedback' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <MessageSquare className="inline w-4 h-4 mr-2" />
+          フィードバック
+        </button>
         <button 
           onClick={() => setActiveTab('roles')} 
           className={`px-4 py-2 font-medium ${activeTab === 'roles' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
@@ -984,6 +1008,14 @@ export default function AdminPage() {
             await fetchScores();
           }}
           autoLoad={analyticsAutoLoad}
+        />
+      )}
+
+      {activeTab === 'feedback' && (
+        <FeedbackTab
+          feedbackItems={feedbackItems}
+          loading={loading}
+          onRefresh={fetchFeedback}
         />
       )}
 
