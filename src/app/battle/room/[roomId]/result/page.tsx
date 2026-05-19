@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { onValue, ref } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-import { getRealtimeDb } from '@/lib/firebase';
+import { functions, getRealtimeDb } from '@/lib/firebase';
 import {
   BATTLE_ACCESS_STORAGE_KEY,
   BattleResultEntry,
@@ -15,9 +16,12 @@ import {
 } from '@/lib/battle';
 
 interface BattleRoom {
+  status?: 'waiting' | 'active' | 'completed' | 'cancelled';
+  hostUid?: string;
   unitTitle?: string;
   participants?: Record<string, { uid: string; name: string }>;
-  results?: Record<string, BattleResultEntry>;
+  results?: Record<string, BattleResultEntry & { xpDelta?: number; rank?: number }>;
+  finalizedAt?: number;
 }
 
 export default function BattleResultPage() {
@@ -28,6 +32,9 @@ export default function BattleResultPage() {
   const [hasBattleAccess, setHasBattleAccess] = useState(false);
   const [room, setRoom] = useState<BattleRoom | null>(null);
   const [loading, setLoading] = useState(true);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const finalizeRequestedRef = useRef(false);
 
   useEffect(() => {
     const isUnlocked = sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true';
@@ -46,11 +53,32 @@ export default function BattleResultPage() {
     return () => unsubscribe();
   }, [hasBattleAccess, roomId]);
 
+  useEffect(() => {
+    async function finalizeIfNeeded() {
+      if (!user || !room || room.status !== 'completed' || room.hostUid !== user.uid || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
+      finalizeRequestedRef.current = true;
+      setFinalizing(true);
+      setFinalizeError(null);
+      try {
+        const finalizeBattleRoom = httpsCallable(functions, 'finalizeBattleRoom');
+        await finalizeBattleRoom({ roomId });
+      } catch (err) {
+        console.error('Failed to finalize battle room:', err);
+        finalizeRequestedRef.current = false;
+        setFinalizeError('結果の集計に失敗しました。ホストでもう一度この画面を開いてください。');
+      } finally {
+        setFinalizing(false);
+      }
+    }
+
+    finalizeIfNeeded();
+  }, [finalizing, room, roomId, user]);
+
   const participants = Object.values(room?.participants || {});
   const results = useMemo(() => sortBattleResults(Object.values(room?.results || {})), [room?.results]);
   const myRankIndex = results.findIndex(result => result.uid === user?.uid);
-  const myResult = myRankIndex >= 0 ? results[myRankIndex] : null;
-  const myXpDelta = myRankIndex >= 0 ? getBattleXpDelta(Math.max(2, participants.length), myRankIndex) : 0;
+  const myResult = myRankIndex >= 0 ? results[myRankIndex] as BattleResultEntry & { xpDelta?: number } : null;
+  const myXpDelta = myResult?.xpDelta ?? (myRankIndex >= 0 ? getBattleXpDelta(Math.max(2, participants.length), myRankIndex) : 0);
   const allSubmitted = participants.length > 0 && results.length >= participants.length;
 
   if (!hasBattleAccess) {
@@ -117,7 +145,12 @@ export default function BattleResultPage() {
               </div>
               {!allSubmitted && (
                 <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-bold text-amber-800">
-                  ほかの参加者の結果を待っています。提出済み {results.length}/{participants.length}
+                  {finalizing ? '結果を集計しています...' : `結果を待っています ${results.length}/${participants.length}`}
+                </div>
+              )}
+              {finalizeError && (
+                <div className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-bold text-red-700">
+                  {finalizeError}
                 </div>
               )}
             </div>
@@ -129,7 +162,8 @@ export default function BattleResultPage() {
               </div>
               <div className="space-y-3">
                 {results.map((result, index) => {
-                  const xpDelta = getBattleXpDelta(Math.max(2, participants.length), index);
+                  const resultWithXp = result as BattleResultEntry & { xpDelta?: number };
+                  const xpDelta = resultWithXp.xpDelta ?? getBattleXpDelta(Math.max(2, participants.length), index);
                   return (
                     <div
                       key={result.uid}

@@ -2,11 +2,24 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 
-admin.initializeApp();
+admin.initializeApp({
+  databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
+});
 
 const db = admin.firestore();
 const auth = admin.auth();
+const realtimeDb = admin.database();
 const STANDARD_XP_QUESTION_COUNT = 10;
+const BATTLE_QUESTION_COUNT = 10;
+const BATTLE_BASE_SCORE = 100;
+const BATTLE_ANSWER_LIMIT_MS = 30000;
+const BATTLE_MAX_SPEED_BONUS = 15;
+const BATTLE_FAST_BONUS_MS = 3000;
+const BATTLE_XP_TABLE: Record<number, number[]> = {
+  2: [100, -20],
+  3: [125, 0, -20],
+  4: [150, 75, -20, -40],
+};
 
 type DrillMode = "standard" | "wrong" | "all";
 
@@ -30,6 +43,30 @@ function calculateServerScore(correctCount: number, totalAnswered: number, mode:
   }
 
   return Math.min(100, correctCount * 10);
+}
+
+function clampBattleResponseMs(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return BATTLE_ANSWER_LIMIT_MS;
+  return Math.min(BATTLE_ANSWER_LIMIT_MS, Math.max(0, Math.round(numeric)));
+}
+
+function calculateBattleSpeedBonus(responseMs: number): number {
+  const safeResponseMs = clampBattleResponseMs(responseMs);
+  if (safeResponseMs <= BATTLE_FAST_BONUS_MS) return BATTLE_MAX_SPEED_BONUS;
+  if (safeResponseMs >= BATTLE_ANSWER_LIMIT_MS) return 0;
+  const ratio = (BATTLE_ANSWER_LIMIT_MS - safeResponseMs) / (BATTLE_ANSWER_LIMIT_MS - BATTLE_FAST_BONUS_MS);
+  return Math.max(0, Math.round(BATTLE_MAX_SPEED_BONUS * ratio));
+}
+
+function calculateBattleQuestionScore(correct: boolean, responseMs: number): number {
+  if (!correct) return 0;
+  return BATTLE_BASE_SCORE + calculateBattleSpeedBonus(responseMs);
+}
+
+function getBattleXpDelta(playerCount: number, rankIndex: number): number {
+  const table = BATTLE_XP_TABLE[Math.min(4, Math.max(2, playerCount))] || BATTLE_XP_TABLE[2];
+  return table[rankIndex] ?? table[table.length - 1] ?? 0;
 }
 
 function buildAttemptSubmittedAnalyticsEvent(params: {
@@ -178,6 +215,196 @@ function parseOptionsServer(options: any): string[] {
   }
   return [];
 }
+
+export const getBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const roomId = clampString((data as any)?.roomId, 12);
+  if (!/^\d{4,8}$/.test(roomId)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
+  }
+
+  const roomSnap = await realtimeDb.ref(`battleRooms/${roomId}`).get();
+  if (!roomSnap.exists()) {
+    throw new functions.https.HttpsError("not-found", "Battle room was not found.");
+  }
+
+  const room = roomSnap.val() || {};
+  if (!room.participants?.[context.auth.uid]) {
+    throw new functions.https.HttpsError("permission-denied", "Only room participants can load battle questions.");
+  }
+
+  const unitId = clampString(room.unitId, 120);
+  if (!unitId) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
+  }
+
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  if (!unitDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
+  }
+
+  const unitData = unitDoc.data() || {};
+  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
+  if (unitQuestions.length === 0) {
+    const qSnap = await db.collection(`units/${unitId}/questions`).orderBy("order", "asc").get();
+    unitQuestions = qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  }
+
+  const questions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
+    id: String(question.id),
+    question_text: String(question.question_text || ""),
+    options: parseOptionsServer(question.options),
+    image_url: question.image_url || null,
+  }));
+
+  if (questions.length < BATTLE_QUESTION_COUNT) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle unit does not have enough questions.");
+  }
+
+  return { questions };
+});
+
+export const finalizeBattleRoom = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const roomId = clampString((data as any)?.roomId, 12);
+  if (!/^\d{4,8}$/.test(roomId)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
+  }
+
+  const roomRef = realtimeDb.ref(`battleRooms/${roomId}`);
+  const roomSnap = await roomRef.get();
+  if (!roomSnap.exists()) {
+    throw new functions.https.HttpsError("not-found", "Battle room was not found.");
+  }
+
+  const room = roomSnap.val() || {};
+  if (room.hostUid !== context.auth.uid) {
+    throw new functions.https.HttpsError("permission-denied", "Only the host can finalize this battle.");
+  }
+  if (room.status !== "completed") {
+    throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
+  }
+  if (room.finalizedAt && room.results) {
+    return { success: true, alreadyFinalized: true };
+  }
+
+  const unitId = clampString(room.unitId, 120);
+  if (!unitId) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
+  }
+
+  const participants = Object.values(room.participants || {}) as Array<{ uid?: string; name?: string }>;
+  const validParticipants = participants
+    .filter((participant) => participant.uid)
+    .slice(0, 4)
+    .map((participant) => ({
+      uid: String(participant.uid),
+      name: clampString(participant.name, 80) || "Player",
+    }));
+
+  if (validParticipants.length < 2 || validParticipants.length > 4) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle requires 2 to 4 participants.");
+  }
+
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  if (!unitDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
+  }
+
+  const unitData = unitDoc.data() || {};
+  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
+  if (unitQuestions.length === 0) {
+    const qSnap = await db.collection(`units/${unitId}/questions`).orderBy("order", "asc").get();
+    unitQuestions = qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  }
+
+  const selectedQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
+    id: String(question.id),
+    parsedOptions: parseOptionsServer(question.options),
+    answerIndex: Number(question.answer_index) - 1,
+  }));
+
+  if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle unit does not have enough questions.");
+  }
+
+  const questionAnswers = room.questionAnswers || {};
+  const resultEntries = validParticipants.map((participant) => {
+    let totalScore = 0;
+    let correctCount = 0;
+    let totalTimeMs = 0;
+
+    selectedQuestions.forEach((question, questionIndex) => {
+      const answer = questionAnswers[String(questionIndex)]?.[participant.uid] || null;
+      const responseMs = clampBattleResponseMs(answer?.responseMs);
+      const selectedIndex = answer?.selectedIndex === null || answer?.selectedIndex === undefined
+        ? null
+        : Number(answer.selectedIndex);
+      const isCorrect = selectedIndex !== null
+        && Number.isInteger(selectedIndex)
+        && selectedIndex === question.answerIndex
+        && selectedIndex >= 0
+        && selectedIndex < question.parsedOptions.length;
+
+      totalTimeMs += responseMs;
+      if (isCorrect) correctCount += 1;
+      totalScore += calculateBattleQuestionScore(isCorrect, responseMs);
+    });
+
+    return {
+      uid: participant.uid,
+      name: participant.name,
+      totalScore,
+      correctCount,
+      totalQuestions: selectedQuestions.length,
+      totalTimeMs,
+      finishedAt: admin.database.ServerValue.TIMESTAMP,
+    };
+  }).sort((a, b) => {
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
+    return a.uid.localeCompare(b.uid);
+  });
+
+  const results: Record<string, any> = {};
+  resultEntries.forEach((entry, index) => {
+    results[entry.uid] = {
+      ...entry,
+      rank: index + 1,
+      xpDelta: getBattleXpDelta(validParticipants.length, index),
+    };
+  });
+
+  await db.runTransaction(async (transaction) => {
+    const now = Timestamp.now();
+    resultEntries.forEach((entry, index) => {
+      const xpDelta = getBattleXpDelta(validParticipants.length, index);
+      const userRef = db.doc(`users/${entry.uid}`);
+      transaction.set(userRef, {
+        battleStats: {
+          xp: FieldValue.increment(xpDelta),
+          wins: FieldValue.increment(index === 0 ? 1 : 0),
+          totalBattles: FieldValue.increment(1),
+          lastBattleAt: now,
+        },
+      }, { merge: true });
+    });
+  });
+
+  await roomRef.update({
+    results,
+    finalizedAt: admin.database.ServerValue.TIMESTAMP,
+    finalizedBy: context.auth.uid,
+  });
+
+  return { success: true, alreadyFinalized: false, playerCount: validParticipants.length };
+});
 
 export const processDrillResult = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {

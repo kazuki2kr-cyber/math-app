@@ -2,24 +2,21 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { collection, doc, getDoc, getDocs, orderBy, query } from 'firebase/firestore';
 import { onDisconnect, onValue, ref, serverTimestamp, set, update } from 'firebase/database';
-import { ArrowLeft, CheckCircle2, Clock, NotebookPen, Swords, XCircle } from 'lucide-react';
+import { httpsCallable } from 'firebase/functions';
+import { ArrowLeft, CheckCircle2, Clock, NotebookPen } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { HandwritingCanvasRef } from '@/components/HandwritingCanvas';
 import { ScratchPaperOverlay } from '@/components/ScratchPaperOverlay';
 import { useAuth } from '@/contexts/AuthContext';
-import { db, getRealtimeDb } from '@/lib/firebase';
-import { parseOptions } from '@/lib/utils';
+import { functions, getRealtimeDb } from '@/lib/firebase';
 import {
   BATTLE_ACCESS_STORAGE_KEY,
   BATTLE_ANSWER_LIMIT_MS,
   BATTLE_NEXT_QUESTION_COUNTDOWN_MS,
   BATTLE_QUESTION_COUNT,
-  calculateBattleQuestionScore,
-  calculateBattleSpeedBonus,
 } from '@/lib/battle';
 
 interface BattleRoom {
@@ -35,21 +32,10 @@ interface BattleRoom {
   questionAnswers?: Record<string, Record<string, AnswerRecord>>;
 }
 
-interface RawQuestion {
-  id: string;
-  question_text: string;
-  options: string[] | string;
-  answer_index: number;
-  explanation?: string;
-  image_url?: string | null;
-}
-
 interface BattleQuestion {
   id: string;
   question_text: string;
   options: string[];
-  answer_index: number;
-  explanation?: string;
   image_url?: string | null;
 }
 
@@ -57,10 +43,7 @@ interface AnswerRecord {
   uid: string;
   questionId: string;
   selectedIndex: number | null;
-  correct: boolean;
   responseMs: number;
-  speedBonus: number;
-  score: number;
   answeredAtMs: number;
   timedOut?: boolean;
 }
@@ -87,7 +70,7 @@ export default function BattlePlayPage() {
   const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
   const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
   const lastQuestionIndexRef = useRef<number | null>(null);
-  const submittedResultRef = useRef(false);
+  const redirectedToResultRef = useRef(false);
 
   useEffect(() => {
     const isUnlocked = sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true';
@@ -108,7 +91,10 @@ export default function BattlePlayPage() {
       const nextRoom = snapshot.exists() ? snapshot.val() : null;
       setRoom(nextRoom);
       if (nextRoom?.status === 'waiting') router.replace(`/battle/room/${roomId}`);
-      if (nextRoom?.status === 'completed') router.replace(`/battle/room/${roomId}/result`);
+      if (nextRoom?.status === 'completed' && !redirectedToResultRef.current) {
+        redirectedToResultRef.current = true;
+        router.replace(`/battle/room/${roomId}/result`);
+      }
     });
     return () => unsubscribe();
   }, [hasBattleAccess, roomId, router]);
@@ -138,22 +124,9 @@ export default function BattlePlayPage() {
       setLoading(true);
       setError(null);
       try {
-        const unitSnap = await getDoc(doc(db, 'units', room.unitId));
-        if (!unitSnap.exists()) throw new Error('unit-not-found');
-        const rawUnit = unitSnap.data();
-        let fetchedQuestions: RawQuestion[] = (rawUnit.questions as RawQuestion[]) || [];
-        if (!fetchedQuestions.length) {
-          const qSnap = await getDocs(query(collection(db, 'units', room.unitId, 'questions'), orderBy('order', 'asc')));
-          fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as RawQuestion));
-        }
-        const nextQuestions = fetchedQuestions.slice(0, BATTLE_QUESTION_COUNT).map((q) => ({
-          id: String(q.id),
-          question_text: q.question_text,
-          options: parseOptions(q.options),
-          answer_index: Number(q.answer_index),
-          explanation: q.explanation || '',
-          image_url: q.image_url || null,
-        }));
+        const getBattleQuestions = httpsCallable<{ roomId: string }, { questions: BattleQuestion[] }>(functions, 'getBattleQuestions');
+        const response = await getBattleQuestions({ roomId });
+        const nextQuestions = response.data.questions || [];
         if (nextQuestions.length < BATTLE_QUESTION_COUNT) throw new Error('not-enough-questions');
         setQuestions(nextQuestions);
       } catch (err) {
@@ -165,7 +138,7 @@ export default function BattlePlayPage() {
     }
 
     fetchQuestions();
-  }, [room?.unitId]);
+  }, [room?.unitId, roomId]);
 
   const currentQuestionIndex = Math.min(Number(room?.currentQuestionIndex || 0), Math.max(0, questions.length - 1));
   const currentQuestion = questions[currentQuestionIndex];
@@ -178,10 +151,7 @@ export default function BattlePlayPage() {
   const elapsedMs = clampResponseMs(nowMs - questionStartedAtMs);
   const remainingMs = Math.max(0, BATTLE_ANSWER_LIMIT_MS - elapsedMs);
   const countdownRemainingMs = Math.max(0, BATTLE_NEXT_QUESTION_COUNTDOWN_MS - Math.max(0, nowMs - countdownStartedAtMs));
-  const totalScore = useMemo(() => {
-    if (!user || !room?.questionAnswers) return 0;
-    return Object.values(room.questionAnswers).reduce((sum, answersByUser) => sum + Number(answersByUser?.[user.uid]?.score || 0), 0);
-  }, [room?.questionAnswers, user]);
+  const answeredCount = Object.keys(questionAnswers).length;
 
   useEffect(() => {
     if (lastQuestionIndexRef.current === currentQuestionIndex) return;
@@ -194,22 +164,21 @@ export default function BattlePlayPage() {
 
   const writeAnswer = async (selected: number | null, timedOut = false) => {
     if (!user || !currentQuestion || myAnswer || !room || !['answering', 'countdown'].includes(String(room.phase))) return;
-    const safeResponseMs = clampResponseMs(Date.now() - questionStartedAtMs);
-    const correct = selected !== null && selected === currentQuestion.answer_index;
-    const speedBonus = correct ? calculateBattleSpeedBonus(safeResponseMs) : 0;
-    const score = calculateBattleQuestionScore(correct, safeResponseMs);
-    const realtimeDb = getRealtimeDb();
-    await set(ref(realtimeDb, `battleRooms/${roomId}/questionAnswers/${currentQuestionIndex}/${user.uid}`), {
-      uid: user.uid,
-      questionId: currentQuestion.id,
-      selectedIndex: selected,
-      correct,
-      responseMs: safeResponseMs,
-      speedBonus,
-      score,
-      answeredAtMs: Date.now(),
-      timedOut,
-    });
+    setSubmitting(true);
+    try {
+      const safeResponseMs = clampResponseMs(Date.now() - questionStartedAtMs);
+      const realtimeDb = getRealtimeDb();
+      await set(ref(realtimeDb, `battleRooms/${roomId}/questionAnswers/${currentQuestionIndex}/${user.uid}`), {
+        uid: user.uid,
+        questionId: currentQuestion.id,
+        selectedIndex: selected,
+        responseMs: safeResponseMs,
+        answeredAtMs: Date.now(),
+        timedOut,
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -256,41 +225,6 @@ export default function BattlePlayPage() {
       }
     }
   }, [countdownRemainingMs, currentQuestionIndex, isHost, participantIds, questionAnswers, questions.length, remainingMs, room, roomId]);
-
-  useEffect(() => {
-    async function submitResultIfNeeded() {
-      if (!user || !room || !questions.length || room.status !== 'completed' || submittedResultRef.current) return;
-      submittedResultRef.current = true;
-      setSubmitting(true);
-      try {
-        const myAnswers = Object.values(room.questionAnswers || {})
-          .map(answersByUser => answersByUser?.[user.uid])
-          .filter(Boolean) as AnswerRecord[];
-        const totalTimeMs = myAnswers.reduce((sum, answer) => sum + clampResponseMs(answer.responseMs), 0);
-        const correctCount = myAnswers.filter(answer => answer.correct).length;
-        const finalScore = myAnswers.reduce((sum, answer) => sum + Number(answer.score || 0), 0);
-        const realtimeDb = getRealtimeDb();
-        await set(ref(realtimeDb, `battleRooms/${roomId}/results/${user.uid}`), {
-          uid: user.uid,
-          name: user.displayName || user.email || 'Player',
-          totalScore: finalScore,
-          correctCount,
-          totalQuestions: questions.length,
-          totalTimeMs,
-          finishedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.error('Failed to submit battle result:', err);
-        submittedResultRef.current = false;
-        setError('結果を送信できませんでした。もう一度お試しください。');
-      } finally {
-        setSubmitting(false);
-        router.replace(`/battle/room/${roomId}/result`);
-      }
-    }
-
-    submitResultIfNeeded();
-  }, [questions.length, room, roomId, router, user]);
 
   if (!hasBattleAccess) {
     return (
@@ -380,7 +314,8 @@ export default function BattlePlayPage() {
                 <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">対戦</span>
               </CardDescription>
               <p className="mb-4 text-sm font-bold text-muted-foreground">
-                現在の得点: {totalScore}点 / 回答済み {Object.keys(questionAnswers).length}/{participantIds.length}
+                回答済み {answeredCount}/{participantIds.length}
+                {myAnswer && <span className="ml-3 text-green-700">あなたは送信済み</span>}
               </p>
               <div className="mb-4 h-3 overflow-hidden rounded-full bg-black/5 shadow-inner">
                 <div
@@ -404,8 +339,6 @@ export default function BattlePlayPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {currentQuestion.options.map((option, index) => {
                   const isSelected = selectedIndex === index;
-                  const isCorrect = index === currentQuestion.answer_index;
-                  const showAnswer = room.phase === 'countdown' || !!myAnswer;
                   return (
                     <button
                       key={`${currentQuestion.id}-${index}`}
@@ -413,13 +346,9 @@ export default function BattlePlayPage() {
                       onClick={() => setSelectedIndex(index)}
                       disabled={!!myAnswer || room.phase !== 'answering'}
                       className={`w-full text-left p-5 rounded-xl border-2 transition-all duration-200 ${
-                        showAnswer && isCorrect
-                          ? 'border-green-400 bg-green-50 text-green-900 shadow-md'
-                          : showAnswer && isSelected && !isCorrect
-                            ? 'border-red-300 bg-red-50 text-red-800 shadow-md'
-                            : isSelected
-                              ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20'
-                              : 'border-gray-200 bg-white hover:border-primary/50 hover:bg-gray-50 hover:shadow-sm'
+                        isSelected
+                          ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20'
+                          : 'border-gray-200 bg-white hover:border-primary/50 hover:bg-gray-50 hover:shadow-sm'
                       }`}
                     >
                       <div className="flex items-start">
@@ -440,17 +369,11 @@ export default function BattlePlayPage() {
 
             <CardFooter className="bg-gray-50/80 border-t p-6 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
               <div className="flex items-center gap-2 text-sm font-bold text-muted-foreground">
-                {myAnswer?.correct ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : myAnswer ? (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                ) : null}
+                {myAnswer && <CheckCircle2 className="h-4 w-4 text-green-600" />}
                 {myAnswer
-                  ? myAnswer.correct
-                    ? `+${myAnswer.score}点（速度ボーナス +${myAnswer.speedBonus}）`
-                    : myAnswer.timedOut
-                      ? '時間切れ: 0点'
-                      : '不正解: 0点'
+                  ? myAnswer.timedOut
+                    ? '時間切れです。次の問題へ自動で進みます'
+                    : '送信済みです。次の問題へ自動で進みます'
                   : '選択後、「回答を送信」で確定します。次の問題へは自動で進みます'}
               </div>
               <Button
