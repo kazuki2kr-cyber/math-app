@@ -30,6 +30,8 @@ interface BattleRoom {
   hostUid?: string;
   participants?: Record<string, { uid: string; name: string }>;
   questionAnswers?: Record<string, Record<string, AnswerRecord>>;
+  results?: Record<string, unknown>;
+  finalizedAt?: number;
 }
 
 interface BattleQuestion {
@@ -66,11 +68,15 @@ export default function BattlePlayPage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [isScratchPaperOpen, setIsScratchPaperOpen] = useState(false);
   const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
   const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
   const lastQuestionIndexRef = useRef<number | null>(null);
   const redirectedToResultRef = useRef(false);
+  const finalizeRequestedRef = useRef(false);
+  const answerSubmittingRef = useRef(false);
 
   useEffect(() => {
     const isUnlocked = sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true';
@@ -91,7 +97,7 @@ export default function BattlePlayPage() {
       const nextRoom = snapshot.exists() ? snapshot.val() : null;
       setRoom(nextRoom);
       if (nextRoom?.status === 'waiting') router.replace(`/battle/room/${roomId}`);
-      if (nextRoom?.status === 'completed' && !redirectedToResultRef.current) {
+      if (nextRoom?.status === 'completed' && (nextRoom?.finalizedAt || nextRoom?.results) && !redirectedToResultRef.current) {
         redirectedToResultRef.current = true;
         router.replace(`/battle/room/${roomId}/result`);
       }
@@ -163,7 +169,8 @@ export default function BattlePlayPage() {
   }, [currentQuestionIndex]);
 
   const writeAnswer = async (selected: number | null, timedOut = false) => {
-    if (!user || !currentQuestion || myAnswer || !room || !['answering', 'countdown'].includes(String(room.phase))) return;
+    if (answerSubmittingRef.current || !user || !currentQuestion || myAnswer || !room || !['answering', 'countdown'].includes(String(room.phase))) return;
+    answerSubmittingRef.current = true;
     setSubmitting(true);
     try {
       const safeResponseMs = clampResponseMs(Date.now() - questionStartedAtMs);
@@ -177,6 +184,7 @@ export default function BattlePlayPage() {
         timedOut,
       });
     } finally {
+      answerSubmittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -226,6 +234,27 @@ export default function BattlePlayPage() {
     }
   }, [countdownRemainingMs, currentQuestionIndex, isHost, participantIds, questionAnswers, questions.length, remainingMs, room, roomId]);
 
+  useEffect(() => {
+    async function finalizeIfNeeded() {
+      if (!isHost || !room || room.status !== 'completed' || room.finalizedAt || room.results || finalizing || finalizeRequestedRef.current) return;
+      finalizeRequestedRef.current = true;
+      setFinalizing(true);
+      setFinalizeError(null);
+      try {
+        const finalizeBattleRoom = httpsCallable(functions, 'finalizeBattleRoom');
+        await finalizeBattleRoom({ roomId });
+      } catch (err) {
+        console.error('Failed to finalize battle room:', err);
+        finalizeRequestedRef.current = false;
+        setFinalizeError('結果の集計に失敗しました。画面を開いたまま少し待つか、再読み込みしてください。');
+      } finally {
+        setFinalizing(false);
+      }
+    }
+
+    finalizeIfNeeded();
+  }, [finalizing, isHost, room, roomId]);
+
   if (!hasBattleAccess) {
     return (
       <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
@@ -240,6 +269,32 @@ export default function BattlePlayPage() {
   const timerProgressPercent = room?.phase === 'countdown'
     ? Math.max(0, Math.min(100, (countdownRemainingMs / BATTLE_NEXT_QUESTION_COUNTDOWN_MS) * 100))
     : Math.max(0, Math.min(100, (remainingMs / BATTLE_ANSWER_LIMIT_MS) * 100));
+
+  if (room?.status === 'completed' && !room.finalizedAt && !room.results) {
+    return (
+      <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
+        <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col items-center justify-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+          <div>
+            <h1 className="text-xl font-black text-gray-900">結果を集計しています</h1>
+            <p className="mt-2 text-sm font-bold text-muted-foreground">
+              採点が完了すると結果画面へ自動で移動します。
+            </p>
+          </div>
+          {finalizeError && (
+            <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-bold text-red-700">
+              {finalizeError}
+            </div>
+          )}
+          {!isHost && (
+            <p className="text-xs font-semibold text-muted-foreground">
+              ホストが結果を確定しています。
+            </p>
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">

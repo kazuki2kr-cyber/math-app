@@ -220,6 +220,7 @@ export const getBattleQuestions = functions.region("us-central1").https.onCall(a
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
   }
+  const callerUid = context.auth.uid;
 
   const roomId = clampString((data as any)?.roomId, 12);
   if (!/^\d{4,8}$/.test(roomId)) {
@@ -271,6 +272,7 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
   }
+  const callerUid = context.auth.uid;
 
   const roomId = clampString((data as any)?.roomId, 12);
   if (!/^\d{4,8}$/.test(roomId)) {
@@ -284,7 +286,7 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
   }
 
   const room = roomSnap.val() || {};
-  if (room.hostUid !== context.auth.uid) {
+  if (room.hostUid !== callerUid) {
     throw new functions.https.HttpsError("permission-denied", "Only the host can finalize this battle.");
   }
   if (room.status !== "completed") {
@@ -381,7 +383,18 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
     };
   });
 
-  await db.runTransaction(async (transaction) => {
+  const finalizeResult = await db.runTransaction(async (transaction) => {
+    const markerRef = db.collection("battle_results").doc(roomId);
+    const markerSnap = await transaction.get(markerRef);
+    if (markerSnap.exists) {
+      const markerData = markerSnap.data() || {};
+      return {
+        alreadyFinalized: true,
+        results: markerData.results || results,
+        finalizedAt: markerData.finalizedAt || Timestamp.now(),
+      };
+    }
+
     const now = Timestamp.now();
     resultEntries.forEach((entry, index) => {
       const xpDelta = getBattleXpDelta(validParticipants.length, index);
@@ -395,15 +408,29 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
         },
       }, { merge: true });
     });
+    transaction.set(markerRef, {
+      roomId,
+      unitId,
+      hostUid: room.hostUid,
+      playerCount: validParticipants.length,
+      results,
+      finalizedAt: now,
+      finalizedBy: callerUid,
+    });
+    return {
+      alreadyFinalized: false,
+      results,
+      finalizedAt: now,
+    };
   });
 
   await roomRef.update({
-    results,
+    results: finalizeResult.results,
     finalizedAt: admin.database.ServerValue.TIMESTAMP,
-    finalizedBy: context.auth.uid,
+    finalizedBy: callerUid,
   });
 
-  return { success: true, alreadyFinalized: false, playerCount: validParticipants.length };
+  return { success: true, alreadyFinalized: finalizeResult.alreadyFinalized, playerCount: validParticipants.length };
 });
 
 export const processDrillResult = functions.region("us-central1").https.onCall(async (data, context) => {
