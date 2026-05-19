@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { onDisconnect, onValue, ref, remove, serverTimestamp, update } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
@@ -92,23 +92,21 @@ export default function BattleRoomPage() {
   }, [hasBattleAccess, preloadingQuestions, room, roomId, user]);
 
   useEffect(() => {
-    if (!roomId || !hasBattleAccess || !user || !room) return;
+    if (!roomId || !hasBattleAccess || !user) return;
     const realtimeDb = getRealtimeDb();
-    if (room.participants?.[user.uid]) {
-      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
-      disconnectAction.update({
-        uid: user.uid,
-        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
-        connected: false,
-        abandoned: true,
-        abandonedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      return () => {
-        disconnectAction.cancel();
-      };
-    }
-  }, [hasBattleAccess, room, roomId, user]);
+    const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
+    disconnectAction.update({
+      uid: user.uid,
+      name: user.displayName || user.email || 'Player',
+      connected: false,
+      abandoned: true,
+      abandonedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return () => {
+      disconnectAction.cancel();
+    };
+  }, [hasBattleAccess, roomId, user]);
 
   const participants = Object.values(room?.participants || {});
   const activeParticipants = participants.filter(participant => !participant.abandoned);

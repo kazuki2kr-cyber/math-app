@@ -350,8 +350,17 @@ export default function BattlePage() {
       if (candidates.length === 0) {
         throw new Error('no-waiting-room');
       }
-      const selectedCode = candidates[Math.floor(Math.random() * candidates.length)];
-      await joinRoomByCode(selectedCode);
+      const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+      let lastErr: unknown;
+      for (const code of shuffled) {
+        try {
+          await joinRoomByCode(code);
+          return;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr ?? new Error('no-waiting-room');
     } catch (err) {
       console.error('Failed to join random battle room:', err);
       setError(getJoinErrorMessage(err));

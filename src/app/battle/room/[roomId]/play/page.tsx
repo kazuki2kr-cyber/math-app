@@ -107,23 +107,21 @@ export default function BattlePlayPage() {
   }, [hasBattleAccess, roomId, router]);
 
   useEffect(() => {
-    if (!roomId || !hasBattleAccess || !user || !room) return;
+    if (!roomId || !hasBattleAccess || !user) return;
     const realtimeDb = getRealtimeDb();
-    if (room.participants?.[user.uid]) {
-      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
-      disconnectAction.update({
-        uid: user.uid,
-        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
-        connected: false,
-        abandoned: true,
-        abandonedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      return () => {
-        disconnectAction.cancel();
-      };
-    }
-  }, [hasBattleAccess, room, roomId, user]);
+    const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
+    disconnectAction.update({
+      uid: user.uid,
+      name: user.displayName || user.email || 'Player',
+      connected: false,
+      abandoned: true,
+      abandonedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return () => {
+      disconnectAction.cancel();
+    };
+  }, [hasBattleAccess, roomId, user]);
 
   useEffect(() => {
     async function fetchQuestions() {
@@ -173,6 +171,7 @@ export default function BattlePlayPage() {
   const elapsedMs = room?.phase === 'answering' ? clampResponseMs(nowMs - questionStartedAtMs) : 0;
   const remainingMs = room?.phase === 'answering' ? Math.max(0, BATTLE_ANSWER_LIMIT_MS - elapsedMs) : BATTLE_ANSWER_LIMIT_MS;
   const countdownRemainingMs = Math.max(0, BATTLE_NEXT_QUESTION_COUNTDOWN_MS - Math.max(0, nowMs - countdownStartedAtMs));
+  const inBuffer = room?.phase === 'answering' && questionStartedAtMs > nowMs;
   const answeredCount = activeParticipantIds.filter(uid => !!questionAnswers[uid]).length;
 
   useEffect(() => {
@@ -252,7 +251,7 @@ export default function BattlePlayPage() {
     if (room.phase === 'loading' && allPlayReady) {
       update(ref(realtimeDb, `battleRooms/${roomId}`), {
         phase: 'answering',
-        questionStartedAtMs: Date.now(),
+        questionStartedAtMs: Date.now() + 3000,
         updatedAt: serverTimestamp(),
       });
       return;
@@ -282,7 +281,7 @@ export default function BattlePlayPage() {
         update(ref(realtimeDb, `battleRooms/${roomId}`), {
           currentQuestionIndex: currentQuestionIndex + 1,
           phase: 'answering',
-          questionStartedAtMs: Date.now(),
+          questionStartedAtMs: Date.now() + 1000,
           countdownStartedAtMs: null,
           updatedAt: serverTimestamp(),
         });
@@ -301,7 +300,8 @@ export default function BattlePlayPage() {
         await finalizeBattleRoom({ roomId });
       } catch (err) {
         console.error('Failed to finalize battle room:', err);
-        setFinalizeError('結果の集計に失敗しました。画面を開いたまま少し待つか、再読み込みしてください。');
+        finalizeRequestedRef.current = false;
+        setFinalizeError('結果の集計に失敗しました。自動で再試行します...');
       } finally {
         setFinalizing(false);
       }
@@ -377,13 +377,17 @@ export default function BattlePlayPage() {
             <div className={`flex items-center font-mono text-lg sm:text-xl px-3 sm:px-4 py-1.5 rounded-full border shadow-inner ${
               room?.phase === 'countdown'
                 ? 'border-green-200 bg-green-50 text-green-700'
-                : remainingMs <= 5000
-                  ? 'border-red-200 bg-red-50 text-red-600'
-                  : 'border-primary/20 bg-primary/10 text-primary'
+                : inBuffer
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : remainingMs <= 5000
+                    ? 'border-red-200 bg-red-50 text-red-600'
+                    : 'border-primary/20 bg-primary/10 text-primary'
             }`}>
               <Clock className="w-5 h-5 mr-2" />
               {room?.phase === 'loading'
                 ? '準備中'
+                : inBuffer
+                ? `スタート ${Math.ceil((questionStartedAtMs - nowMs) / 1000)}`
                 : room?.phase === 'countdown'
                 ? `次へ ${Math.ceil(countdownRemainingMs / 1000)}`
                 : `残り ${Math.ceil(remainingMs / 1000)}`}
@@ -491,7 +495,7 @@ export default function BattlePlayPage() {
               </div>
               <Button
                 onClick={() => writeAnswer(selectedIndex, false)}
-                disabled={selectedIndex === null || !!myAnswer || room.phase !== 'answering' || submitting}
+                disabled={selectedIndex === null || !!myAnswer || room.phase !== 'answering' || inBuffer || submitting}
                 size="lg"
                 className="h-14 px-10 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
               >
