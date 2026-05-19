@@ -19,7 +19,7 @@ interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
   hostUid?: string;
   unitTitle?: string;
-  participants?: Record<string, { uid: string; name: string }>;
+  participants?: Record<string, { uid: string; name: string; abandoned?: boolean }>;
   results?: Record<string, BattleResultEntry & { xpDelta?: number; rank?: number }>;
   finalizedAt?: number;
 }
@@ -55,7 +55,7 @@ export default function BattleResultPage() {
 
   useEffect(() => {
     async function finalizeIfNeeded() {
-      if (!user || !room || room.status !== 'completed' || room.hostUid !== user.uid || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
+      if (!user || !room || room.status !== 'completed' || !room.participants?.[user.uid] || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
       finalizeRequestedRef.current = true;
       setFinalizing(true);
       setFinalizeError(null);
@@ -78,6 +78,7 @@ export default function BattleResultPage() {
   const myRankIndex = results.findIndex(result => result.uid === user?.uid);
   const myResult = myRankIndex >= 0 ? results[myRankIndex] as BattleResultEntry & { xpDelta?: number } : null;
   const myXpDelta = myResult?.xpDelta ?? (myRankIndex >= 0 ? getBattleXpDelta(Math.max(2, participants.length), myRankIndex) : 0);
+  const myRank = myResult?.rank ?? (myRankIndex >= 0 ? myRankIndex + 1 : null);
   const allSubmitted = participants.length > 0 && results.length >= participants.length;
 
   if (!hasBattleAccess) {
@@ -123,7 +124,7 @@ export default function BattleResultPage() {
               <div className="grid gap-3 sm:grid-cols-4">
                 <div className="rounded-xl bg-amber-50 p-4">
                   <p className="text-xs font-bold text-amber-700">あなたの順位</p>
-                  <p className="mt-1 text-3xl font-black text-gray-900">{myRankIndex >= 0 ? `${myRankIndex + 1}位` : '-'}</p>
+                  <p className="mt-1 text-3xl font-black text-gray-900">{myRank ? `${myRank}位` : '-'}</p>
                 </div>
                 <div className="rounded-xl bg-gray-50 p-4">
                   <p className="text-xs font-bold text-muted-foreground">スコア</p>
@@ -171,12 +172,12 @@ export default function BattleResultPage() {
                       }`}
                     >
                       <div className="text-center text-lg font-black text-gray-700">
-                        {index < 3 ? <Medal className={`mx-auto h-6 w-6 ${index === 0 ? 'text-yellow-500' : index === 1 ? 'text-gray-400' : 'text-amber-700'}`} /> : `${index + 1}位`}
+                        {result.rank && result.rank <= 3 && !result.abandoned ? <Medal className={`mx-auto h-6 w-6 ${result.rank === 1 ? 'text-yellow-500' : result.rank === 2 ? 'text-gray-400' : 'text-amber-700'}`} /> : `${result.rank ?? index + 1}位`}
                       </div>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-gray-900">{result.name}</p>
                         <p className="text-xs font-bold text-muted-foreground">
-                          {result.correctCount}/{result.totalQuestions}問正解
+                          {result.abandoned ? '離脱' : `${result.correctCount}/${result.totalQuestions}問正解`}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 text-sm font-black text-gray-800">

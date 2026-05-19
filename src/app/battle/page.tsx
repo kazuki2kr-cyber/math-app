@@ -222,7 +222,14 @@ export default function BattlePage() {
           window.setTimeout(() => reject(new Error('realtime-database-timeout')), 10000);
         }),
       ]);
-      await onDisconnect(roomRef).remove();
+      await onDisconnect(ref(realtimeDb, `battleRooms/${roomCode}/participants/${user.uid}`)).update({
+        uid: user.uid,
+        name: user.displayName || user.email || 'Player',
+        connected: false,
+        abandoned: true,
+        abandonedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
       navigated = true;
       router.push(`/battle/room/${roomCode}`);
     } catch (err) {
@@ -252,11 +259,11 @@ export default function BattlePage() {
 
     const room = roomSnap.val();
     const participants = room?.participants || {};
-    const participantCount = Object.keys(participants).length;
+    const activeParticipantCount = Object.values(participants).filter((participant: any) => !participant?.abandoned).length;
     if (room?.status !== 'waiting') {
       throw new Error('room-not-waiting');
     }
-    if (!participants[user.uid] && participantCount >= Number(room?.maxPlayers || 4)) {
+    if (!participants[user.uid] && activeParticipantCount >= Number(room?.maxPlayers || 4)) {
       throw new Error('room-full');
     }
 
@@ -265,9 +272,18 @@ export default function BattlePage() {
       name: user.displayName || user.email || 'Player',
       joinedAt: serverTimestamp(),
       connected: true,
+      abandoned: false,
       ready: false,
       questionsReady: false,
       playReady: false,
+    });
+    await onDisconnect(ref(realtimeDb, `battleRooms/${normalizedCode}/participants/${user.uid}`)).update({
+      uid: user.uid,
+      name: user.displayName || user.email || 'Player',
+      connected: false,
+      abandoned: true,
+      abandonedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     router.push(`/battle/room/${normalizedCode}`);
   };
@@ -323,7 +339,7 @@ export default function BattlePage() {
       waitingRoomsSnap.forEach((roomSnap) => {
         const room = roomSnap.val();
         const participants = room?.participants || {};
-        const participantCount = Object.keys(participants).length;
+        const participantCount = Object.values(participants).filter((participant: any) => !participant?.abandoned).length;
         const maxPlayers = Number(room?.maxPlayers || 4);
         const expiresAt = Number(room?.expiresAt || 0);
         const isFresh = !expiresAt || expiresAt > Date.now();

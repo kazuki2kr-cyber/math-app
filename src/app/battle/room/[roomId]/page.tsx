@@ -20,7 +20,7 @@ interface BattleRoom {
   subject?: string;
   category?: string;
   hostUid?: string;
-  participants?: Record<string, { uid: string; name: string; connected?: boolean; ready?: boolean; questionsReady?: boolean; playReady?: boolean }>;
+  participants?: Record<string, { uid: string; name: string; connected?: boolean; abandoned?: boolean; ready?: boolean; questionsReady?: boolean; playReady?: boolean }>;
 }
 
 export default function BattleRoomPage() {
@@ -77,6 +77,7 @@ export default function BattleRoomPage() {
           uid: user.uid,
           name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
           connected: true,
+          abandoned: false,
           questionsReady: true,
           playReady: false,
         });
@@ -93,17 +94,16 @@ export default function BattleRoomPage() {
   useEffect(() => {
     if (!roomId || !hasBattleAccess || !user || !room) return;
     const realtimeDb = getRealtimeDb();
-    if (room.hostUid === user.uid) {
-      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}`));
-      disconnectAction.remove();
-      return () => {
-        disconnectAction.cancel();
-      };
-    }
-
     if (room.participants?.[user.uid]) {
       const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
-      disconnectAction.remove();
+      disconnectAction.update({
+        uid: user.uid,
+        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
+        connected: false,
+        abandoned: true,
+        abandonedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
       return () => {
         disconnectAction.cancel();
       };
@@ -111,10 +111,11 @@ export default function BattleRoomPage() {
   }, [hasBattleAccess, room, roomId, user]);
 
   const participants = Object.values(room?.participants || {});
+  const activeParticipants = participants.filter(participant => !participant.abandoned);
   const isHost = !!user && room?.hostUid === user.uid;
   const currentParticipant = user ? room?.participants?.[user.uid] : null;
-  const allReady = participants.length >= 2 && participants.every(participant => participant.ready);
-  const allQuestionsReady = participants.length >= 2 && participants.every(participant => participant.questionsReady);
+  const allReady = activeParticipants.length >= 2 && activeParticipants.every(participant => participant.ready);
+  const allQuestionsReady = activeParticipants.length >= 2 && activeParticipants.every(participant => participant.questionsReady);
   const isStartingCountdown = room?.status === 'waiting' && room?.phase === 'starting';
   const startingRemainingMs = Math.max(0, 3000 - Math.max(0, nowMs - Number(room?.countdownStartedAtMs || nowMs)));
   const startingRemainingSeconds = Math.max(1, Math.ceil(startingRemainingMs / 1000));
@@ -126,7 +127,7 @@ export default function BattleRoomPage() {
   };
 
   const startBattle = async () => {
-    if (!isHost || !room || participants.length < 2 || starting) return;
+    if (!isHost || !room || activeParticipants.length < 2 || starting) return;
     if (!allReady || !allQuestionsReady) return;
     setStarting(true);
     try {
@@ -163,6 +164,7 @@ export default function BattleRoomPage() {
       uid: user.uid,
       name: user.displayName || user.email || currentParticipant?.name || 'Player',
       connected: true,
+      abandoned: false,
       ready: !currentParticipant?.ready,
     });
   };
@@ -254,7 +256,7 @@ export default function BattleRoomPage() {
               <div>
                 <div className="mb-3 flex items-center gap-2 text-sm font-black text-gray-700">
                   <Users className="h-4 w-4 text-amber-500" />
-                  参加者 {participants.length}/4
+                  参加者 {activeParticipants.length}/4
                 </div>
                 <div className="space-y-2">
                   {participants.map(participant => (
@@ -268,10 +270,12 @@ export default function BattleRoomPage() {
                         )}
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${
-                        participant.ready && participant.questionsReady ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                        participant.abandoned
+                          ? 'bg-red-50 text-red-600'
+                          : participant.ready && participant.questionsReady ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
                       }`}>
                         <CheckCircle2 className="h-3 w-3" />
-                        {participant.ready ? participant.questionsReady ? 'READY' : 'LOAD' : 'WAIT'}
+                        {participant.abandoned ? 'LEFT' : participant.ready ? participant.questionsReady ? 'READY' : 'LOAD' : 'WAIT'}
                       </span>
                     </div>
                   ))}

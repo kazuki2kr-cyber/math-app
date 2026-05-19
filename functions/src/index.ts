@@ -286,8 +286,8 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
   }
 
   const room = roomSnap.val() || {};
-  if (room.hostUid !== callerUid) {
-    throw new functions.https.HttpsError("permission-denied", "Only the host can finalize this battle.");
+  if (!room.participants?.[callerUid]) {
+    throw new functions.https.HttpsError("permission-denied", "Only room participants can finalize this battle.");
   }
   if (room.status !== "completed") {
     throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
@@ -301,13 +301,14 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
   }
 
-  const participants = Object.values(room.participants || {}) as Array<{ uid?: string; name?: string }>;
+  const participants = Object.values(room.participants || {}) as Array<{ uid?: string; name?: string; abandoned?: boolean }>;
   const validParticipants = participants
     .filter((participant) => participant.uid)
     .slice(0, 4)
     .map((participant) => ({
       uid: String(participant.uid),
       name: clampString(participant.name, 80) || "Player",
+      abandoned: participant.abandoned === true,
     }));
 
   if (validParticipants.length < 2) {
@@ -349,6 +350,19 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
 
   const questionAnswers = room.questionAnswers || {};
   const resultEntries = validParticipants.map((participant) => {
+    if (participant.abandoned) {
+      return {
+        uid: participant.uid,
+        name: participant.name,
+        totalScore: 0,
+        correctCount: 0,
+        totalQuestions: selectedQuestions.length,
+        totalTimeMs: BATTLE_ANSWER_LIMIT_MS * selectedQuestions.length,
+        abandoned: true,
+        finishedAt: admin.database.ServerValue.TIMESTAMP,
+      };
+    }
+
     let totalScore = 0;
     let correctCount = 0;
     let totalTimeMs = 0;
@@ -377,9 +391,11 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
       correctCount,
       totalQuestions: selectedQuestions.length,
       totalTimeMs,
+      abandoned: false,
       finishedAt: admin.database.ServerValue.TIMESTAMP,
     };
   }).sort((a, b) => {
+    if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
     if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
     if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
     return a.uid.localeCompare(b.uid);
@@ -387,10 +403,11 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
 
   const results: Record<string, any> = {};
   resultEntries.forEach((entry, index) => {
+    const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
     results[entry.uid] = {
       ...entry,
-      rank: index + 1,
-      xpDelta: getBattleXpDelta(validParticipants.length, index),
+      rank: entry.abandoned ? validParticipants.length : index + 1,
+      xpDelta: getBattleXpDelta(validParticipants.length, rankIndex),
     };
   });
 
@@ -408,7 +425,8 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
 
     const now = Timestamp.now();
     resultEntries.forEach((entry, index) => {
-      const xpDelta = getBattleXpDelta(validParticipants.length, index);
+      const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
+      const xpDelta = getBattleXpDelta(validParticipants.length, rankIndex);
       const userRef = db.doc(`users/${entry.uid}`);
       transaction.set(userRef, {
         battleStats: {

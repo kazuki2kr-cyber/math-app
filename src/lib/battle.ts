@@ -43,6 +43,9 @@ export interface BattleResultEntry {
   correctCount: number;
   totalQuestions: number;
   totalTimeMs: number;
+  abandoned?: boolean;
+  rank?: number;
+  xpDelta?: number;
   finishedAt?: number;
 }
 
@@ -74,6 +77,7 @@ export function getBattleXpDelta(playerCount: number, rankIndex: number): number
 
 export function sortBattleResults(results: BattleResultEntry[]): BattleResultEntry[] {
   return [...results].sort((a, b) => {
+    if (!!a.abandoned !== !!b.abandoned) return a.abandoned ? 1 : -1;
     if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
     if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
     return String(a.finishedAt || 0).localeCompare(String(b.finishedAt || 0));

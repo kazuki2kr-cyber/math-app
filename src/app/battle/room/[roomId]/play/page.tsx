@@ -28,7 +28,7 @@ interface BattleRoom {
   unitId?: string;
   unitTitle?: string;
   hostUid?: string;
-  participants?: Record<string, { uid: string; name: string; playReady?: boolean }>;
+  participants?: Record<string, { uid: string; name: string; connected?: boolean; abandoned?: boolean; playReady?: boolean }>;
   questionAnswers?: Record<string, Record<string, AnswerRecord>>;
   results?: Record<string, unknown>;
   finalizedAt?: number;
@@ -109,16 +109,16 @@ export default function BattlePlayPage() {
   useEffect(() => {
     if (!roomId || !hasBattleAccess || !user || !room) return;
     const realtimeDb = getRealtimeDb();
-    if (room.hostUid === user.uid) {
-      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}`));
-      disconnectAction.remove();
-      return () => {
-        disconnectAction.cancel();
-      };
-    }
     if (room.participants?.[user.uid]) {
       const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
-      disconnectAction.remove();
+      disconnectAction.update({
+        uid: user.uid,
+        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
+        connected: false,
+        abandoned: true,
+        abandonedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
       return () => {
         disconnectAction.cancel();
       };
@@ -160,23 +160,29 @@ export default function BattlePlayPage() {
   const currentQuestionIndex = Math.min(Number(room?.currentQuestionIndex || 0), Math.max(0, questions.length - 1));
   const currentQuestion = questions[currentQuestionIndex];
   const participantIds = useMemo(() => Object.keys(room?.participants || {}), [room?.participants]);
+  const activeParticipantIds = useMemo(
+    () => participantIds.filter(uid => !room?.participants?.[uid]?.abandoned),
+    [participantIds, room?.participants]
+  );
   const questionAnswers = room?.questionAnswers?.[String(currentQuestionIndex)] || {};
   const myAnswer = user ? questionAnswers[user.uid] : undefined;
-  const isHost = !!user && room?.hostUid === user.uid;
+  const coordinatorUid = activeParticipantIds[0] || null;
+  const isCoordinator = !!user && user.uid === coordinatorUid;
   const questionStartedAtMs = Number(room?.questionStartedAtMs || nowMs);
   const countdownStartedAtMs = Number(room?.countdownStartedAtMs || nowMs);
   const elapsedMs = room?.phase === 'answering' ? clampResponseMs(nowMs - questionStartedAtMs) : 0;
   const remainingMs = room?.phase === 'answering' ? Math.max(0, BATTLE_ANSWER_LIMIT_MS - elapsedMs) : BATTLE_ANSWER_LIMIT_MS;
   const countdownRemainingMs = Math.max(0, BATTLE_NEXT_QUESTION_COUNTDOWN_MS - Math.max(0, nowMs - countdownStartedAtMs));
-  const answeredCount = Object.keys(questionAnswers).length;
+  const answeredCount = activeParticipantIds.filter(uid => !!questionAnswers[uid]).length;
 
   useEffect(() => {
     async function markPlayReady() {
-      if (!user || !room || room.status !== 'active' || !questions.length || room.participants?.[user.uid]?.playReady) return;
+      if (!user || !room || room.status !== 'active' || !questions.length || room.participants?.[user.uid]?.playReady || room.participants?.[user.uid]?.abandoned) return;
       const realtimeDb = getRealtimeDb();
       await update(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`), {
         uid: user.uid,
         name: user.displayName || user.email || room.participants?.[user.uid]?.name || 'Player',
+        connected: true,
         playReady: true,
       });
     }
@@ -194,7 +200,7 @@ export default function BattlePlayPage() {
   }, [currentQuestionIndex]);
 
   const writeAnswer = async (selected: number | null, timedOut = false) => {
-    if (answerSubmittingRef.current || !user || !currentQuestion || myAnswer || !room || !['answering', 'countdown'].includes(String(room.phase))) return;
+    if (answerSubmittingRef.current || !user || !currentQuestion || myAnswer || !room || room.participants?.[user.uid]?.abandoned || !['answering', 'countdown'].includes(String(room.phase))) return;
     answerSubmittingRef.current = true;
     setSubmitting(true);
     try {
@@ -214,6 +220,21 @@ export default function BattlePlayPage() {
     }
   };
 
+  const leaveBattle = async () => {
+    if (user && room?.status === 'active' && room.participants?.[user.uid]) {
+      const realtimeDb = getRealtimeDb();
+      await update(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`), {
+        uid: user.uid,
+        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
+        connected: false,
+        abandoned: true,
+        abandonedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    router.push('/battle');
+  };
+
   useEffect(() => {
     if (!currentQuestion || !user || myAnswer || room?.phase !== 'answering') return;
     if (remainingMs <= 0) writeAnswer(null, true);
@@ -225,9 +246,9 @@ export default function BattlePlayPage() {
   }, [currentQuestion, myAnswer, room?.phase, user]);
 
   useEffect(() => {
-    if (!isHost || !room || !questions.length || room.status !== 'active') return;
+    if (!isCoordinator || !room || !questions.length || room.status !== 'active') return;
     const realtimeDb = getRealtimeDb();
-    const allPlayReady = participantIds.length > 0 && participantIds.every(uid => !!room.participants?.[uid]?.playReady);
+    const allPlayReady = activeParticipantIds.length > 0 && activeParticipantIds.every(uid => !!room.participants?.[uid]?.playReady);
     if (room.phase === 'loading' && allPlayReady) {
       update(ref(realtimeDb, `battleRooms/${roomId}`), {
         phase: 'answering',
@@ -237,7 +258,7 @@ export default function BattlePlayPage() {
       return;
     }
     if (room.phase === 'loading') return;
-    const allAnswered = participantIds.length > 0 && participantIds.every(uid => !!questionAnswers[uid]);
+    const allAnswered = activeParticipantIds.length > 0 && activeParticipantIds.every(uid => !!questionAnswers[uid]);
     const timeUp = remainingMs <= 0;
 
     if (room.phase === 'answering' && (allAnswered || timeUp)) {
@@ -267,11 +288,11 @@ export default function BattlePlayPage() {
         });
       }
     }
-  }, [countdownRemainingMs, currentQuestionIndex, isHost, participantIds, questionAnswers, questions.length, remainingMs, room, roomId]);
+  }, [activeParticipantIds, countdownRemainingMs, currentQuestionIndex, isCoordinator, questionAnswers, questions.length, remainingMs, room, roomId]);
 
   useEffect(() => {
     async function finalizeIfNeeded() {
-      if (!isHost || !room || room.status !== 'completed' || room.finalizedAt || room.results || finalizing || finalizeRequestedRef.current) return;
+      if (!user || !room || room.status !== 'completed' || !room.participants?.[user.uid] || room.finalizedAt || room.results || finalizing || finalizeRequestedRef.current) return;
       finalizeRequestedRef.current = true;
       setFinalizing(true);
       setFinalizeError(null);
@@ -287,7 +308,7 @@ export default function BattlePlayPage() {
     }
 
     finalizeIfNeeded();
-  }, [finalizing, isHost, room, roomId]);
+  }, [finalizing, room, roomId, user]);
 
   if (!hasBattleAccess) {
     return (
@@ -320,11 +341,6 @@ export default function BattlePlayPage() {
               {finalizeError}
             </div>
           )}
-          {!isHost && (
-            <p className="text-xs font-semibold text-muted-foreground">
-              ホストが結果を確定しています。
-            </p>
-          )}
         </main>
       </div>
     );
@@ -337,7 +353,7 @@ export default function BattlePlayPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push('/battle')}
+            onClick={leaveBattle}
             className="text-muted-foreground hover:text-destructive transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-1.5" strokeWidth={1.5} />
@@ -411,7 +427,7 @@ export default function BattlePlayPage() {
                 <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">対戦</span>
               </CardDescription>
               <p className="mb-4 text-sm font-bold text-muted-foreground">
-                回答済み {answeredCount}/{participantIds.length}
+                回答済み {answeredCount}/{activeParticipantIds.length}
                 {myAnswer && <span className="ml-3 text-green-700">あなたは送信済み</span>}
               </p>
               <div className="mb-4 h-3 overflow-hidden rounded-full bg-black/5 shadow-inner">
