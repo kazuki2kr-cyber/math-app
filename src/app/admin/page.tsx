@@ -21,6 +21,21 @@ import 'katex/dist/katex.min.css';
 
 const ANALYTICS_EVENT_BATCH_SIZE = 200;
 
+function getImportSubjectMetadata(importSubject: string) {
+  switch (importSubject) {
+    case 'math':
+      return { subject: '数学', baseSubject: '数学', mode: 'solo' };
+    case 'english':
+      return { subject: '英語', baseSubject: '英語', mode: 'solo' };
+    case 'math_battle':
+      return { subject: '数学対戦', baseSubject: '数学', mode: 'battle' };
+    case 'english_battle':
+      return { subject: '英語対戦', baseSubject: '英語', mode: 'battle' };
+    default:
+      return { subject: importSubject, baseSubject: importSubject.replace(/対戦$/, ''), mode: importSubject.endsWith('対戦') ? 'battle' : 'solo' };
+  }
+}
+
 function getAttemptDocId(attempt: any): string | null {
   if (attempt?.docId) return String(attempt.docId);
   if (attempt?.attemptId) return String(attempt.attemptId);
@@ -766,6 +781,7 @@ export default function AdminPage() {
           setMessage(`解析完了. ${data.length}件のレコードを処理しています...`);
 
           const unitsMap: Record<string, { unitDoc: any, questions: any[] }> = {};
+          const subjectMetadata = getImportSubjectMetadata(importSubject);
 
           data.forEach((row) => {
             const { unit_id, question_text, options, answer_index, explanation, image_url, category } = row;
@@ -776,7 +792,9 @@ export default function AdminPage() {
                 unitDoc: {
                   id: unit_id,
                   title: `単元 ${unit_id}`,
-                  subject: importSubject === 'math' ? '数学' : importSubject === 'english' ? '英語' : importSubject,
+                  subject: subjectMetadata.subject,
+                  baseSubject: subjectMetadata.baseSubject,
+                  mode: subjectMetadata.mode,
                   category: category || '1.正の数と負の数',
                   totalQuestions: 0
                 },

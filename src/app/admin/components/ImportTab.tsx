@@ -36,6 +36,8 @@ export default function ImportTab({ loading, importSubject, setImportSubject, on
           >
             <option value="math">数学</option>
             <option value="english">英語</option>
+            <option value="math_battle">数学対戦</option>
+            <option value="english_battle">英語対戦</option>
           </select>
           <p className="text-xs text-muted-foreground mt-1">
             ※アップロードするCSVデータすべてにこの教科が設定されます。
