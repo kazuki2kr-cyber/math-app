@@ -13,18 +13,22 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
 const BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_BATTLE_ACCESS_PASSWORD || 'test';
 const BATTLE_ROOM_TTL_MS = 60 * 60 * 1000;
-const BATTLE_XP_PER_WIN = 100;
 const BATTLE_XP_PER_RANK = 500;
 
+// XP table: key = player count, value = XP awarded by finish position [1st, 2nd, 3rd, 4th]
+const BATTLE_XP_TABLE: Record<number, number[]> = {
+  2: [100, -20],
+  3: [125, 0, -20],
+  4: [150, 75, -20, -40],
+};
+
 const BATTLE_RANKS = [
-  { minXp: 0, title: '対戦見習い', icon: '🥉' },
-  { minXp: 500, title: '計算スプリンター', icon: '⚡' },
-  { minXp: 1000, title: '連勝チャレンジャー', icon: '🛡️' },
-  { minXp: 1500, title: 'スピードスター', icon: '🔥' },
-  { minXp: 2000, title: '戦術マスター', icon: '💎' },
-  { minXp: 2500, title: '無敗の王者', icon: '👑' },
-  { minXp: 3000, title: '数式チャンピオン', icon: '🏆' },
-  { minXp: 3500, title: '対戦レジェンド', icon: '🌟' },
+  { minXp: 0, title: 'ベーシッククラス', icon: '📚' },
+  { minXp: 500, title: 'ブロンズクラス', icon: '🥉' },
+  { minXp: 1000, title: 'シルバークラス', icon: '🥈' },
+  { minXp: 1500, title: 'ゴールドクラス', icon: '🥇' },
+  { minXp: 2000, title: 'プラチナクラス', icon: '💎' },
+  { minXp: 2500, title: 'マスタークラス', icon: '👑' },
 ] as const;
 
 interface BattleUnit {
@@ -113,7 +117,7 @@ export default function BattlePage() {
         const data = userSnap.exists() ? userSnap.data() : {};
         const stats = data.battleStats || {};
         const wins = Number(stats.wins || stats.totalWins || data.battleWins || 0);
-        const xp = Number(stats.xp || data.battleXp || wins * BATTLE_XP_PER_WIN || 0);
+        const xp = Number(stats.xp || data.battleXp || wins * 100 || 0);
         setBattleProfile({
           wins: Math.max(0, wins),
           xp: Math.max(0, xp),
@@ -443,7 +447,7 @@ export default function BattlePage() {
             </div>
             <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
               <span>{battleProfile.xp.toLocaleString()} XP</span>
-              <span>1勝 = {BATTLE_XP_PER_WIN} XP / 約5勝でランクアップ</span>
+              <span>優勝 +100〜150 XP（人数で変動）/ 約5勝でランクアップ</span>
             </div>
           </div>
         </div>
