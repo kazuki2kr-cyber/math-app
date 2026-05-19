@@ -1,0 +1,18 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "battleRooms": {
+      ".indexOn": ["status"],
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() == auth.uid && newData.child('participants').child(auth.uid).exists()) || (data.exists() && data.child('hostUid').val() == auth.uid))",
+        "participants": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid && data.parent().parent().child('status').val() == 'waiting' && newData.child('uid').val() == auth.uid"
+          }
+        }
+      }
+    }
+  }
+}

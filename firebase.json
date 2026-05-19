@@ -20,6 +20,9 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "database": {
+    "rules": "database.rules.json"
+  },
   "hosting": {
     "public": "out",
     "ignore": [
@@ -46,6 +49,10 @@
     "functions": {
       "host": "127.0.0.1",
       "port": 5001
+    },
+    "database": {
+      "host": "127.0.0.1",
+      "port": 9000
     },
     "ui": {
       "enabled": true

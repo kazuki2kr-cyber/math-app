@@ -19,6 +19,8 @@ interface Unit {
   totalQuestions?: number;
   category?: string;
   subject?: string;
+  baseSubject?: string;
+  mode?: string;
 }
 
 interface Score {
@@ -34,6 +36,10 @@ interface OverallRank {
   xp: number;
   icon?: string;
   level?: number;
+}
+
+function isBattleUnit(unit: Unit) {
+  return unit.mode === 'battle' || String(unit.subject || '').endsWith('対戦');
 }
 
 export default function Home() {
@@ -80,7 +86,7 @@ export default function Home() {
       setError(null);
       try {
         // 1. Fetch units with caching
-        const CACHE_KEY = 'math_units_cache_v2';
+        const CACHE_KEY = 'math_units_cache_v3';
         const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day
         localStorage.removeItem('math_units_cache'); // v1 cleanup
         const cachedUnits = localStorage.getItem(CACHE_KEY);
@@ -102,6 +108,8 @@ export default function Home() {
           unitsData = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
           localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
         }
+
+        const soloUnitsData = unitsData.filter(unit => !isBattleUnit(unit));
 
         // 2 & 3. Fetch user's stats and extract scores / wrong answers
         const newScores: Record<string, Score> = {};
@@ -129,7 +137,7 @@ export default function Home() {
               return current;
             };
 
-            unitsData.forEach(unit => {
+            soloUnitsData.forEach(unit => {
               const stat = getNestedValue(ud.unitStats, unit.id);
               if (stat && stat.maxScore !== undefined) {
                 newScores[unit.id] = {
@@ -159,17 +167,17 @@ export default function Home() {
         setWrongAnswers(newWrongAnswers);
         setDrillCounts(newDrillCounts);
         // Sort units: Category ASC, then Title ASC
-        unitsData.sort((a, b) => {
+        soloUnitsData.sort((a, b) => {
           const catA = a.category || 'その他';
           const catB = b.category || 'その他';
           if (catA !== catB) return catA.localeCompare(catB, 'ja', { numeric: true });
           return a.title.localeCompare(b.title, 'ja', { numeric: true });
         });
 
-        setUnits(unitsData);
+        setUnits(soloUnitsData);
 
         // Extract available categories
-        const categories = Array.from(new Set(unitsData.map(u => u.category || 'その他'))).sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
+        const categories = Array.from(new Set(soloUnitsData.map(u => u.category || 'その他'))).sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
         setAvailableCategories(categories);
 
         setScores(newScores);
@@ -291,6 +299,16 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/battle')}
+            className="inline-flex border-amber-200 bg-amber-50/80 text-amber-700 hover:bg-amber-100 hover:text-amber-800 font-bold shadow-sm"
+          >
+            <Trophy className="w-4 h-4 mr-2" />
+            <span className="hidden sm:inline">対戦モード（β版）</span>
+            <span className="sm:hidden">対戦β</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"

@@ -1,0 +1,3 @@
+display_name: Battle Math CSV Creation
+short_description: Create battle-ready math CSVs from PDFs.
+default_prompt: Create a battle-mode math CSV from the provided PDF, selecting and supplementing about 100 quick-answer problems, then validate the CSV.
