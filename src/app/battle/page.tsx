@@ -1,14 +1,31 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, getDocs, query as firestoreQuery, where } from 'firebase/firestore';
-import { equalTo, get, limitToFirst, orderByChild, query as realtimeQuery, ref, serverTimestamp, set } from 'firebase/database';
-import { ArrowLeft, Swords, Users } from 'lucide-react';
+import { collection, doc, getDoc, getDocs, query as firestoreQuery, where } from 'firebase/firestore';
+import { equalTo, get, limitToFirst, onDisconnect, orderByChild, query as realtimeQuery, ref, serverTimestamp, set } from 'firebase/database';
+import { ArrowLeft, Lock, Swords, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+
+const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
+const BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_BATTLE_ACCESS_PASSWORD || 'test';
+const BATTLE_ROOM_TTL_MS = 60 * 60 * 1000;
+const BATTLE_XP_PER_WIN = 100;
+const BATTLE_XP_PER_RANK = 500;
+
+const BATTLE_RANKS = [
+  { minXp: 0, title: '対戦見習い', icon: '🥉' },
+  { minXp: 500, title: '計算スプリンター', icon: '⚡' },
+  { minXp: 1000, title: '連勝チャレンジャー', icon: '🛡️' },
+  { minXp: 1500, title: 'スピードスター', icon: '🔥' },
+  { minXp: 2000, title: '戦術マスター', icon: '💎' },
+  { minXp: 2500, title: '無敗の王者', icon: '👑' },
+  { minXp: 3000, title: '数式チャンピオン', icon: '🏆' },
+  { minXp: 3500, title: '対戦レジェンド', icon: '🌟' },
+] as const;
 
 interface BattleUnit {
   id: string;
@@ -19,9 +36,26 @@ interface BattleUnit {
   totalQuestions?: number;
 }
 
+interface BattleProfile {
+  wins: number;
+  xp: number;
+}
+
+function getBattleRank(xp: number) {
+  return [...BATTLE_RANKS].reverse().find(rank => xp >= rank.minXp) || BATTLE_RANKS[0];
+}
+
+function getNextBattleRank(xp: number) {
+  return BATTLE_RANKS.find(rank => rank.minXp > xp) || null;
+}
+
 export default function BattlePage() {
   const { user } = useAuth();
   const router = useRouter();
+  const [hasBattleAccess, setHasBattleAccess] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
   const [units, setUnits] = useState<BattleUnit[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -35,6 +69,15 @@ export default function BattlePage() {
   const isJoiningRoomRef = useRef(false);
 
   useEffect(() => {
+    setHasBattleAccess(sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true');
+  }, []);
+
+  useEffect(() => {
+    if (!hasBattleAccess) {
+      setLoading(false);
+      return;
+    }
+
     async function fetchBattleUnits() {
       setLoading(true);
       setError(null);
@@ -59,7 +102,30 @@ export default function BattlePage() {
     }
 
     fetchBattleUnits();
-  }, []);
+  }, [hasBattleAccess]);
+
+  useEffect(() => {
+    if (!hasBattleAccess || !user) return;
+
+    async function fetchBattleProfile() {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', user!.uid));
+        const data = userSnap.exists() ? userSnap.data() : {};
+        const stats = data.battleStats || {};
+        const wins = Number(stats.wins || stats.totalWins || data.battleWins || 0);
+        const xp = Number(stats.xp || data.battleXp || wins * BATTLE_XP_PER_WIN || 0);
+        setBattleProfile({
+          wins: Math.max(0, wins),
+          xp: Math.max(0, xp),
+        });
+      } catch (err) {
+        console.error('Failed to load battle profile:', err);
+        setBattleProfile({ wins: 0, xp: 0 });
+      }
+    }
+
+    fetchBattleProfile();
+  }, [hasBattleAccess, user]);
 
   const subjects = useMemo(() => {
     return Array.from(new Set(units.map(unit => unit.baseSubject || unit.subject || 'その他'))).sort();
@@ -80,6 +146,27 @@ export default function BattlePage() {
       && (selectedCategory === 'all' || unitCategory === selectedCategory);
   });
 
+  const currentRank = getBattleRank(battleProfile.xp);
+  const nextRank = getNextBattleRank(battleProfile.xp);
+  const currentRankIndex = BATTLE_RANKS.findIndex(rank => rank.title === currentRank.title);
+  const nextRankXp = nextRank?.minXp ?? currentRank.minXp + BATTLE_XP_PER_RANK;
+  const currentRankBaseXp = currentRank.minXp;
+  const rankSpanXp = Math.max(1, nextRankXp - currentRankBaseXp);
+  const xpInRank = Math.max(0, battleProfile.xp - currentRankBaseXp);
+  const xpToNextRank = nextRank ? Math.max(0, nextRank.minXp - battleProfile.xp) : 0;
+  const rankProgressPercent = nextRank ? Math.min(100, Math.max(0, (xpInRank / rankSpanXp) * 100)) : 100;
+
+  const unlockBattleMode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (passwordInput === BATTLE_ACCESS_PASSWORD) {
+      sessionStorage.setItem(BATTLE_ACCESS_STORAGE_KEY, 'true');
+      setHasBattleAccess(true);
+      setPasswordError(null);
+      return;
+    }
+    setPasswordError('パスワードが違います。');
+  };
+
   const generateRoomCode = async () => {
     const realtimeDb = getRealtimeDb();
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -99,6 +186,7 @@ export default function BattlePage() {
       const realtimeDb = getRealtimeDb();
       const roomCode = await generateRoomCode();
       const roomRef = ref(realtimeDb, `battleRooms/${roomCode}`);
+      const now = Date.now();
       await Promise.race([
         set(roomRef, {
           status: 'waiting',
@@ -112,6 +200,7 @@ export default function BattlePage() {
           hostUid: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+          expiresAt: now + BATTLE_ROOM_TTL_MS,
           participants: {
             [user.uid]: {
               uid: user.uid,
@@ -125,16 +214,15 @@ export default function BattlePage() {
           window.setTimeout(() => reject(new Error('realtime-database-timeout')), 10000);
         }),
       ]);
+      await onDisconnect(roomRef).remove();
       router.push(`/battle/room/${roomCode}`);
     } catch (err) {
       console.error('Failed to create battle room:', err);
-      const message = err instanceof Error && err.message === 'missing-realtime-database-url'
-        ? 'Realtime Database のURLが未設定です。NEXT_PUBLIC_FIREBASE_DATABASE_URL を .env.local に設定してください。'
-        : err instanceof Error && err.message === 'realtime-database-timeout'
-          ? 'Realtime Database への接続がタイムアウトしました。Database URL と Firebase 側のインスタンス設定を確認してください。'
-          : err instanceof Error && err.message === 'room-code-collision'
-            ? 'ルーム番号の生成に失敗しました。もう一度お試しください。'
-            : '対戦ルームを作成できませんでした。';
+      const message = err instanceof Error && err.message === 'realtime-database-timeout'
+        ? 'Realtime Database への接続がタイムアウトしました。Database URL と Firebase 側のインスタンス設定を確認してください。'
+        : err instanceof Error && err.message === 'room-code-collision'
+          ? 'ルーム番号の生成に失敗しました。もう一度お試しください。'
+          : '対戦ルームを作成できませんでした。';
       setError(message);
     } finally {
       isCreatingRoomRef.current = false;
@@ -171,17 +259,15 @@ export default function BattlePage() {
   };
 
   const getJoinErrorMessage = (err: unknown) => {
-    return err instanceof Error && err.message === 'missing-realtime-database-url'
-      ? 'Realtime Database のURLが未設定です。NEXT_PUBLIC_FIREBASE_DATABASE_URL を .env.local に設定してください。'
-      : err instanceof Error && err.message === 'room-not-found'
-        ? '指定されたルームが見つかりません。'
-        : err instanceof Error && err.message === 'room-not-waiting'
-          ? 'このルームは現在参加できません。'
-          : err instanceof Error && err.message === 'room-full'
-            ? 'このルームは満員です。'
-            : err instanceof Error && err.message === 'no-waiting-room'
-              ? '参加できる待機中のルームがありません。'
-              : 'ルームに参加できませんでした。';
+    return err instanceof Error && err.message === 'room-not-found'
+      ? '指定されたルームが見つかりません。'
+      : err instanceof Error && err.message === 'room-not-waiting'
+        ? 'このルームは現在参加できません。'
+        : err instanceof Error && err.message === 'room-full'
+          ? 'このルームは満員です。'
+          : err instanceof Error && err.message === 'no-waiting-room'
+            ? '参加できる待機中のルームがありません。'
+            : 'ルームに参加できませんでした。';
   };
 
   const joinRoom = async () => {
@@ -225,7 +311,9 @@ export default function BattlePage() {
         const participants = room?.participants || {};
         const participantCount = Object.keys(participants).length;
         const maxPlayers = Number(room?.maxPlayers || 4);
-        if (participantCount < maxPlayers || participants[user.uid]) {
+        const expiresAt = Number(room?.expiresAt || 0);
+        const isFresh = !expiresAt || expiresAt > Date.now();
+        if (isFresh && (participantCount < maxPlayers || participants[user.uid])) {
           candidates.push(String(roomSnap.key));
         }
       });
@@ -242,6 +330,46 @@ export default function BattlePage() {
       setJoiningRandomRoom(false);
     }
   };
+
+  if (!hasBattleAccess) {
+    return (
+      <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
+        <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center gap-5">
+          <div className="rounded-2xl border border-amber-100 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                <Lock className="h-5 w-5" />
+              </div>
+              <div>
+                <h1 className="text-xl font-black text-gray-900">対戦モード（β版）</h1>
+                <p className="text-sm font-semibold text-muted-foreground">現在は限定公開中です。</p>
+              </div>
+            </div>
+            <form onSubmit={unlockBattleMode} className="space-y-3">
+              <input
+                value={passwordInput}
+                onChange={(event) => setPasswordInput(event.target.value)}
+                type="password"
+                placeholder="パスワード"
+                className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-base font-bold outline-none focus:border-amber-400"
+              />
+              {passwordError && (
+                <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-bold text-red-700">
+                  {passwordError}
+                </div>
+              )}
+              <Button type="submit" className="h-12 w-full bg-amber-500 font-bold text-white hover:bg-amber-600">
+                入室する
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => router.push('/')} className="h-10 w-full text-muted-foreground">
+                戻る
+              </Button>
+            </form>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
@@ -260,6 +388,64 @@ export default function BattlePage() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             戻る
           </Button>
+        </div>
+
+        <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-4xl shadow-inner">
+                {currentRank.icon}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-widest text-amber-600">Battle Profile</p>
+                <h2 className="truncate text-2xl font-black text-gray-900">
+                  {user?.displayName || user?.email || 'ゲスト'} <span className="text-sm font-bold text-muted-foreground">さん</span>
+                </h2>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+                    Rank {currentRankIndex + 1}
+                  </span>
+                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-700">
+                    {currentRank.title}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[480px]">
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-bold text-muted-foreground">通算優勝</p>
+                <p className="mt-1 text-2xl font-black text-gray-900">{battleProfile.wins.toLocaleString()}回</p>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-bold text-muted-foreground">対戦XP</p>
+                <p className="mt-1 text-2xl font-black text-gray-900">{battleProfile.xp.toLocaleString()}</p>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-bold text-muted-foreground">次ランクまで</p>
+                <p className="mt-1 text-2xl font-black text-gray-900">
+                  {nextRank ? `${xpToNextRank.toLocaleString()} XP` : '到達済み'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between text-xs font-black text-gray-500">
+              <span>{currentRank.title}</span>
+              <span>{nextRank ? nextRank.title : '最高ランク'}</span>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-full rounded-full bg-amber-500 transition-all"
+                style={{ width: `${rankProgressPercent}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
+              <span>{battleProfile.xp.toLocaleString()} XP</span>
+              <span>1勝 = {BATTLE_XP_PER_WIN} XP / 約5勝でランクアップ</span>
+            </div>
+          </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">

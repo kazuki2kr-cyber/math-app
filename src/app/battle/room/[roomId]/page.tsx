@@ -2,12 +2,14 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { onValue, ref, update } from 'firebase/database';
+import { onDisconnect, onValue, ref, remove } from 'firebase/database';
 import { ArrowLeft, Copy, Swords, Users, XCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
 
 interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
@@ -23,12 +25,21 @@ export default function BattleRoomPage() {
   const router = useRouter();
   const { user } = useAuth();
   const roomId = String(params.roomId || '');
+  const [hasBattleAccess, setHasBattleAccess] = useState(false);
   const [room, setRoom] = useState<BattleRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!roomId) return;
+    const isUnlocked = sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true';
+    setHasBattleAccess(isUnlocked);
+    if (!isUnlocked) {
+      router.replace('/battle');
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!roomId || !hasBattleAccess) return;
     const realtimeDb = getRealtimeDb();
     const roomRef = ref(realtimeDb, `battleRooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -37,7 +48,27 @@ export default function BattleRoomPage() {
     });
 
     return () => unsubscribe();
-  }, [roomId]);
+  }, [hasBattleAccess, roomId]);
+
+  useEffect(() => {
+    if (!roomId || !hasBattleAccess || !user || !room) return;
+    const realtimeDb = getRealtimeDb();
+    if (room.hostUid === user.uid) {
+      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}`));
+      disconnectAction.remove();
+      return () => {
+        disconnectAction.cancel();
+      };
+    }
+
+    if (room.participants?.[user.uid]) {
+      const disconnectAction = onDisconnect(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`));
+      disconnectAction.remove();
+      return () => {
+        disconnectAction.cancel();
+      };
+    }
+  }, [hasBattleAccess, room, roomId, user]);
 
   const participants = Object.values(room?.participants || {});
   const isHost = !!user && room?.hostUid === user.uid;
@@ -51,12 +82,18 @@ export default function BattleRoomPage() {
   const cancelRoom = async () => {
     if (!isHost) return;
     const realtimeDb = getRealtimeDb();
-    await update(ref(realtimeDb, `battleRooms/${roomId}`), {
-      status: 'cancelled',
-      cancelReason: 'host_cancelled',
-      updatedAt: Date.now(),
-    });
+    await remove(ref(realtimeDb, `battleRooms/${roomId}`));
   };
+
+  if (!hasBattleAccess) {
+    return (
+      <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
+        <main className="mx-auto flex min-h-[70vh] w-full max-w-md items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
