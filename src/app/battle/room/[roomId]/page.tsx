@@ -2,22 +2,24 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { onDisconnect, onValue, ref, remove } from 'firebase/database';
-import { ArrowLeft, Copy, Swords, Users, XCircle } from 'lucide-react';
+import { onDisconnect, onValue, ref, remove, serverTimestamp, update } from 'firebase/database';
+import { ArrowLeft, CheckCircle2, Copy, Flame, Play, Swords, Users, XCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getRealtimeDb } from '@/lib/firebase';
+import { BATTLE_ACCESS_STORAGE_KEY } from '@/lib/battle';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
-
 interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
+  phase?: 'answering' | 'countdown' | 'completed' | 'starting';
+  countdownStartedAtMs?: number | null;
+  unitId?: string;
   unitTitle?: string;
   subject?: string;
   category?: string;
   hostUid?: string;
-  participants?: Record<string, { uid: string; name: string; connected?: boolean }>;
+  participants?: Record<string, { uid: string; name: string; connected?: boolean; ready?: boolean }>;
 }
 
 export default function BattleRoomPage() {
@@ -29,13 +31,18 @@ export default function BattleRoomPage() {
   const [room, setRoom] = useState<BattleRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const isUnlocked = sessionStorage.getItem(BATTLE_ACCESS_STORAGE_KEY) === 'true';
     setHasBattleAccess(isUnlocked);
-    if (!isUnlocked) {
-      router.replace('/battle');
-    }
+    if (!isUnlocked) router.replace('/battle');
   }, [router]);
 
   useEffect(() => {
@@ -43,12 +50,16 @@ export default function BattleRoomPage() {
     const realtimeDb = getRealtimeDb();
     const roomRef = ref(realtimeDb, `battleRooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
-      setRoom(snapshot.exists() ? snapshot.val() : null);
+      const nextRoom = snapshot.exists() ? snapshot.val() : null;
+      setRoom(nextRoom);
       setLoading(false);
+      if (nextRoom?.status === 'active') {
+        router.replace(`/battle/room/${roomId}/play`);
+      }
     });
 
     return () => unsubscribe();
-  }, [hasBattleAccess, roomId]);
+  }, [hasBattleAccess, roomId, router]);
 
   useEffect(() => {
     if (!roomId || !hasBattleAccess || !user || !room) return;
@@ -72,11 +83,58 @@ export default function BattleRoomPage() {
 
   const participants = Object.values(room?.participants || {});
   const isHost = !!user && room?.hostUid === user.uid;
+  const currentParticipant = user ? room?.participants?.[user.uid] : null;
+  const allReady = participants.length >= 2 && participants.every(participant => participant.ready);
+  const isStartingCountdown = room?.status === 'waiting' && room?.phase === 'starting';
+  const startingRemainingMs = Math.max(0, 3000 - Math.max(0, nowMs - Number(room?.countdownStartedAtMs || nowMs)));
+  const startingRemainingSeconds = Math.max(1, Math.ceil(startingRemainingMs / 1000));
 
   const copyRoomId = async () => {
     await navigator.clipboard.writeText(roomId);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const startBattle = async () => {
+    if (!isHost || !room || participants.length < 2 || starting) return;
+    if (!allReady) return;
+    setStarting(true);
+    try {
+      const realtimeDb = getRealtimeDb();
+      await update(ref(realtimeDb, `battleRooms/${roomId}`), {
+        status: 'waiting',
+        phase: 'starting',
+        countdownStartedAtMs: Date.now(),
+        updatedAt: serverTimestamp(),
+      });
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isHost || !isStartingCountdown || startingRemainingMs > 0) return;
+    const realtimeDb = getRealtimeDb();
+    update(ref(realtimeDb, `battleRooms/${roomId}`), {
+      status: 'active',
+      currentQuestionIndex: 0,
+      phase: 'answering',
+      questionStartedAtMs: Date.now(),
+      countdownStartedAtMs: null,
+      startedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }, [isHost, isStartingCountdown, roomId, startingRemainingMs]);
+
+  const toggleReady = async () => {
+    if (!user || !room || room.status !== 'waiting' || isStartingCountdown) return;
+    const realtimeDb = getRealtimeDb();
+    await update(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`), {
+      uid: user.uid,
+      name: user.displayName || user.email || currentParticipant?.name || 'Player',
+      connected: true,
+      ready: !currentParticipant?.ready,
+    });
   };
 
   const cancelRoom = async () => {
@@ -124,6 +182,25 @@ export default function BattleRoomPage() {
           </div>
         ) : (
           <Card className="border-transparent bg-white shadow-sm">
+            {isStartingCountdown && (
+              <div className="relative overflow-hidden border-b border-amber-100 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 p-6 text-white">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.35),transparent_28%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,0.22),transparent_26%)]" />
+                <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 shadow-inner">
+                      <Flame className="h-8 w-8" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.24em] text-white/80">Battle Starts In</p>
+                      <h2 className="text-3xl font-black tracking-tight">集中していこう</h2>
+                    </div>
+                  </div>
+                  <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-white/70 bg-white/20 text-6xl font-black shadow-lg">
+                    {startingRemainingSeconds}
+                  </div>
+                </div>
+              </div>
+            )}
             <CardHeader className="border-b bg-amber-50/40">
               <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
                 {room.subject || 'その他'} / {room.category || 'その他'}
@@ -152,26 +229,48 @@ export default function BattleRoomPage() {
                 <div className="space-y-2">
                   {participants.map(participant => (
                     <div key={participant.uid} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white p-3">
-                      <span className="text-sm font-bold text-gray-800">{participant.name}</span>
-                      <span className="rounded-full bg-green-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-green-700">
-                        online
+                      <div className="min-w-0">
+                        <span className="truncate text-sm font-bold text-gray-800">{participant.name}</span>
+                        {participant.uid === room.hostUid && (
+                          <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700">
+                            HOST
+                          </span>
+                        )}
+                      </div>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${
+                        participant.ready ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        <CheckCircle2 className="h-3 w-3" />
+                        {participant.ready ? 'READY' : 'WAIT'}
                       </span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {room.status === 'cancelled' && (
-                <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-bold text-red-700">
-                  対戦が中断されました。
-                </div>
-              )}
-
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button className="flex-1 bg-amber-500 font-bold text-white hover:bg-amber-600" disabled={participants.length < 2 || room.status !== 'waiting'}>
-                  開始
+                <Button
+                  variant="outline"
+                  onClick={toggleReady}
+                  disabled={room.status !== 'waiting' || isStartingCountdown}
+                  className={`flex-1 font-bold ${
+                    currentParticipant?.ready
+                      ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                      : 'border-amber-200 bg-white text-amber-700 hover:bg-amber-50'
+                  }`}
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  {currentParticipant?.ready ? '準備完了済み' : '準備完了'}
                 </Button>
-                {isHost && room.status === 'waiting' && (
+                <Button
+                  className="flex-1 bg-amber-500 font-bold text-white hover:bg-amber-600"
+                  disabled={!isHost || !allReady || room.status !== 'waiting' || isStartingCountdown || starting}
+                  onClick={startBattle}
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  {starting || isStartingCountdown ? '開始準備中...' : isHost ? '対戦開始' : 'ホストの開始待ち'}
+                </Button>
+                {isHost && room.status === 'waiting' && !isStartingCountdown && (
                   <Button variant="outline" onClick={cancelRoom} className="border-red-100 bg-red-50 font-bold text-red-600 hover:bg-red-100">
                     <XCircle className="mr-2 h-4 w-4" />
                     中断

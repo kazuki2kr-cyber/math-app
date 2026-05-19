@@ -11,6 +11,18 @@
           "$uid": {
             ".write": "auth != null && auth.uid == $uid && ((newData.exists() && data.parent().parent().child('status').val() == 'waiting' && newData.child('uid').val() == auth.uid) || (!newData.exists() && data.exists()))"
           }
+        },
+        "questionAnswers": {
+          "$questionIndex": {
+            "$uid": {
+              ".write": "auth != null && auth.uid == $uid && data.parent().parent().parent().child('participants').child(auth.uid).exists() && data.parent().parent().parent().child('status').val() == 'active' && newData.child('uid').val() == auth.uid"
+            }
+          }
+        },
+        "results": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid && data.parent().parent().child('participants').child(auth.uid).exists() && newData.child('uid').val() == auth.uid"
+          }
         }
       }
     }

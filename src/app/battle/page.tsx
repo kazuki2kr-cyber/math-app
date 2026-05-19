@@ -211,6 +211,7 @@ export default function BattlePage() {
               name: user.displayName || user.email || 'Player',
               joinedAt: serverTimestamp(),
               connected: true,
+              ready: false,
             },
           },
         }),
@@ -258,6 +259,7 @@ export default function BattlePage() {
       name: user.displayName || user.email || 'Player',
       joinedAt: serverTimestamp(),
       connected: true,
+      ready: false,
     });
     router.push(`/battle/room/${normalizedCode}`);
   };
