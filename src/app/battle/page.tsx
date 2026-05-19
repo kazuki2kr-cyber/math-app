@@ -96,9 +96,6 @@ export default function BattlePage() {
     setCreatingUnitId(unit.id);
     setError(null);
     try {
-      if (!process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL) {
-        throw new Error('missing-realtime-database-url');
-      }
       const realtimeDb = getRealtimeDb();
       const roomCode = await generateRoomCode();
       const roomRef = ref(realtimeDb, `battleRooms/${roomCode}`);
@@ -147,9 +144,6 @@ export default function BattlePage() {
 
   const joinRoomByCode = async (normalizedCode: string) => {
     if (!user) return;
-    if (!process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL) {
-      throw new Error('missing-realtime-database-url');
-    }
     const realtimeDb = getRealtimeDb();
     const roomRef = ref(realtimeDb, `battleRooms/${normalizedCode}`);
     const roomSnap = await get(roomRef);
@@ -218,9 +212,6 @@ export default function BattlePage() {
     setJoiningRandomRoom(true);
     setError(null);
     try {
-      if (!process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL) {
-        throw new Error('missing-realtime-database-url');
-      }
       const realtimeDb = getRealtimeDb();
       const waitingRoomsSnap = await get(realtimeQuery(
         ref(realtimeDb, 'battleRooms'),
