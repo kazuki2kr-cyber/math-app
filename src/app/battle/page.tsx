@@ -186,6 +186,7 @@ export default function BattlePage() {
     isCreatingRoomRef.current = true;
     setCreatingUnitId(unit.id);
     setError(null);
+    let navigated = false;
     try {
       const realtimeDb = getRealtimeDb();
       const roomCode = await generateRoomCode();
@@ -212,6 +213,8 @@ export default function BattlePage() {
               joinedAt: serverTimestamp(),
               connected: true,
               ready: false,
+              questionsReady: false,
+              playReady: false,
             },
           },
         }),
@@ -220,6 +223,7 @@ export default function BattlePage() {
         }),
       ]);
       await onDisconnect(roomRef).remove();
+      navigated = true;
       router.push(`/battle/room/${roomCode}`);
     } catch (err) {
       console.error('Failed to create battle room:', err);
@@ -230,8 +234,10 @@ export default function BattlePage() {
           : '対戦ルームを作成できませんでした。';
       setError(message);
     } finally {
-      isCreatingRoomRef.current = false;
-      setCreatingUnitId(null);
+      if (!navigated) {
+        isCreatingRoomRef.current = false;
+        setCreatingUnitId(null);
+      }
     }
   };
 
@@ -260,6 +266,8 @@ export default function BattlePage() {
       joinedAt: serverTimestamp(),
       connected: true,
       ready: false,
+      questionsReady: false,
+      playReady: false,
     });
     router.push(`/battle/room/${normalizedCode}`);
   };

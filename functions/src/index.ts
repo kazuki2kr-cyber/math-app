@@ -310,8 +310,19 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
       name: clampString(participant.name, 80) || "Player",
     }));
 
-  if (validParticipants.length < 2 || validParticipants.length > 4) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle requires 2 to 4 participants.");
+  if (validParticipants.length < 2) {
+    await roomRef.update({
+      status: "cancelled",
+      phase: "completed",
+      cancellationReason: "not-enough-participants",
+      cancelledAt: admin.database.ServerValue.TIMESTAMP,
+      updatedAt: admin.database.ServerValue.TIMESTAMP,
+    });
+    return { success: true, cancelled: true, reason: "not-enough-participants" };
+  }
+
+  if (validParticipants.length > 4) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle requires up to 4 participants.");
   }
 
   const unitDoc = await db.doc(`units/${unitId}`).get();

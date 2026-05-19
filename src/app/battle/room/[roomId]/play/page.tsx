@@ -21,14 +21,14 @@ import {
 
 interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
-  phase?: 'answering' | 'countdown' | 'completed';
+  phase?: 'loading' | 'answering' | 'countdown' | 'completed';
   currentQuestionIndex?: number;
   questionStartedAtMs?: number;
   countdownStartedAtMs?: number;
   unitId?: string;
   unitTitle?: string;
   hostUid?: string;
-  participants?: Record<string, { uid: string; name: string }>;
+  participants?: Record<string, { uid: string; name: string; playReady?: boolean }>;
   questionAnswers?: Record<string, Record<string, AnswerRecord>>;
   results?: Record<string, unknown>;
   finalizedAt?: number;
@@ -97,6 +97,7 @@ export default function BattlePlayPage() {
       const nextRoom = snapshot.exists() ? snapshot.val() : null;
       setRoom(nextRoom);
       if (nextRoom?.status === 'waiting') router.replace(`/battle/room/${roomId}`);
+      if (nextRoom?.status === 'cancelled') router.replace('/battle');
       if (nextRoom?.status === 'completed' && (nextRoom?.finalizedAt || nextRoom?.results) && !redirectedToResultRef.current) {
         redirectedToResultRef.current = true;
         router.replace(`/battle/room/${roomId}/result`);
@@ -130,10 +131,20 @@ export default function BattlePlayPage() {
       setLoading(true);
       setError(null);
       try {
+        const cachedQuestions = sessionStorage.getItem(`battle_questions:${roomId}`);
+        if (cachedQuestions) {
+          const parsedQuestions = JSON.parse(cachedQuestions);
+          if (Array.isArray(parsedQuestions) && parsedQuestions.length >= BATTLE_QUESTION_COUNT) {
+            setQuestions(parsedQuestions);
+            setLoading(false);
+            return;
+          }
+        }
         const getBattleQuestions = httpsCallable<{ roomId: string }, { questions: BattleQuestion[] }>(functions, 'getBattleQuestions');
         const response = await getBattleQuestions({ roomId });
         const nextQuestions = response.data.questions || [];
         if (nextQuestions.length < BATTLE_QUESTION_COUNT) throw new Error('not-enough-questions');
+        sessionStorage.setItem(`battle_questions:${roomId}`, JSON.stringify(nextQuestions));
         setQuestions(nextQuestions);
       } catch (err) {
         console.error('Failed to load battle questions:', err);
@@ -154,10 +165,24 @@ export default function BattlePlayPage() {
   const isHost = !!user && room?.hostUid === user.uid;
   const questionStartedAtMs = Number(room?.questionStartedAtMs || nowMs);
   const countdownStartedAtMs = Number(room?.countdownStartedAtMs || nowMs);
-  const elapsedMs = clampResponseMs(nowMs - questionStartedAtMs);
-  const remainingMs = Math.max(0, BATTLE_ANSWER_LIMIT_MS - elapsedMs);
+  const elapsedMs = room?.phase === 'answering' ? clampResponseMs(nowMs - questionStartedAtMs) : 0;
+  const remainingMs = room?.phase === 'answering' ? Math.max(0, BATTLE_ANSWER_LIMIT_MS - elapsedMs) : BATTLE_ANSWER_LIMIT_MS;
   const countdownRemainingMs = Math.max(0, BATTLE_NEXT_QUESTION_COUNTDOWN_MS - Math.max(0, nowMs - countdownStartedAtMs));
   const answeredCount = Object.keys(questionAnswers).length;
+
+  useEffect(() => {
+    async function markPlayReady() {
+      if (!user || !room || room.status !== 'active' || !questions.length || room.participants?.[user.uid]?.playReady) return;
+      const realtimeDb = getRealtimeDb();
+      await update(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`), {
+        uid: user.uid,
+        name: user.displayName || user.email || room.participants?.[user.uid]?.name || 'Player',
+        playReady: true,
+      });
+    }
+
+    markPlayReady();
+  }, [questions.length, room, roomId, user]);
 
   useEffect(() => {
     if (lastQuestionIndexRef.current === currentQuestionIndex) return;
@@ -202,6 +227,16 @@ export default function BattlePlayPage() {
   useEffect(() => {
     if (!isHost || !room || !questions.length || room.status !== 'active') return;
     const realtimeDb = getRealtimeDb();
+    const allPlayReady = participantIds.length > 0 && participantIds.every(uid => !!room.participants?.[uid]?.playReady);
+    if (room.phase === 'loading' && allPlayReady) {
+      update(ref(realtimeDb, `battleRooms/${roomId}`), {
+        phase: 'answering',
+        questionStartedAtMs: Date.now(),
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    }
+    if (room.phase === 'loading') return;
     const allAnswered = participantIds.length > 0 && participantIds.every(uid => !!questionAnswers[uid]);
     const timeUp = remainingMs <= 0;
 
@@ -245,7 +280,6 @@ export default function BattlePlayPage() {
         await finalizeBattleRoom({ roomId });
       } catch (err) {
         console.error('Failed to finalize battle room:', err);
-        finalizeRequestedRef.current = false;
         setFinalizeError('結果の集計に失敗しました。画面を開いたまま少し待つか、再読み込みしてください。');
       } finally {
         setFinalizing(false);
@@ -303,11 +337,11 @@ export default function BattlePlayPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push(`/battle/room/${roomId}`)}
+            onClick={() => router.push('/battle')}
             className="text-muted-foreground hover:text-destructive transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-1.5" strokeWidth={1.5} />
-            <span className="font-medium">ルームへ</span>
+            <span className="font-medium">対戦トップへ</span>
           </Button>
           <div className="flex items-center gap-2">
             <Button
@@ -332,7 +366,9 @@ export default function BattlePlayPage() {
                   : 'border-primary/20 bg-primary/10 text-primary'
             }`}>
               <Clock className="w-5 h-5 mr-2" />
-              {room?.phase === 'countdown'
+              {room?.phase === 'loading'
+                ? '準備中'
+                : room?.phase === 'countdown'
                 ? `次へ ${Math.ceil(countdownRemainingMs / 1000)}`
                 : `残り ${Math.ceil(remainingMs / 1000)}`}
             </div>
@@ -352,9 +388,15 @@ export default function BattlePlayPage() {
           </div>
         )}
 
-        {loading || !currentQuestion ? (
+        {loading || !currentQuestion || room?.phase === 'loading' ? (
           <div className="flex justify-center py-20">
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+            <div className="flex flex-col items-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+              <div>
+                <h1 className="text-lg font-black text-gray-900">1問目を準備しています</h1>
+                <p className="mt-1 text-sm font-bold text-muted-foreground">全員の表示準備ができると30秒カウントが始まります。</p>
+              </div>
+            </div>
           </div>
         ) : !room ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 p-12 text-center text-sm font-bold text-muted-foreground">

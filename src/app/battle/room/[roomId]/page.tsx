@@ -3,23 +3,24 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { onDisconnect, onValue, ref, remove, serverTimestamp, update } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Copy, Flame, Play, Swords, Users, XCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getRealtimeDb } from '@/lib/firebase';
+import { functions, getRealtimeDb } from '@/lib/firebase';
 import { BATTLE_ACCESS_STORAGE_KEY } from '@/lib/battle';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
-  phase?: 'answering' | 'countdown' | 'completed' | 'starting';
+  phase?: 'loading' | 'answering' | 'countdown' | 'completed' | 'starting';
   countdownStartedAtMs?: number | null;
   unitId?: string;
   unitTitle?: string;
   subject?: string;
   category?: string;
   hostUid?: string;
-  participants?: Record<string, { uid: string; name: string; connected?: boolean; ready?: boolean }>;
+  participants?: Record<string, { uid: string; name: string; connected?: boolean; ready?: boolean; questionsReady?: boolean; playReady?: boolean }>;
 }
 
 export default function BattleRoomPage() {
@@ -32,6 +33,7 @@ export default function BattleRoomPage() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [preloadingQuestions, setPreloadingQuestions] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
@@ -62,6 +64,33 @@ export default function BattleRoomPage() {
   }, [hasBattleAccess, roomId, router]);
 
   useEffect(() => {
+    async function preloadBattleQuestions() {
+      if (!hasBattleAccess || !user || !room?.unitId || !room.participants?.[user.uid] || room.status !== 'waiting') return;
+      if (room.participants[user.uid]?.questionsReady || preloadingQuestions) return;
+      setPreloadingQuestions(true);
+      try {
+        const getBattleQuestions = httpsCallable<{ roomId: string }, { questions: unknown[] }>(functions, 'getBattleQuestions');
+        const response = await getBattleQuestions({ roomId });
+        sessionStorage.setItem(`battle_questions:${roomId}`, JSON.stringify(response.data.questions || []));
+        const realtimeDb = getRealtimeDb();
+        await update(ref(realtimeDb, `battleRooms/${roomId}/participants/${user.uid}`), {
+          uid: user.uid,
+          name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
+          connected: true,
+          questionsReady: true,
+          playReady: false,
+        });
+      } catch (err) {
+        console.error('Failed to preload battle questions:', err);
+      } finally {
+        setPreloadingQuestions(false);
+      }
+    }
+
+    preloadBattleQuestions();
+  }, [hasBattleAccess, preloadingQuestions, room, roomId, user]);
+
+  useEffect(() => {
     if (!roomId || !hasBattleAccess || !user || !room) return;
     const realtimeDb = getRealtimeDb();
     if (room.hostUid === user.uid) {
@@ -85,6 +114,7 @@ export default function BattleRoomPage() {
   const isHost = !!user && room?.hostUid === user.uid;
   const currentParticipant = user ? room?.participants?.[user.uid] : null;
   const allReady = participants.length >= 2 && participants.every(participant => participant.ready);
+  const allQuestionsReady = participants.length >= 2 && participants.every(participant => participant.questionsReady);
   const isStartingCountdown = room?.status === 'waiting' && room?.phase === 'starting';
   const startingRemainingMs = Math.max(0, 3000 - Math.max(0, nowMs - Number(room?.countdownStartedAtMs || nowMs)));
   const startingRemainingSeconds = Math.max(1, Math.ceil(startingRemainingMs / 1000));
@@ -97,7 +127,7 @@ export default function BattleRoomPage() {
 
   const startBattle = async () => {
     if (!isHost || !room || participants.length < 2 || starting) return;
-    if (!allReady) return;
+    if (!allReady || !allQuestionsReady) return;
     setStarting(true);
     try {
       const realtimeDb = getRealtimeDb();
@@ -118,8 +148,8 @@ export default function BattleRoomPage() {
     update(ref(realtimeDb, `battleRooms/${roomId}`), {
       status: 'active',
       currentQuestionIndex: 0,
-      phase: 'answering',
-      questionStartedAtMs: Date.now(),
+      phase: 'loading',
+      questionStartedAtMs: null,
       countdownStartedAtMs: null,
       startedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -238,10 +268,10 @@ export default function BattleRoomPage() {
                         )}
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${
-                        participant.ready ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                        participant.ready && participant.questionsReady ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
                       }`}>
                         <CheckCircle2 className="h-3 w-3" />
-                        {participant.ready ? 'READY' : 'WAIT'}
+                        {participant.ready ? participant.questionsReady ? 'READY' : 'LOAD' : 'WAIT'}
                       </span>
                     </div>
                   ))}
@@ -260,15 +290,15 @@ export default function BattleRoomPage() {
                   }`}
                 >
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  {currentParticipant?.ready ? '準備完了済み' : '準備完了'}
+                  {currentParticipant?.ready ? currentParticipant?.questionsReady ? '準備完了済み' : '問題読み込み中...' : '準備完了'}
                 </Button>
                 <Button
                   className="flex-1 bg-amber-500 font-bold text-white hover:bg-amber-600"
-                  disabled={!isHost || !allReady || room.status !== 'waiting' || isStartingCountdown || starting}
+                  disabled={!isHost || !allReady || !allQuestionsReady || room.status !== 'waiting' || isStartingCountdown || starting}
                   onClick={startBattle}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {starting || isStartingCountdown ? '開始準備中...' : isHost ? '対戦開始' : 'ホストの開始待ち'}
+                  {starting || isStartingCountdown ? '開始準備中...' : isHost ? allQuestionsReady ? '対戦開始' : '問題読み込み待ち' : 'ホストの開始待ち'}
                 </Button>
                 {isHost && room.status === 'waiting' && !isStartingCountdown && (
                   <Button variant="outline" onClick={cancelRoom} className="border-red-100 bg-red-50 font-bold text-red-600 hover:bg-red-100">

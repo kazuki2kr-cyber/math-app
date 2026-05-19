@@ -64,7 +64,6 @@ export default function BattleResultPage() {
         await finalizeBattleRoom({ roomId });
       } catch (err) {
         console.error('Failed to finalize battle room:', err);
-        finalizeRequestedRef.current = false;
         setFinalizeError('結果の集計に失敗しました。ホストでもう一度この画面を開いてください。');
       } finally {
         setFinalizing(false);
