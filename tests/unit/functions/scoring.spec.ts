@@ -23,13 +23,13 @@ function calculateScore(correctCount: number, totalAnswered: number, mode: Drill
   return Math.min(100, correctCount * 10);
 }
 
-/** XP 逓減レート: drillCount（0始まり）に基づく乗算係数 */
-function getXpRateMultiplier(drillCount: number): number {
+/** XP 逓減レート: drillCount（0始まり）と全問正解フラグに基づく乗算係数 */
+function getXpRateMultiplier(drillCount: number, isPerfect = false): number {
   const attemptNumber = drillCount + 1; // 1始まり
   if (attemptNumber <= 3) return 1.0;   // 1〜3回目: 100%
   if (attemptNumber <= 5) return 0.7;   // 4〜5回目:  70%
   if (attemptNumber <= 10) return 0.3;  // 6〜10回目: 30%
-  return 0;                             // 11回目以降:  0%
+  return isPerfect ? 0.2 : 0.1;        // 11回目以降: 全問正解20%, それ以外10%
 }
 
 /** 正解率に基づくスコア倍率 */
@@ -78,7 +78,7 @@ function calculateXpComponents(answerOrder: boolean[]): {
 /** 最終 XP: floor((base + combo) × 倍率 × 逓減レート) */
 function calculateFinalXp(answerOrder: boolean[], drillCount: number): number {
   const { baseTotal, comboTotal, multiplier } = calculateXpComponents(answerOrder);
-  const xpRateMultiplier = getXpRateMultiplier(drillCount);
+  const xpRateMultiplier = getXpRateMultiplier(drillCount, multiplier === 1.5);
   return Math.floor((baseTotal + comboTotal) * multiplier * xpRateMultiplier);
 }
 
@@ -116,19 +116,21 @@ describe('スコア計算 (calculateScore)', () => {
 
 describe('XP 逓減レート (getXpRateMultiplier)', () => {
   test.each([
-    [0, 1.0, '1回目'],
-    [1, 1.0, '2回目'],
-    [2, 1.0, '3回目'],
-    [3, 0.7, '4回目'],
-    [4, 0.7, '5回目'],
-    [5, 0.3, '6回目'],
-    [6, 0.3, '7回目'],
-    [9, 0.3, '10回目'],
-    [10, 0,   '11回目'],
-    [20, 0,   '21回目'],
-    [99, 0,   '100回目'],
-  ] as const)('drillCount=%i → %d (%s)', (drillCount, expected, _label) => {
-    expect(getXpRateMultiplier(drillCount)).toBe(expected);
+    [0,  1.0, false, '1回目'],
+    [1,  1.0, false, '2回目'],
+    [2,  1.0, false, '3回目'],
+    [3,  0.7, false, '4回目'],
+    [4,  0.7, false, '5回目'],
+    [5,  0.3, false, '6回目'],
+    [6,  0.3, false, '7回目'],
+    [9,  0.3, false, '10回目'],
+    [10, 0.1, false, '11回目(非全問正解)'],
+    [20, 0.1, false, '21回目(非全問正解)'],
+    [99, 0.1, false, '100回目(非全問正解)'],
+    [10, 0.2, true,  '11回目(全問正解ボーナス)'],
+    [20, 0.2, true,  '21回目(全問正解ボーナス)'],
+  ] as const)('drillCount=%i isPerfect=%s → %d (%s)', (drillCount, expected, isPerfect, _label) => {
+    expect(getXpRateMultiplier(drillCount, isPerfect)).toBe(expected);
   });
 });
 
@@ -199,9 +201,17 @@ describe('最終 XP 計算 (calculateFinalXp)', () => {
     expect(xp).toBe(Math.floor(155 * 1.5 * 0.7));
   });
 
-  test('全問正解・11回目 (drillCount=10): XP=0', () => {
+  test('全問正解・11回目 (drillCount=10): 全問正解ボーナス適用で XP>0', () => {
     const xp = calculateFinalXp(Array(10).fill(true), 10);
-    expect(xp).toBe(0);
+    // floor((100+55) * 1.5 * 0.2) = floor(46.5) = 46
+    expect(xp).toBe(46);
+  });
+
+  test('非全問正解・11回目 (drillCount=10): 最小フロア適用で XP>0', () => {
+    // 7/10正解: multiplier=1.0, xpRateMultiplier=0.1
+    const answerOrder = [...Array(7).fill(true), ...Array(3).fill(false)];
+    const xp = calculateFinalXp(answerOrder, 10);
+    expect(xp).toBeGreaterThan(0);
   });
 
   test('全問不正解・初回: XP=0', () => {

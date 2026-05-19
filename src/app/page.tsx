@@ -2,7 +2,7 @@
 
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp'; import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone } from 'lucide-react';
 import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -428,8 +428,22 @@ export default function Home() {
                   <p>・ <span className="font-semibold text-primary">連続正解</span>が続くほどコンボボーナスが積み上がります。</p>
                   <p>・ <span className="font-semibold text-primary">正答率</span>が高いほど倍率ボーナスがかかります。</p>
                   <p>・ 同じ単元への取り組み回数が増えるほど、獲得XPが段階的に減少します。</p>
+                  <p>・ 11回目以降は全問正解ボーナスが加わるようになります。</p>
                 </div>
               )}
+            </div>
+
+            {/* Update Log */}
+            <div className="lg:col-span-3 bg-white/80 rounded-xl border border-gray-100 shadow-sm p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <Megaphone className="w-3.5 h-3.5 text-primary/60" />
+                <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
+              </div>
+              <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
+                <li>・ 単元内の全問題に取り組める<span className="font-semibold text-primary">全問演習モード</span>を追加しました。</li>
+                <li>・ アプリへの<span className="font-semibold text-primary">フィードバック送信機能</span>を追加しました。</li>
+                <li>・ 各単元の演習で11回目以降も経験値を獲得できるように変更しました。</li>
+              </ul>
             </div>
 
             {/* Units List (Left/Top) */}

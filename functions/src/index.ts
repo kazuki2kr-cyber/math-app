@@ -401,10 +401,10 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const drillCount = existingUnitData.drillCount || 0;
     const attemptNumber = drillCount + 1; // 1始まり
     let xpRateMultiplier: number;
-    if (attemptNumber <= 3) xpRateMultiplier = 1.0;       // 1〜3回目:  100%
-    else if (attemptNumber <= 5) xpRateMultiplier = 0.7;  // 4〜5回目:   70%
-    else if (attemptNumber <= 10) xpRateMultiplier = 0.3; // 6〜10回目:  30%
-    else xpRateMultiplier = 0;                            // 11回目以降:   0%
+    if (attemptNumber <= 3) xpRateMultiplier = 1.0;                          // 1〜3回目:  100%
+    else if (attemptNumber <= 5) xpRateMultiplier = 0.7;                     // 4〜5回目:   70%
+    else if (attemptNumber <= 10) xpRateMultiplier = 0.3;                    // 6〜10回目:  30%
+    else xpRateMultiplier = multiplier === 1.5 ? 0.2 : 0.1;                 // 11回目以降: 全問正解20%, それ以外10%
 
     const finalXpGain = Math.floor(preMultiplierXp * multiplier * xpRateMultiplier);
     const xpDetailsResult = {
