@@ -14,7 +14,7 @@ import {
   serverTimestamp,
   set,
 } from 'firebase/database';
-import { ArrowLeft, Lock, Swords, Users } from 'lucide-react';
+import { ArrowLeft, Lock, Shuffle, Swords, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
@@ -473,25 +473,14 @@ export default function KanjiBattlePage() {
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <div className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="flex gap-2 sm:flex-col">
-                <Button
-                  type="button"
-                  onClick={joinRandomRoom}
-                  disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null || loading}
-                  className="h-14 flex-1 bg-amber-500 px-5 text-sm font-bold text-white shadow-sm hover:bg-amber-600 sm:min-w-36"
-                >
-                  {joiningRandomRoom ? '検索中...' : 'ランダム参加'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={createRandomRoom}
-                  disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null || loading || units.filter(u => (u.totalQuestions || 0) >= 10).length === 0}
-                  className="h-14 flex-1 border-amber-200 px-5 text-sm font-bold text-amber-700 hover:bg-amber-50 sm:min-w-36"
-                >
-                  {creatingUnitId !== null ? '作成中...' : 'ランダム単元で作成'}
-                </Button>
-              </div>
+              <Button
+                type="button"
+                onClick={joinRandomRoom}
+                disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null}
+                className="h-14 bg-amber-500 px-6 text-base font-bold text-white shadow-sm hover:bg-amber-600 sm:min-w-40"
+              >
+                {joiningRandomRoom ? '検索中...' : 'ランダム参加'}
+              </Button>
               <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
                 <input
                   value={roomCode}
@@ -594,6 +583,38 @@ export default function KanjiBattlePage() {
                 </Card>
               );
             })}
+            {/* ランダム単元カード */}
+            {units.filter(u => (u.totalQuestions || 0) >= 10).length > 0 && (
+              <Card className="flex flex-col overflow-hidden border-dashed border-amber-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-amber-400 hover:shadow-lg">
+                <CardHeader className="border-b bg-amber-50/60">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
+                    漢字対戦 / ランダム
+                  </div>
+                  <CardTitle className="flex items-center gap-2 text-lg font-black leading-tight text-gray-900">
+                    <Shuffle className="h-5 w-5 text-amber-500" />
+                    ランダム単元
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex-1 p-5">
+                  <div className="flex items-center gap-2 text-sm font-bold text-gray-600">
+                    <Users className="h-4 w-4 text-amber-500" />
+                    2〜4人 / 10問
+                  </div>
+                  <div className="mt-3 text-xs font-semibold text-muted-foreground">
+                    単元をランダムに選んで対戦を始めます。
+                  </div>
+                </CardContent>
+                <CardFooter className="p-5 pt-0">
+                  <Button
+                    className="w-full bg-amber-500 font-bold text-white shadow-sm hover:bg-amber-600"
+                    disabled={creatingUnitId !== null}
+                    onClick={createRandomRoom}
+                  >
+                    {creatingUnitId !== null ? '作成中...' : 'ランダムでルーム作成'}
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
           </div>
         )}
       </main>
