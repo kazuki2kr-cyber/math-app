@@ -2,6 +2,52 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "kanjiBattleRooms": {
+      ".read": "auth != null",
+      ".indexOn": ["status"],
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() == auth.uid && newData.child('participants').child(auth.uid).exists()) || (data.exists() && data.child('hostUid').val() == auth.uid))",
+        "status": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "phase": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "currentQuestionIndex": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "questionStartedAtMs": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "countdownStartedAtMs": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "completedAt": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "updatedAt": {
+          ".write": "auth != null && data.parent().child('status').val() == 'active' && data.parent().child('participants').child(auth.uid).exists() && data.parent().child('participants').child(auth.uid).child('abandoned').val() != true"
+        },
+        "participants": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid && ((newData.exists() && (data.parent().parent().child('status').val() == 'waiting' || data.parent().parent().child('status').val() == 'active') && newData.child('uid').val() == auth.uid) || (!newData.exists() && data.exists()))"
+          }
+        },
+        "questionAnswers": {
+          "$questionIndex": {
+            "$uid": {
+              ".write": "auth != null && auth.uid == $uid && data.parent().parent().parent().child('participants').child(auth.uid).exists() && data.parent().parent().parent().child('status').val() == 'active' && newData.child('uid').val() == auth.uid"
+            }
+          }
+        },
+        "results": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid && data.parent().parent().child('participants').child(auth.uid).exists() && newData.child('uid').val() == auth.uid"
+          }
+        }
+      }
+    },
     "battleRooms": {
       ".read": "auth != null",
       ".indexOn": ["status"],

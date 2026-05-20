@@ -1,5 +1,7 @@
 export const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
 export const BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_BATTLE_ACCESS_PASSWORD || 'test';
+export const KANJI_BATTLE_ACCESS_STORAGE_KEY = 'kanji_battle_mode_access_granted';
+export const KANJI_BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_KANJI_BATTLE_ACCESS_PASSWORD || 'test';
 export const BATTLE_ROOM_TTL_MS = 60 * 60 * 1000;
 export const BATTLE_QUESTION_COUNT = 10;
 export const BATTLE_BASE_SCORE = 100;

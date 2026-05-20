@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { LogOut, Trophy, Medal, BookOpen, PenTool } from 'lucide-react';
+import { LogOut, Trophy, Medal, BookOpen, PenTool, Swords } from 'lucide-react';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -110,6 +110,16 @@ export default function KanjiDashboard() {
         </div>
 
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/yamato/battle')}
+            className="inline-flex border-orange-200 bg-orange-50/80 text-orange-900 hover:bg-orange-100 font-bold shadow-sm"
+          >
+            <Swords className="w-4 h-4 mr-2" />
+            <span className="hidden sm:inline">対戦モード（β版）</span>
+            <span className="sm:hidden">対戦β</span>
+          </Button>
           <span className="text-sm font-medium text-orange-900 hidden sm:inline-block bg-orange-50 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-orange-900/60 font-normal ml-1">さん</span>
           </span>

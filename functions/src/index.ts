@@ -216,6 +216,79 @@ function parseOptionsServer(options: any): string[] {
   return [];
 }
 
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function getKanjiQuestionAnswer(question: any): string {
+  if (typeof question.answer === "string" && question.answer.trim()) {
+    return question.answer.trim();
+  }
+  const parsedOptions = parseOptionsServer(question.options);
+  const answerIndex = Number(question.answer_index) - 1;
+  if (Number.isInteger(answerIndex) && answerIndex >= 0 && answerIndex < parsedOptions.length) {
+    return parsedOptions[answerIndex] || "";
+  }
+  return "";
+}
+
+function sortQuestionsServer(questions: any[]): any[] {
+  return [...questions].sort((a, b) => {
+    const aOrder = Number(a?.order);
+    const bOrder = Number(b?.order);
+    const aHasOrder = Number.isFinite(aOrder);
+    const bHasOrder = Number.isFinite(bOrder);
+    if (aHasOrder && bHasOrder && aOrder !== bOrder) return aOrder - bOrder;
+    if (aHasOrder !== bHasOrder) return aHasOrder ? -1 : 1;
+    return String(a?.id || "").localeCompare(String(b?.id || ""), "ja", { numeric: true });
+  });
+}
+
+async function loadUnitQuestions(unitId: string, unitData: any): Promise<any[]> {
+  const embeddedQuestions = Array.isArray(unitData.questions) ? unitData.questions : [];
+  if (embeddedQuestions.length > 0) return sortQuestionsServer(embeddedQuestions);
+
+  const qSnap = await db.collection(`units/${unitId}/questions`).get();
+  return sortQuestionsServer(qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+}
+
+function buildKanjiBattleOptions(question: any, allQuestions: any[], roomId: string): { options: string[]; answerIndex: number } {
+  const correctAnswer = getKanjiQuestionAnswer(question);
+  const distractors = uniqueStrings([
+    ...parseOptionsServer(question.options),
+    ...allQuestions.map(getKanjiQuestionAnswer),
+  ]).filter((option) => option !== correctAnswer);
+  const options = uniqueStrings([correctAnswer, ...distractors]).slice(0, 4);
+  const sortedOptions = options.sort((a, b) =>
+    hashString(`${roomId}:${question.id}:${a}`) - hashString(`${roomId}:${question.id}:${b}`)
+  );
+  return {
+    options: sortedOptions,
+    answerIndex: sortedOptions.indexOf(correctAnswer),
+  };
+}
+
+async function assertKanjiBattleAccess(uid: string) {
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const userData = userSnap.exists ? userSnap.data() || {} : {};
+  if (userData.kanjiAccessBlocked === true || userData.kanjiAccessGranted !== true) {
+    throw new functions.https.HttpsError("permission-denied", "Kanji mode access is required.");
+  }
+}
+
+function isKanjiUnit(unitData: any): boolean {
+  return unitData.subject === "kanji" || unitData.subject === "漢字" || unitData.baseSubject === "漢字";
+}
+
 export const getBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
@@ -248,11 +321,7 @@ export const getBattleQuestions = functions.region("us-central1").https.onCall(a
   }
 
   const unitData = unitDoc.data() || {};
-  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
-  if (unitQuestions.length === 0) {
-    const qSnap = await db.collection(`units/${unitId}/questions`).orderBy("order", "asc").get();
-    unitQuestions = qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-  }
+  const unitQuestions = await loadUnitQuestions(unitId, unitData);
 
   const questions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
     id: String(question.id),
@@ -332,11 +401,7 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
   }
 
   const unitData = unitDoc.data() || {};
-  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
-  if (unitQuestions.length === 0) {
-    const qSnap = await db.collection(`units/${unitId}/questions`).orderBy("order", "asc").get();
-    unitQuestions = qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-  }
+  const unitQuestions = await loadUnitQuestions(unitId, unitData);
 
   const selectedQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
     id: String(question.id),
@@ -430,6 +495,262 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
       const userRef = db.doc(`users/${entry.uid}`);
       transaction.set(userRef, {
         battleStats: {
+          xp: FieldValue.increment(xpDelta),
+          wins: FieldValue.increment(index === 0 ? 1 : 0),
+          totalBattles: FieldValue.increment(1),
+          lastBattleAt: now,
+        },
+      }, { merge: true });
+    });
+    transaction.set(markerRef, {
+      roomId,
+      unitId,
+      hostUid: room.hostUid,
+      playerCount: validParticipants.length,
+      results,
+      finalizedAt: now,
+      finalizedBy: callerUid,
+    });
+    return {
+      alreadyFinalized: false,
+      results,
+      finalizedAt: now,
+    };
+  });
+
+  await roomRef.update({
+    results: finalizeResult.results,
+    finalizedAt: admin.database.ServerValue.TIMESTAMP,
+    finalizedBy: callerUid,
+  });
+
+  return { success: true, alreadyFinalized: finalizeResult.alreadyFinalized, playerCount: validParticipants.length };
+});
+
+export const getKanjiBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+  const callerUid = context.auth.uid;
+  await assertKanjiBattleAccess(callerUid);
+
+  const roomId = clampString((data as any)?.roomId, 12);
+  if (!/^\d{4,8}$/.test(roomId)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
+  }
+
+  const roomSnap = await realtimeDb.ref(`kanjiBattleRooms/${roomId}`).get();
+  if (!roomSnap.exists()) {
+    throw new functions.https.HttpsError("not-found", "Kanji battle room was not found.");
+  }
+
+  const room = roomSnap.val() || {};
+  if (!room.participants?.[callerUid]) {
+    throw new functions.https.HttpsError("permission-denied", "Only room participants can load battle questions.");
+  }
+
+  const unitId = clampString(room.unitId, 120);
+  if (!unitId) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
+  }
+
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  if (!unitDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
+  }
+
+  const unitData = unitDoc.data() || {};
+  if (!isKanjiUnit(unitData)) {
+    throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji battle mode.");
+  }
+
+  const unitQuestions = await loadUnitQuestions(unitId, unitData);
+
+  const questions = unitQuestions.map((question) => {
+    const { options, answerIndex } = buildKanjiBattleOptions(question, unitQuestions, roomId);
+    return {
+      id: String(question.id),
+      question_text: String(question.question_text || ""),
+      options,
+      answerIndex,
+      image_url: question.image_url || null,
+    };
+  }).filter((question) => question.question_text && question.options.length >= 2 && question.answerIndex >= 0)
+    .slice(0, BATTLE_QUESTION_COUNT);
+
+  if (questions.length < BATTLE_QUESTION_COUNT) {
+    throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough questions or answer choices.");
+  }
+
+  return {
+    questions: questions.map(({ answerIndex: _answerIndex, ...question }) => question),
+  };
+});
+
+export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+  const callerUid = context.auth.uid;
+  await assertKanjiBattleAccess(callerUid);
+
+  const roomId = clampString((data as any)?.roomId, 12);
+  if (!/^\d{4,8}$/.test(roomId)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
+  }
+
+  const roomRef = realtimeDb.ref(`kanjiBattleRooms/${roomId}`);
+  const roomSnap = await roomRef.get();
+  if (!roomSnap.exists()) {
+    throw new functions.https.HttpsError("not-found", "Kanji battle room was not found.");
+  }
+
+  const room = roomSnap.val() || {};
+  if (!room.participants?.[callerUid]) {
+    throw new functions.https.HttpsError("permission-denied", "Only room participants can finalize this battle.");
+  }
+  if (room.status !== "completed") {
+    throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
+  }
+  if (room.finalizedAt && room.results) {
+    return { success: true, alreadyFinalized: true };
+  }
+
+  const unitId = clampString(room.unitId, 120);
+  if (!unitId) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
+  }
+
+  const participants = Object.values(room.participants || {}) as Array<{ uid?: string; name?: string; abandoned?: boolean }>;
+  const validParticipants = participants
+    .filter((participant) => participant.uid)
+    .slice(0, 4)
+    .map((participant) => ({
+      uid: String(participant.uid),
+      name: clampString(participant.name, 80) || "Player",
+      abandoned: participant.abandoned === true,
+    }));
+
+  if (validParticipants.length < 2) {
+    await roomRef.update({
+      status: "cancelled",
+      phase: "completed",
+      cancellationReason: "not-enough-participants",
+      cancelledAt: admin.database.ServerValue.TIMESTAMP,
+      updatedAt: admin.database.ServerValue.TIMESTAMP,
+    });
+    return { success: true, cancelled: true, reason: "not-enough-participants" };
+  }
+
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  if (!unitDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
+  }
+
+  const unitData = unitDoc.data() || {};
+  if (!isKanjiUnit(unitData)) {
+    throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji battle mode.");
+  }
+
+  const unitQuestions = await loadUnitQuestions(unitId, unitData);
+
+  const selectedQuestions = unitQuestions.map((question) => {
+    const { options, answerIndex } = buildKanjiBattleOptions(question, unitQuestions, roomId);
+    return {
+      id: String(question.id),
+      parsedOptions: options,
+      answerIndex,
+      questionText: String(question.question_text || ""),
+    };
+  }).filter((question) => question.questionText && question.parsedOptions.length >= 2 && question.answerIndex >= 0)
+    .slice(0, BATTLE_QUESTION_COUNT);
+
+  if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
+    throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough valid questions.");
+  }
+
+  const questionAnswers = room.questionAnswers || {};
+  const resultEntries = validParticipants.map((participant) => {
+    if (participant.abandoned) {
+      return {
+        uid: participant.uid,
+        name: participant.name,
+        totalScore: 0,
+        correctCount: 0,
+        totalQuestions: selectedQuestions.length,
+        totalTimeMs: BATTLE_ANSWER_LIMIT_MS * selectedQuestions.length,
+        abandoned: true,
+        finishedAt: admin.database.ServerValue.TIMESTAMP,
+      };
+    }
+
+    let totalScore = 0;
+    let correctCount = 0;
+    let totalTimeMs = 0;
+
+    selectedQuestions.forEach((question, questionIndex) => {
+      const answer = questionAnswers[String(questionIndex)]?.[participant.uid] || null;
+      const responseMs = clampBattleResponseMs(answer?.responseMs);
+      const selectedIndex = answer?.selectedIndex === null || answer?.selectedIndex === undefined
+        ? null
+        : Number(answer.selectedIndex);
+      const isCorrect = selectedIndex !== null
+        && Number.isInteger(selectedIndex)
+        && selectedIndex === question.answerIndex
+        && selectedIndex >= 0
+        && selectedIndex < question.parsedOptions.length;
+
+      totalTimeMs += responseMs;
+      if (isCorrect) correctCount += 1;
+      totalScore += calculateBattleQuestionScore(isCorrect, responseMs);
+    });
+
+    return {
+      uid: participant.uid,
+      name: participant.name,
+      totalScore,
+      correctCount,
+      totalQuestions: selectedQuestions.length,
+      totalTimeMs,
+      abandoned: false,
+      finishedAt: admin.database.ServerValue.TIMESTAMP,
+    };
+  }).sort((a, b) => {
+    if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
+    return a.uid.localeCompare(b.uid);
+  });
+
+  const results: Record<string, any> = {};
+  resultEntries.forEach((entry, index) => {
+    const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
+    results[entry.uid] = {
+      ...entry,
+      rank: entry.abandoned ? validParticipants.length : index + 1,
+      xpDelta: getBattleXpDelta(validParticipants.length, rankIndex),
+    };
+  });
+
+  const finalizeResult = await db.runTransaction(async (transaction) => {
+    const markerRef = db.collection("kanji_battle_results").doc(roomId);
+    const markerSnap = await transaction.get(markerRef);
+    if (markerSnap.exists) {
+      const markerData = markerSnap.data() || {};
+      return {
+        alreadyFinalized: true,
+        results: markerData.results || results,
+        finalizedAt: markerData.finalizedAt || Timestamp.now(),
+      };
+    }
+
+    const now = Timestamp.now();
+    resultEntries.forEach((entry, index) => {
+      const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
+      const xpDelta = getBattleXpDelta(validParticipants.length, rankIndex);
+      const userRef = db.doc(`users/${entry.uid}`);
+      transaction.set(userRef, {
+        kanjiBattleStats: {
           xp: FieldValue.increment(xpDelta),
           wins: FieldValue.increment(index === 0 ? 1 : 0),
           totalBattles: FieldValue.increment(1),
