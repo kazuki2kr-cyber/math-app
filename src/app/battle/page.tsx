@@ -9,27 +9,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-
-const BATTLE_ACCESS_STORAGE_KEY = 'battle_mode_access_granted';
-const BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_BATTLE_ACCESS_PASSWORD || 'test';
-const BATTLE_ROOM_TTL_MS = 60 * 60 * 1000;
-const BATTLE_XP_PER_RANK = 500;
-
-// XP table: key = player count, value = XP awarded by finish position [1st, 2nd, 3rd, 4th]
-const BATTLE_XP_TABLE: Record<number, number[]> = {
-  2: [100, -20],
-  3: [125, 0, -20],
-  4: [150, 75, -20, -40],
-};
-
-const BATTLE_RANKS = [
-  { minXp: 0, title: 'ベーシッククラス', icon: '📚' },
-  { minXp: 500, title: 'ブロンズクラス', icon: '🥉' },
-  { minXp: 1000, title: 'シルバークラス', icon: '🥈' },
-  { minXp: 1500, title: 'ゴールドクラス', icon: '🥇' },
-  { minXp: 2000, title: 'プラチナクラス', icon: '💎' },
-  { minXp: 2500, title: 'マスタークラス', icon: '👑' },
-] as const;
+import {
+  BATTLE_ACCESS_STORAGE_KEY,
+  BATTLE_ACCESS_PASSWORD,
+  BATTLE_RANKS,
+  BATTLE_ROOM_TTL_MS,
+  BATTLE_XP_PER_RANK,
+  getBattleRank,
+  getNextBattleRank,
+  type BattleProfile,
+} from '@/lib/battle';
 
 interface BattleUnit {
   id: string;
@@ -38,19 +27,6 @@ interface BattleUnit {
   subject?: string;
   baseSubject?: string;
   totalQuestions?: number;
-}
-
-interface BattleProfile {
-  wins: number;
-  xp: number;
-}
-
-function getBattleRank(xp: number) {
-  return [...BATTLE_RANKS].reverse().find(rank => xp >= rank.minXp) || BATTLE_RANKS[0];
-}
-
-function getNextBattleRank(xp: number) {
-  return BATTLE_RANKS.find(rank => rank.minXp > xp) || null;
 }
 
 export default function BattlePage() {
