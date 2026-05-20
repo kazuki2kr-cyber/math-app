@@ -182,6 +182,16 @@ export default function KanjiBattlePage() {
     throw new Error('room-code-collision');
   };
 
+  const createRandomRoom = () => {
+    const eligible = units.filter(u => (u.totalQuestions || 0) >= 10);
+    if (eligible.length === 0) {
+      setError('ランダム対戦できる単元がありません。');
+      return;
+    }
+    const unit = eligible[Math.floor(Math.random() * eligible.length)];
+    createRoom(unit);
+  };
+
   const createRoom = async (unit: BattleUnit) => {
     if (!user || isCreatingRoomRef.current) return;
     isCreatingRoomRef.current = true;
@@ -463,14 +473,25 @@ export default function KanjiBattlePage() {
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <div className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Button
-                type="button"
-                onClick={joinRandomRoom}
-                disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null}
-                className="h-14 bg-amber-500 px-6 text-base font-bold text-white shadow-sm hover:bg-amber-600 sm:min-w-40"
-              >
-                {joiningRandomRoom ? '検索中...' : 'ランダム参加'}
-              </Button>
+              <div className="flex gap-2 sm:flex-col">
+                <Button
+                  type="button"
+                  onClick={joinRandomRoom}
+                  disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null || loading}
+                  className="h-14 flex-1 bg-amber-500 px-5 text-sm font-bold text-white shadow-sm hover:bg-amber-600 sm:min-w-36"
+                >
+                  {joiningRandomRoom ? '検索中...' : 'ランダム参加'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={createRandomRoom}
+                  disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null || loading || units.filter(u => (u.totalQuestions || 0) >= 10).length === 0}
+                  className="h-14 flex-1 border-amber-200 px-5 text-sm font-bold text-amber-700 hover:bg-amber-50 sm:min-w-36"
+                >
+                  {creatingUnitId !== null ? '作成中...' : 'ランダム単元で作成'}
+                </Button>
+              </div>
               <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
                 <input
                   value={roomCode}
