@@ -254,6 +254,29 @@ function sortQuestionsServer(questions: any[]): any[] {
   });
 }
 
+function seededRandom(seed: string): () => number {
+  let state = hashString(seed) || 1;
+  return () => {
+    state = Math.imul(state ^ (state >>> 15), state | 1);
+    state ^= state + Math.imul(state ^ (state >>> 7), state | 61);
+    return ((state ^ (state >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededFisherYatesShuffle<T>(items: T[], seed: string): T[] {
+  const shuffled = [...items];
+  const random = seededRandom(seed);
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function selectKanjiBattleQuestions(unitQuestions: any[], roomId: string): any[] {
+  return seededFisherYatesShuffle(unitQuestions, `kanji-battle:${roomId}`).slice(0, BATTLE_QUESTION_COUNT);
+}
+
 async function loadUnitQuestions(unitId: string, unitData: any): Promise<any[]> {
   const embeddedQuestions = Array.isArray(unitData.questions) ? unitData.questions : [];
   if (embeddedQuestions.length > 0) return sortQuestionsServer(embeddedQuestions);
@@ -566,7 +589,7 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
   }
 
   const unitQuestions = await loadUnitQuestions(unitId, unitData);
-  const selectedQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT);
+  const selectedQuestions = selectKanjiBattleQuestions(unitQuestions, roomId);
 
   if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
     throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough questions.");
@@ -654,15 +677,19 @@ export const submitKanjiBattleOcr = functions
     }
     const unitData = unitDoc.data() || {};
     const unitQuestions = await loadUnitQuestions(unitId, unitData);
-    const battleQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT);
+    const battleQuestions = selectKanjiBattleQuestions(unitQuestions, roomId);
 
     // questionIds の検証（クライアント送信値が正しいルームの問題と一致するか）
-    const validIdSet = new Set(battleQuestions.map((q) => String(q.id)));
-    if (!questionIds.every((id) => validIdSet.has(String(id)))) {
+    const expectedQuestionIds = battleQuestions.map((q) => String(q.id));
+    const submittedQuestionIds = questionIds.map((id) => String(id));
+    if (
+      submittedQuestionIds.length !== expectedQuestionIds.length ||
+      !submittedQuestionIds.every((id, index) => id === expectedQuestionIds[index])
+    ) {
       throw new functions.https.HttpsError("invalid-argument", "questionIds do not match the battle unit.");
     }
     const questionMap = new Map(battleQuestions.map((q) => [String(q.id), q]));
-    const orderedQuestions = questionIds
+    const orderedQuestions = submittedQuestionIds
       .map((id) => questionMap.get(String(id)))
       .filter(Boolean) as typeof battleQuestions;
 
