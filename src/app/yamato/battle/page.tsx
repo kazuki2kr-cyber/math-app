@@ -45,6 +45,15 @@ interface BattleProfile {
   xp: number;
 }
 
+interface WaitingRoomCandidate {
+  code: string;
+  createdAtMs: number;
+}
+
+interface RoomParticipantState {
+  abandoned?: boolean;
+}
+
 function getJoinErrorMessage(err: unknown) {
   return err instanceof Error && err.message === 'room-not-found'
     ? '指定されたルームが見つかりません。'
@@ -185,7 +194,7 @@ export default function KanjiBattlePage() {
   const createRandomRoom = () => {
     const eligible = units.filter(u => (u.totalQuestions || 0) >= 10);
     if (eligible.length === 0) {
-      setError('ランダム対戦できる範囲がありません。');
+      setError('ランダム範囲で対戦できる範囲がありません。');
       return;
     }
     const unit = eligible[Math.floor(Math.random() * eligible.length)];
@@ -215,6 +224,7 @@ export default function KanjiBattlePage() {
           maxPlayers: 4,
           hostUid: user.uid,
           createdAt: serverTimestamp(),
+          createdAtMs: now,
           updatedAt: serverTimestamp(),
           expiresAt: now + BATTLE_ROOM_TTL_MS,
           participants: {
@@ -267,8 +277,8 @@ export default function KanjiBattlePage() {
     if (!roomSnap.exists()) throw new Error('room-not-found');
 
     const room = roomSnap.val();
-    const participants = room?.participants || {};
-    const activeParticipantCount = Object.values(participants).filter((participant: any) => !participant?.abandoned).length;
+    const participants = (room?.participants || {}) as Record<string, RoomParticipantState>;
+    const activeParticipantCount = Object.values(participants).filter(participant => !participant?.abandoned).length;
     if (room?.status !== 'waiting') throw new Error('room-not-waiting');
     if (!participants[user.uid] && activeParticipantCount >= Number(room?.maxPlayers || 4)) throw new Error('room-full');
 
@@ -328,23 +338,29 @@ export default function KanjiBattlePage() {
         equalTo('waiting'),
         limitToFirst(30)
       ));
-      const candidates: string[] = [];
+      const candidates: WaitingRoomCandidate[] = [];
       waitingRoomsSnap.forEach((roomSnap) => {
         const room = roomSnap.val();
-        const participants = room?.participants || {};
-        const participantCount = Object.values(participants).filter((participant: any) => !participant?.abandoned).length;
+        const participants = (room?.participants || {}) as Record<string, RoomParticipantState>;
+        const participantCount = Object.values(participants).filter(participant => !participant?.abandoned).length;
         const maxPlayers = Number(room?.maxPlayers || 4);
         const expiresAt = Number(room?.expiresAt || 0);
         const isFresh = !expiresAt || expiresAt > Date.now();
-        if (isFresh && (participantCount < maxPlayers || participants[user.uid])) candidates.push(String(roomSnap.key));
+        const alreadyParticipant = !!participants[user.uid] && !participants[user.uid]?.abandoned;
+        if (isFresh && !alreadyParticipant && participantCount < maxPlayers) {
+          candidates.push({
+            code: String(roomSnap.key),
+            createdAtMs: Number(room?.createdAtMs || room?.createdAt || (expiresAt ? expiresAt - BATTLE_ROOM_TTL_MS : 0)),
+          });
+        }
       });
       if (candidates.length === 0) throw new Error('no-waiting-room');
 
-      const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+      const sortedCandidates = [...candidates].sort((a, b) => b.createdAtMs - a.createdAtMs || b.code.localeCompare(a.code));
       let lastErr: unknown;
-      for (const code of shuffled) {
+      for (const candidate of sortedCandidates) {
         try {
-          await joinRoomByCode(code);
+          await joinRoomByCode(candidate.code);
           return;
         } catch (err) {
           lastErr = err;
@@ -477,9 +493,16 @@ export default function KanjiBattlePage() {
                 type="button"
                 onClick={joinRandomRoom}
                 disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null}
-                className="h-14 bg-amber-500 px-6 text-base font-bold text-white shadow-sm hover:bg-amber-600 sm:min-w-40"
+                className="h-14 bg-amber-500 px-4 text-sm font-bold leading-tight text-white shadow-sm hover:bg-amber-600 sm:min-w-44"
               >
-                {joiningRandomRoom ? '検索中...' : 'ランダム参加'}
+                {joiningRandomRoom ? (
+                  '検索中...'
+                ) : (
+                  <span className="flex flex-col items-center">
+                    <span>空きのあるルームに</span>
+                    <span>おまかせで参加</span>
+                  </span>
+                )}
               </Button>
               <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
                 <input

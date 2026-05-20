@@ -15,6 +15,7 @@ const BATTLE_BASE_SCORE = 100;
 const BATTLE_ANSWER_LIMIT_MS = 30000;
 const BATTLE_MAX_SPEED_BONUS = 15;
 const BATTLE_FAST_BONUS_MS = 3000;
+const KANJI_BATTLE_FINALIZE_TIMEOUT_MS = 90000;
 const BATTLE_XP_TABLE: Record<number, number[]> = {
   2: [100, -20],
   3: [125, 0, -20],
@@ -809,6 +810,16 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
   // playerScores を RTDB から読む（submitKanjiBattleOcr が書き込んだスコア）
   const playerScoresSnap = await realtimeDb.ref(`kanjiBattleRooms/${roomId}/playerScores`).get();
   const playerScores: Record<string, any> = playerScoresSnap.val() || {};
+  const activeParticipantIds = validParticipants
+    .filter((participant) => !participant.abandoned)
+    .map((participant) => participant.uid);
+  const allActivePlayersHaveScores = activeParticipantIds.every((uid) => !!playerScores[uid]);
+  const completedAt = Number(room.completedAt || 0);
+  const finalizeTimedOut = completedAt > 0 && Date.now() - completedAt > KANJI_BATTLE_FINALIZE_TIMEOUT_MS;
+
+  if (!allActivePlayersHaveScores && !finalizeTimedOut) {
+    throw new functions.https.HttpsError("failed-precondition", "Battle scores are not ready yet.");
+  }
 
   const resultEntries = validParticipants.map((participant) => {
     const ps = playerScores[participant.uid];

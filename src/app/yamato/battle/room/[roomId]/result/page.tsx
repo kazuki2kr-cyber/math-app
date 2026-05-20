@@ -11,6 +11,7 @@ import { functions, getRealtimeDb } from '@/lib/firebase';
 import { BattleResultEntry, KANJI_BATTLE_ACCESS_STORAGE_KEY, getBattleXpDelta, sortBattleResults } from '@/lib/battle';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
+const FINALIZE_TIMEOUT_MS = 90000;
 
 interface QuestionResult {
   questionId: string;
@@ -38,6 +39,7 @@ interface BattleRoom {
   participants?: Record<string, { uid: string; name: string; abandoned?: boolean }>;
   results?: Record<string, BattleResultEntry & { xpDelta?: number; rank?: number }>;
   playerScores?: Record<string, PlayerScore>;
+  completedAt?: number;
   finalizedAt?: number;
 }
 
@@ -50,6 +52,7 @@ export default function KanjiBattleResultPage() {
   const [loading, setLoading] = useState(true);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(Date.now());
   const finalizeRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -57,6 +60,11 @@ export default function KanjiBattleResultPage() {
       router.replace('/yamato/battle');
     }
   }, [router]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!roomId) return;
@@ -72,6 +80,14 @@ export default function KanjiBattleResultPage() {
   useEffect(() => {
     async function finalizeIfNeeded() {
       if (!user || !room || room.status !== 'completed' || !room.participants?.[user.uid] || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
+      const activeParticipantIds = Object.values(room.participants || {})
+        .filter(participant => participant.uid && !participant.abandoned)
+        .map(participant => participant.uid);
+      const allHaveScores = activeParticipantIds.length > 0 && activeParticipantIds.every(uid => !!room.playerScores?.[uid]);
+      const completedAt = Number(room.completedAt || 0);
+      const timedOut = completedAt > 0 && (nowMs - completedAt) > FINALIZE_TIMEOUT_MS;
+      if (!allHaveScores && !timedOut) return;
+
       finalizeRequestedRef.current = true;
       setFinalizing(true);
       setFinalizeError(null);
@@ -88,16 +104,33 @@ export default function KanjiBattleResultPage() {
     }
 
     finalizeIfNeeded();
-  }, [finalizing, room, roomId, user]);
+  }, [finalizing, nowMs, room, roomId, user]);
 
   const participants = Object.values(room?.participants || {});
   const results = useMemo(() => sortBattleResults(Object.values(room?.results || {})), [room?.results]);
   const myRankIndex = results.findIndex(result => result.uid === user?.uid);
-  const myResult = myRankIndex >= 0 ? results[myRankIndex] as BattleResultEntry & { xpDelta?: number } : null;
+  const finalizedMyResult = myRankIndex >= 0 ? results[myRankIndex] as BattleResultEntry & { xpDelta?: number } : null;
+  const myPlayerScore = user ? room?.playerScores?.[user.uid] : undefined;
+  const hasBetterPlayerScore =
+    !!myPlayerScore &&
+    (!finalizedMyResult ||
+      (finalizedMyResult.totalScore === 0 && myPlayerScore.score > 0) ||
+      (finalizedMyResult.correctCount === 0 && myPlayerScore.correctCount > 0));
+  const myResult = hasBetterPlayerScore && user
+    ? {
+      uid: user.uid,
+      name: finalizedMyResult?.name || room?.participants?.[user.uid]?.name || user.displayName || user.email || 'Player',
+      totalScore: myPlayerScore.score,
+      correctCount: myPlayerScore.correctCount,
+      totalQuestions: myPlayerScore.totalQuestions,
+      totalTimeMs: myPlayerScore.totalTimeMs,
+      rank: finalizedMyResult?.rank,
+      xpDelta: finalizedMyResult?.xpDelta,
+    } as BattleResultEntry & { xpDelta?: number }
+    : finalizedMyResult;
   const myXpDelta = myResult?.xpDelta ?? (myRankIndex >= 0 ? getBattleXpDelta(Math.max(2, participants.length), myRankIndex) : 0);
   const myRank = myResult?.rank ?? (myRankIndex >= 0 ? myRankIndex + 1 : null);
   const allSubmitted = participants.length > 0 && results.length >= participants.length;
-  const myPlayerScore = user ? room?.playerScores?.[user.uid] : undefined;
   const myQuestionResults: QuestionResult[] = myPlayerScore?.questionResults || [];
 
   return (
