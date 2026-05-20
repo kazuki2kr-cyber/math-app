@@ -10,6 +10,7 @@ import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/Handwritin
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ArrowRight, Eraser, Check, Loader2, Undo2, X } from 'lucide-react';
+import { buildOcrPayload, getExpectedCharCount, OcrQuestionLayout } from '@/lib/kanjiOcr';
 
 interface Question {
   id: string;
@@ -19,29 +20,6 @@ interface Question {
   options?: unknown[];
   explanation?: string;
   [key: string]: unknown;
-}
-
-interface OcrSlotLayout {
-  index: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface OcrQuestionLayout {
-  questionId: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  expectedCharCount: number;
-  slots: OcrSlotLayout[];
-}
-
-interface SynthesizedImageResult {
-  composedImageBase64: string;
-  layout: OcrQuestionLayout[];
 }
 
 interface KanjiQuestionResult {
@@ -63,15 +41,6 @@ interface KanjiBatchResponse {
   correctQuestions: KanjiQuestionResult[];
   wrongQuestions: KanjiQuestionResult[];
   recognizedChars?: Array<{ text: string; x: number; y: number }>;
-}
-
-function getExpectedCharCount(answer?: string): number {
-  const normalized = (answer || '').normalize('NFKC').replace(/\s+/g, '');
-  return Math.max(1, Array.from(normalized).length || 1);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 export default function KanjiDrillPageWrapper({ params }: { params: Promise<{ unitId: string }> }) {
@@ -207,211 +176,6 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
     }
   };
 
-  const synthesizeImages = async (currentAnswers: Record<string, string>): Promise<string> => {
-    // 境界判定のミスを防ぐため、縦1列 (COLUMNS=1) に戻す。
-    // その代わりセル間のマージンを 100px と大きく取り、上下の誤認を防ぐ。
-    const ROWS = questions.length;
-    const CELL_WIDTH = 600; 
-    const CELL_HEIGHT = 300;
-    const MARGIN = 100; // 上下の回答が混じらないよう大きなマージンを設定
-
-    const canvas = document.createElement('canvas');
-    canvas.width = CELL_WIDTH;
-    canvas.height = ROWS * CELL_HEIGHT + (ROWS - 1) * MARGIN;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return '';
-    
-    // 背景を白で塗りつぶす
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const loadImage = (src: string): Promise<HTMLImageElement> => {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.src = src;
-      });
-    };
-
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      const dataURL = currentAnswers[q.id];
-      if (!dataURL) continue;
-
-      const img = await loadImage(dataURL);
-      const targetX = 0;
-      const targetY = i * (CELL_HEIGHT + MARGIN);
-
-      // アスペクト比を維持して中央に配置 (contain相当)
-      const scale = Math.min(CELL_WIDTH / img.width, CELL_HEIGHT / img.height);
-      const drawWidth = img.width * scale;
-      const drawHeight = img.height * scale;
-      const offsetX = (CELL_WIDTH - drawWidth) / 2;
-      const offsetY = (CELL_HEIGHT - drawHeight) / 2;
-
-      ctx.drawImage(img, targetX + offsetX, targetY + offsetY, drawWidth, drawHeight);
-    }
-
-    return canvas.toDataURL('image/jpeg', 0.82);
-  };
-  void synthesizeImages;
-
-  const buildOcrPayload = async (currentAnswers: Record<string, string>): Promise<SynthesizedImageResult> => {
-    const columns = questions.length > 4 ? 2 : 1;
-    const rows = Math.ceil(questions.length / columns);
-    const cellWidth = 640;
-    const cellHeight = 320;
-    const gridGapX = 48;
-    const gridGapY = 56;
-    const pagePadding = 40;
-    const slotGap = 36;
-    const slotHeight = 220;
-    const slotPaddingX = 44;
-    const slotPaddingY = 50;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = pagePadding * 2 + columns * cellWidth + Math.max(0, columns - 1) * gridGapX;
-    canvas.height = pagePadding * 2 + rows * cellHeight + Math.max(0, rows - 1) * gridGapY;
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) {
-      return { composedImageBase64: '', layout: [] };
-    }
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = true;
-
-    const loadImage = (src: string): Promise<HTMLImageElement> => {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Failed to load handwriting image'));
-        img.src = src;
-      });
-    };
-
-    const getInkBounds = (img: HTMLImageElement) => {
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = img.width;
-      tempCanvas.height = img.height;
-      const tempCtx = tempCanvas.getContext('2d');
-      if (!tempCtx) {
-        return { x: 0, y: 0, width: img.width, height: img.height };
-      }
-
-      tempCtx.drawImage(img, 0, 0);
-      const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
-      const { data, width, height } = imageData;
-      let minX = width;
-      let minY = height;
-      let maxX = -1;
-      let maxY = -1;
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = (y * width + x) * 4;
-          const alpha = data[idx + 3];
-          const isInk = alpha > 0 && (data[idx] < 245 || data[idx + 1] < 245 || data[idx + 2] < 245);
-          if (!isInk) continue;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-        }
-      }
-
-      if (maxX < 0 || maxY < 0) {
-        return { x: 0, y: 0, width: img.width, height: img.height };
-      }
-
-      const pad = 12;
-      return {
-        x: clamp(minX - pad, 0, width - 1),
-        y: clamp(minY - pad, 0, height - 1),
-        width: clamp(maxX - minX + 1 + pad * 2, 1, width),
-        height: clamp(maxY - minY + 1 + pad * 2, 1, height),
-      };
-    };
-
-    const layout: OcrQuestionLayout[] = [];
-
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      const dataURL = currentAnswers[q.id];
-      if (!dataURL) continue;
-
-      const gridColumn = i % columns;
-      const gridRow = Math.floor(i / columns);
-      const cellX = pagePadding + gridColumn * (cellWidth + gridGapX);
-      const cellY = pagePadding + gridRow * (cellHeight + gridGapY);
-      const expectedCharCount = getExpectedCharCount(q.answer);
-      const slotCount = Math.max(1, expectedCharCount);
-      const slotAreaWidth = cellWidth - slotPaddingX * 2;
-      const slotWidth = slotCount === 1
-        ? Math.min(260, slotAreaWidth)
-        : (slotAreaWidth - slotGap * (slotCount - 1)) / slotCount;
-      const slotStartX = cellX + (cellWidth - (slotWidth * slotCount + slotGap * (slotCount - 1))) / 2;
-      const slotY = cellY + slotPaddingY;
-      const slots: OcrSlotLayout[] = [];
-
-      for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
-        const slotX = slotStartX + slotIndex * (slotWidth + slotGap);
-        slots.push({
-          index: slotIndex,
-          x: slotX / canvas.width,
-          y: slotY / canvas.height,
-          width: slotWidth / canvas.width,
-          height: slotHeight / canvas.height,
-        });
-      }
-
-      layout.push({
-        questionId: q.id,
-        x: cellX / canvas.width,
-        y: cellY / canvas.height,
-        width: cellWidth / canvas.width,
-        height: cellHeight / canvas.height,
-        expectedCharCount,
-        slots,
-      });
-
-      const img = await loadImage(dataURL);
-      const inkBounds = getInkBounds(img);
-      const inkWidth = Math.max(1, inkBounds.width);
-      const inkHeight = Math.max(1, inkBounds.height);
-      const answerAreaX = slotStartX;
-      const answerAreaY = slotY;
-      const answerAreaWidth = slotWidth * slotCount + slotGap * (slotCount - 1);
-      const answerAreaHeight = slotHeight;
-      const scale = Math.min(answerAreaWidth / inkWidth, answerAreaHeight / inkHeight) * 0.9;
-      const drawWidth = inkWidth * scale;
-      const drawHeight = inkHeight * scale;
-      const drawX = answerAreaX + (answerAreaWidth - drawWidth) / 2;
-      const centeredDrawY = answerAreaY + (answerAreaHeight - drawHeight) / 2;
-      const upwardBias = Math.min(answerAreaHeight * 0.08, 16);
-      const drawY = Math.max(answerAreaY, centeredDrawY - upwardBias);
-
-      ctx.drawImage(
-        img,
-        inkBounds.x,
-        inkBounds.y,
-        inkWidth,
-        inkHeight,
-        drawX,
-        drawY,
-        drawWidth,
-        drawHeight
-      );
-    }
-
-    return {
-      composedImageBase64: canvas.toDataURL('image/png'),
-      layout,
-    };
-  };
-
   const handleSubmit = async (currentAnswers: Record<string, string>) => {
     if (isSubmittingRef.current || hasSubmittedRef.current) return;
     isSubmittingRef.current = true;
@@ -423,7 +187,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
     let completed = false;
 
     try {
-      const { composedImageBase64, layout } = await buildOcrPayload(currentAnswers);
+      const { composedImageBase64, layout } = await buildOcrPayload(questions, currentAnswers);
       
       let resultData: KanjiBatchResponse;
 

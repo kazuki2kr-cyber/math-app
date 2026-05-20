@@ -565,28 +565,192 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
   }
 
   const unitQuestions = await loadUnitQuestions(unitId, unitData);
+  const selectedQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT);
 
-  const questions = unitQuestions.map((question) => {
-    const { options, answerIndex } = buildKanjiBattleOptions(question, unitQuestions, roomId);
+  if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
+    throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough questions.");
+  }
+
+  // 正解（answer/answer_index）はクライアントに送らない。問題文・画像・文字数のみ返す
+  const { normalizeKanjiText } = require("./kanjiOcrCore");
+  const questions = selectedQuestions.map((question) => {
+    let resolvedAnswer = "";
+    if (question.answer_index !== undefined && Array.isArray(question.options)) {
+      resolvedAnswer = (question.options as string[])[Number(question.answer_index) - 1] || "";
+    } else if (typeof question.answer === "string") {
+      resolvedAnswer = question.answer;
+    }
+    const normalized = normalizeKanjiText(resolvedAnswer);
+    const expectedCharCount = Math.max(1, Array.from(normalized).length || 1);
     return {
       id: String(question.id),
       question_text: String(question.question_text || ""),
-      options,
-      answerIndex,
       image_url: question.image_url || null,
+      expectedCharCount,
     };
-  }).filter((question) => question.question_text && question.options.length >= 2 && question.answerIndex >= 0)
-    .slice(0, BATTLE_QUESTION_COUNT);
+  });
 
-  if (questions.length < BATTLE_QUESTION_COUNT) {
-    throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough questions or answer choices.");
-  }
-
-  return {
-    questions: questions.map(({ answerIndex: _answerIndex, ...question }) => question),
-  };
+  return { questions };
 });
 
+// ==========================================
+// submitKanjiBattleOcr — 漢字対戦の手書き画像をOCR採点してRTDBに書き込む
+// 通常演習の recognizeKanjiBatch と同一の OCR ロジックを kanjiOcrCore 経由で使用する
+// ==========================================
+export const submitKanjiBattleOcr = functions
+  .region("us-central1")
+  .runWith({ timeoutSeconds: 120, memory: "1GB" })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+    }
+    const callerUid = context.auth.uid;
+    await assertKanjiBattleAccess(callerUid);
+
+    const { roomId: rawRoomId, composedImageBase64, layout, questionIds } = data as {
+      roomId: string;
+      composedImageBase64: string;
+      layout: import("./kanjiOcrCore").OcrQuestionLayout[];
+      questionIds: string[];
+    };
+
+    const roomId = clampString(rawRoomId, 12);
+    if (!/^\d{4,8}$/.test(roomId)) {
+      throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
+    }
+    if (!composedImageBase64 || !Array.isArray(layout) || !Array.isArray(questionIds)) {
+      throw new functions.https.HttpsError("invalid-argument", "composedImageBase64, layout, questionIds are required.");
+    }
+
+    // 1. ルーム確認
+    const roomSnap = await realtimeDb.ref(`kanjiBattleRooms/${roomId}`).get();
+    if (!roomSnap.exists()) {
+      throw new functions.https.HttpsError("not-found", "Kanji battle room was not found.");
+    }
+    const room = roomSnap.val() || {};
+    if (!room.participants?.[callerUid]) {
+      throw new functions.https.HttpsError("permission-denied", "Only room participants can submit OCR.");
+    }
+    if (room.status !== "completed") {
+      throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
+    }
+
+    // 2. べき等チェック（同じルーム・ユーザーで二重送信しない）
+    const idempotencyRef = db.doc(`kanji_battle_ocr/${roomId}_${callerUid}`);
+    const idempotencySnap = await idempotencyRef.get();
+    if (idempotencySnap.exists) {
+      return { success: true, alreadySubmitted: true };
+    }
+
+    // 3. 単元の問題データ取得（正解情報はサーバーのみ保持）
+    const unitId = clampString(room.unitId, 120);
+    if (!unitId) {
+      throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
+    }
+    const unitDoc = await db.doc(`units/${unitId}`).get();
+    if (!unitDoc.exists) {
+      throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
+    }
+    const unitData = unitDoc.data() || {};
+    const unitQuestions = await loadUnitQuestions(unitId, unitData);
+    const battleQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT);
+
+    // questionIds の検証（クライアント送信値が正しいルームの問題と一致するか）
+    const validIdSet = new Set(battleQuestions.map((q) => String(q.id)));
+    if (!questionIds.every((id) => validIdSet.has(String(id)))) {
+      throw new functions.https.HttpsError("invalid-argument", "questionIds do not match the battle unit.");
+    }
+    const questionMap = new Map(battleQuestions.map((q) => [String(q.id), q]));
+    const orderedQuestions = questionIds
+      .map((id) => questionMap.get(String(id)))
+      .filter(Boolean) as typeof battleQuestions;
+
+    // 4. Vision API 呼び出し（recognizeKanjiBatch と同一の設定）
+    const visionClient = new (require("@google-cloud/vision").ImageAnnotatorClient)();
+    const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
+    let visionResult: any;
+    try {
+      const [result] = await visionClient.documentTextDetection({
+        image: { content: base64Data },
+        imageContext: { languageHints: ["ja"] },
+      });
+      visionResult = result;
+    } catch (e: any) {
+      console.error("Vision API Error (battle OCR):", e);
+      throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
+    }
+
+    // 5. 文字抽出 → 正誤判定（kanjiOcrCore の共通関数を使用）
+    const {
+      extractRecognizedCharacters,
+      processKanjiOcrResult,
+    } = require("./kanjiOcrCore");
+
+    const recognizedCharacters = extractRecognizedCharacters(visionResult);
+    const ocrResults: import("./kanjiOcrCore").KanjiOcrQuestionResult[] =
+      processKanjiOcrResult(recognizedCharacters, orderedQuestions, layout);
+
+    // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）
+    const responseMsPromises = questionIds.map((_, qi) =>
+      realtimeDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/${qi}/${callerUid}/responseMs`).get()
+    );
+    const responseMsSnaps = await Promise.all(responseMsPromises);
+    const responseMsMap: number[] = responseMsSnaps.map((snap) =>
+      clampBattleResponseMs(snap.exists() ? snap.val() : null)
+    );
+
+    // 7. 問題ごとのスコア計算
+    let totalScore = 0;
+    let correctCount = 0;
+    let totalTimeMs = 0;
+    const questionResults = ocrResults.map((result, qi) => {
+      const responseMs = responseMsMap[qi] ?? BATTLE_ANSWER_LIMIT_MS;
+      const baseScore = result.isCorrect ? BATTLE_BASE_SCORE : 0;
+      const speedBonus = result.isCorrect ? calculateBattleSpeedBonus(responseMs) : 0;
+      const questionScore = baseScore + speedBonus;
+
+      totalScore += questionScore;
+      if (result.isCorrect) correctCount += 1;
+      totalTimeMs += responseMs;
+
+      return {
+        questionId: result.questionId,
+        questionText: String(orderedQuestions[qi]?.question_text || ""),
+        recognizedText: result.recognizedText,
+        correctText: result.correctText,
+        isCorrect: result.isCorrect,
+        responseMs,
+        baseScore,
+        speedBonus,
+        questionScore,
+      };
+    });
+
+    // 8. RTDB の playerScores に書き込む
+    await realtimeDb.ref(`kanjiBattleRooms/${roomId}/playerScores/${callerUid}`).set({
+      score: totalScore,
+      correctCount,
+      totalQuestions: BATTLE_QUESTION_COUNT,
+      totalTimeMs,
+      questionResults,
+      submittedAt: admin.database.ServerValue.TIMESTAMP,
+    });
+
+    // 9. べき等マーカーを Firestore に書き込む
+    await idempotencyRef.set({
+      roomId,
+      uid: callerUid,
+      score: totalScore,
+      correctCount,
+      submittedAt: Timestamp.now(),
+    });
+
+    return { success: true, alreadySubmitted: false };
+  });
+
+// ==========================================
+// finalizeKanjiBattleRoom — playerScores を集計して結果・XP を確定する
+// ==========================================
 export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
@@ -642,76 +806,31 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
     return { success: true, cancelled: true, reason: "not-enough-participants" };
   }
 
-  const unitDoc = await db.doc(`units/${unitId}`).get();
-  if (!unitDoc.exists) {
-    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
-  }
+  // playerScores を RTDB から読む（submitKanjiBattleOcr が書き込んだスコア）
+  const playerScoresSnap = await realtimeDb.ref(`kanjiBattleRooms/${roomId}/playerScores`).get();
+  const playerScores: Record<string, any> = playerScoresSnap.val() || {};
 
-  const unitData = unitDoc.data() || {};
-  if (!isKanjiUnit(unitData)) {
-    throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji battle mode.");
-  }
-
-  const unitQuestions = await loadUnitQuestions(unitId, unitData);
-
-  const selectedQuestions = unitQuestions.map((question) => {
-    const { options, answerIndex } = buildKanjiBattleOptions(question, unitQuestions, roomId);
-    return {
-      id: String(question.id),
-      parsedOptions: options,
-      answerIndex,
-      questionText: String(question.question_text || ""),
-    };
-  }).filter((question) => question.questionText && question.parsedOptions.length >= 2 && question.answerIndex >= 0)
-    .slice(0, BATTLE_QUESTION_COUNT);
-
-  if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
-    throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough valid questions.");
-  }
-
-  const questionAnswers = room.questionAnswers || {};
   const resultEntries = validParticipants.map((participant) => {
-    if (participant.abandoned) {
+    const ps = playerScores[participant.uid];
+    if (participant.abandoned || !ps) {
       return {
         uid: participant.uid,
         name: participant.name,
         totalScore: 0,
         correctCount: 0,
-        totalQuestions: selectedQuestions.length,
-        totalTimeMs: BATTLE_ANSWER_LIMIT_MS * selectedQuestions.length,
+        totalQuestions: BATTLE_QUESTION_COUNT,
+        totalTimeMs: BATTLE_ANSWER_LIMIT_MS * BATTLE_QUESTION_COUNT,
         abandoned: true,
         finishedAt: admin.database.ServerValue.TIMESTAMP,
       };
     }
-
-    let totalScore = 0;
-    let correctCount = 0;
-    let totalTimeMs = 0;
-
-    selectedQuestions.forEach((question, questionIndex) => {
-      const answer = questionAnswers[String(questionIndex)]?.[participant.uid] || null;
-      const responseMs = clampBattleResponseMs(answer?.responseMs);
-      const selectedIndex = answer?.selectedIndex === null || answer?.selectedIndex === undefined
-        ? null
-        : Number(answer.selectedIndex);
-      const isCorrect = selectedIndex !== null
-        && Number.isInteger(selectedIndex)
-        && selectedIndex === question.answerIndex
-        && selectedIndex >= 0
-        && selectedIndex < question.parsedOptions.length;
-
-      totalTimeMs += responseMs;
-      if (isCorrect) correctCount += 1;
-      totalScore += calculateBattleQuestionScore(isCorrect, responseMs);
-    });
-
     return {
       uid: participant.uid,
       name: participant.name,
-      totalScore,
-      correctCount,
-      totalQuestions: selectedQuestions.length,
-      totalTimeMs,
+      totalScore: Number(ps.score || 0),
+      correctCount: Number(ps.correctCount || 0),
+      totalQuestions: BATTLE_QUESTION_COUNT,
+      totalTimeMs: Number(ps.totalTimeMs || 0),
       abandoned: false,
       finishedAt: admin.database.ServerValue.TIMESTAMP,
     };
@@ -752,7 +871,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       transaction.set(userRef, {
         kanjiBattleStats: {
           xp: FieldValue.increment(xpDelta),
-          wins: FieldValue.increment(index === 0 ? 1 : 0),
+          wins: FieldValue.increment(index === 0 && !entry.abandoned ? 1 : 0),
           totalBattles: FieldValue.increment(1),
           lastBattleAt: now,
         },
@@ -767,11 +886,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       finalizedAt: now,
       finalizedBy: callerUid,
     });
-    return {
-      alreadyFinalized: false,
-      results,
-      finalizedAt: now,
-    };
+    return { alreadyFinalized: false, results, finalizedAt: now };
   });
 
   await roomRef.update({

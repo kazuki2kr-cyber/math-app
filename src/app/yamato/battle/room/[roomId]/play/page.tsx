@@ -1,15 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { onDisconnect, onValue, ref, serverTimestamp, set, update } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
-import { ArrowLeft, CheckCircle2, Clock, NotebookPen } from 'lucide-react';
-import { MathDisplay } from '@/components/MathDisplay';
+import { ArrowLeft, CheckCircle2, Clock, Eraser, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { HandwritingCanvasRef } from '@/components/HandwritingCanvas';
-import { ScratchPaperOverlay } from '@/components/ScratchPaperOverlay';
+import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
 import {
@@ -18,19 +16,23 @@ import {
   BATTLE_QUESTION_COUNT,
   KANJI_BATTLE_ACCESS_STORAGE_KEY,
 } from '@/lib/battle';
+import { buildOcrPayload, getExpectedCharCount, OcrQuestionLayout } from '@/lib/kanjiOcr';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 const QUESTION_CACHE_PREFIX = 'kanji_battle_questions';
 const FINALIZE_RETRY_MAX = 5;
 const FINALIZE_RETRY_BASE_MS = 2000;
 const FINALIZE_RETRY_MAX_DELAY_MS = 30000;
+const OCR_SUBMIT_RETRY_MAX = 3;
+const OCR_SUBMIT_RETRY_BASE_MS = 3000;
+const FINALIZE_TIMEOUT_MS = 90000;
 
 interface AnswerRecord {
   uid: string;
   questionId: string;
-  selectedIndex: number | null;
   responseMs: number;
   answeredAtMs: number;
+  submitted: true;
   timedOut?: boolean;
 }
 
@@ -40,11 +42,13 @@ interface BattleRoom {
   currentQuestionIndex?: number;
   questionStartedAtMs?: number;
   countdownStartedAtMs?: number;
+  completedAt?: number;
   unitId?: string;
   unitTitle?: string;
   hostUid?: string;
   participants?: Record<string, { uid: string; name: string; connected?: boolean; abandoned?: boolean; playReady?: boolean }>;
   questionAnswers?: Record<string, Record<string, AnswerRecord>>;
+  playerScores?: Record<string, { score: number; submittedAt: number }>;
   results?: Record<string, unknown>;
   finalizedAt?: number;
 }
@@ -52,8 +56,8 @@ interface BattleRoom {
 interface BattleQuestion {
   id: string;
   question_text: string;
-  options: string[];
   image_url?: string | null;
+  expectedCharCount: number;
 }
 
 function clampResponseMs(value: number) {
@@ -70,20 +74,24 @@ export default function KanjiBattlePlayPage() {
   const [questions, setQuestions] = useState<BattleQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [hasStrokes, setHasStrokes] = useState(false);
+  const [handwritingDataUrls, setHandwritingDataUrls] = useState<Record<string, string>>({});
   const [nowMs, setNowMs] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const [ocrSubmitting, setOcrSubmitting] = useState(false);
+  const [ocrSubmitted, setOcrSubmitted] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
-  const [isScratchPaperOpen, setIsScratchPaperOpen] = useState(false);
-  const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
-  const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
+  const canvasRef = useRef<HandwritingCanvasRef>(null);
   const lastQuestionIndexRef = useRef<number | null>(null);
   const redirectedToResultRef = useRef(false);
   const finalizeRequestedRef = useRef(false);
   const finalizeRetryCountRef = useRef(0);
   const finalizeRetryTimerRef = useRef<number | null>(null);
   const answerSubmittingRef = useRef(false);
+  const ocrSubmittingRef = useRef(false);
+  const ocrRetryCountRef = useRef(0);
 
   useEffect(() => {
     if (sessionStorage.getItem(KANJI_BATTLE_ACCESS_STORAGE_KEY) !== 'true') {
@@ -111,7 +119,7 @@ export default function KanjiBattlePlayPage() {
       setRoom(nextRoom);
       if (nextRoom?.status === 'waiting') router.replace(`/yamato/battle/room/${roomId}`);
       if (nextRoom?.status === 'cancelled') router.replace('/yamato/battle');
-      if (nextRoom?.status === 'completed' && (nextRoom?.finalizedAt || nextRoom?.results) && !redirectedToResultRef.current) {
+      if (nextRoom?.finalizedAt && !redirectedToResultRef.current) {
         redirectedToResultRef.current = true;
         router.replace(`/yamato/battle/room/${roomId}/result`);
       }
@@ -186,6 +194,9 @@ export default function KanjiBattlePlayPage() {
   const countdownRemainingMs = Math.max(0, BATTLE_NEXT_QUESTION_COUNTDOWN_MS - Math.max(0, nowMs - countdownStartedAtMs));
   const inBuffer = room?.phase === 'answering' && questionStartedAtMs > nowMs;
   const answeredCount = activeParticipantIds.filter(uid => !!questionAnswers[uid]).length;
+  const currentAnswerCharCount = currentQuestion
+    ? (currentQuestion.expectedCharCount || getExpectedCharCount())
+    : 1;
 
   useEffect(() => {
     async function markPlayReady() {
@@ -205,25 +216,28 @@ export default function KanjiBattlePlayPage() {
   useEffect(() => {
     if (lastQuestionIndexRef.current === currentQuestionIndex) return;
     lastQuestionIndexRef.current = currentQuestionIndex;
-    setSelectedIndex(null);
-    setIsScratchPaperOpen(false);
-    scratchPaperRef.current?.clear();
-    setHasScratchStrokes(false);
+    setHasStrokes(false);
+    setTimeout(() => canvasRef.current?.clear(), 0);
   }, [currentQuestionIndex]);
 
-  const writeAnswer = async (selected: number | null, timedOut = false) => {
+  const writeAnswer = async (timedOut = false) => {
     if (answerSubmittingRef.current || !user || !currentQuestion || myAnswer || !room || room.participants?.[user.uid]?.abandoned || !['answering', 'countdown'].includes(String(room.phase))) return;
     answerSubmittingRef.current = true;
     setSubmitting(true);
     try {
+      // キャンバスの内容をキャプチャしてローカル保存（後でOCRペイロードに使用）
+      const dataURL = canvasRef.current?.toDataURL() || '';
+      if (dataURL) {
+        setHandwritingDataUrls(prev => ({ ...prev, [currentQuestion.id]: dataURL }));
+      }
       const safeResponseMs = clampResponseMs(Date.now() - questionStartedAtMs);
       const realtimeDb = getRealtimeDb();
       await set(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/questionAnswers/${currentQuestionIndex}/${user.uid}`), {
         uid: user.uid,
         questionId: currentQuestion.id,
-        selectedIndex: selected,
         responseMs: safeResponseMs,
         answeredAtMs: Date.now(),
+        submitted: true,
         timedOut,
       });
     } finally {
@@ -247,16 +261,20 @@ export default function KanjiBattlePlayPage() {
     router.push('/yamato/battle');
   };
 
+  // タイムアウト or countdown 移行時に自動送信
   useEffect(() => {
     if (!currentQuestion || !user || myAnswer || room?.phase !== 'answering') return;
-    if (remainingMs <= 0) writeAnswer(null, true);
+    if (remainingMs <= 0) writeAnswer(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestion, myAnswer, remainingMs, room?.phase, user]);
 
   useEffect(() => {
     if (!currentQuestion || !user || myAnswer || room?.phase !== 'countdown') return;
-    writeAnswer(null, true);
+    writeAnswer(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestion, myAnswer, room?.phase, user]);
 
+  // コーディネーターのフェーズ管理
   useEffect(() => {
     if (!isCoordinator || !room || !questions.length || room.status !== 'active') return;
     const realtimeDb = getRealtimeDb();
@@ -302,9 +320,70 @@ export default function KanjiBattlePlayPage() {
     }
   }, [activeParticipantIds, countdownRemainingMs, currentQuestionIndex, isCoordinator, questionAnswers, questions.length, remainingMs, room, roomId]);
 
+  // 対戦完了後: 手書き画像を一括OCR送信
   useEffect(() => {
-    async function finalizeIfNeeded() {
-      if (!user || !room || room.status !== 'completed' || !room.participants?.[user.uid] || room.finalizedAt || room.results || finalizing || finalizeRequestedRef.current) return;
+    async function submitOcr() {
+      if (!user || !room || room.status !== 'completed' || ocrSubmittingRef.current || ocrSubmitted) return;
+      if (!questions.length) return;
+      ocrSubmittingRef.current = true;
+      setOcrSubmitting(true);
+      setOcrError(null);
+      try {
+        const { composedImageBase64, layout } = await buildOcrPayload(
+          questions.map(q => ({ id: q.id, expectedCharCount: q.expectedCharCount })),
+          handwritingDataUrls
+        );
+        const submitOcrFn = httpsCallable<
+          { roomId: string; composedImageBase64: string; layout: OcrQuestionLayout[]; questionIds: string[] },
+          { success: boolean; alreadySubmitted: boolean }
+        >(functions, 'submitKanjiBattleOcr');
+        await submitOcrFn({
+          roomId,
+          composedImageBase64,
+          layout,
+          questionIds: questions.map(q => q.id),
+        });
+        setOcrSubmitted(true);
+        ocrRetryCountRef.current = 0;
+      } catch (err) {
+        console.error('OCR submission failed:', err);
+        ocrSubmittingRef.current = false;
+        const nextRetry = ocrRetryCountRef.current + 1;
+        ocrRetryCountRef.current = nextRetry;
+        if (nextRetry <= OCR_SUBMIT_RETRY_MAX) {
+          const delay = Math.min(30000, OCR_SUBMIT_RETRY_BASE_MS * (2 ** (nextRetry - 1)));
+          setOcrError(`採点の送信に失敗しました。${Math.ceil(delay / 1000)}秒後に再試行します...`);
+          setTimeout(() => {
+            setOcrSubmitting(false);
+          }, delay);
+          return;
+        }
+        setOcrError('採点の送信に失敗しました。しばらく待ってから結果画面を確認してください。');
+      } finally {
+        if (ocrSubmittingRef.current) {
+          ocrSubmittingRef.current = false;
+          setOcrSubmitting(false);
+        }
+      }
+    }
+
+    submitOcr();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ocrSubmitted, ocrSubmitting, room?.status, questions.length]);
+
+  // コーディネーター: playerScores が揃ったら finalizeKanjiBattleRoom を呼ぶ
+  useEffect(() => {
+    async function finalizeIfReady() {
+      if (!isCoordinator || !user || !room || room.status !== 'completed' || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
+      const activeNonAbandoned = activeParticipantIds.filter(uid => !room.participants?.[uid]?.abandoned);
+      if (activeNonAbandoned.length === 0) return;
+
+      const allHaveScores = activeNonAbandoned.every(uid => !!room.playerScores?.[uid]);
+      const completedAt = Number(room.completedAt || 0);
+      const timedOut = completedAt > 0 && (nowMs - completedAt) > FINALIZE_TIMEOUT_MS;
+
+      if (!allHaveScores && !timedOut) return;
+
       finalizeRequestedRef.current = true;
       setFinalizing(true);
       setFinalizeError(null);
@@ -337,23 +416,32 @@ export default function KanjiBattlePlayPage() {
       }
     }
 
-    finalizeIfNeeded();
-  }, [finalizing, room, roomId, user]);
+    finalizeIfReady();
+  }, [activeParticipantIds, finalizing, isCoordinator, nowMs, room, roomId, user]);
 
   const questionProgressPercent = (currentQuestionIndex / Math.max(1, questions.length)) * 100;
   const timerProgressPercent = room?.phase === 'countdown'
     ? Math.max(0, Math.min(100, (countdownRemainingMs / BATTLE_NEXT_QUESTION_COUNTDOWN_MS) * 100))
     : Math.max(0, Math.min(100, (remainingMs / BATTLE_ANSWER_LIMIT_MS) * 100));
 
-  if (room?.status === 'completed' && !room.finalizedAt && !room.results) {
+  if (room?.status === 'completed') {
     return (
       <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
         <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col items-center justify-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
           <div>
-            <h1 className="text-xl font-black text-gray-900">結果を集計しています...</h1>
-            <p className="mt-2 text-sm font-bold text-muted-foreground">集計が完了すると結果画面へ移動します。</p>
+            <h1 className="text-xl font-black text-gray-900">
+              {ocrSubmitting ? '手書き回答を採点しています...' : ocrSubmitted ? '結果を集計しています...' : '対戦終了'}
+            </h1>
+            <p className="mt-2 text-sm font-bold text-muted-foreground">
+              {ocrSubmitted ? '集計が完了すると結果画面へ移動します。' : '採点が完了するまでお待ちください。'}
+            </p>
           </div>
+          {ocrError && (
+            <div className="rounded-xl border border-orange-100 bg-orange-50 p-3 text-sm font-bold text-orange-700">
+              {ocrError}
+            </div>
+          )}
           {finalizeError && (
             <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-bold text-red-700">
               {finalizeError}
@@ -372,37 +460,23 @@ export default function KanjiBattlePlayPage() {
             <ArrowLeft className="w-5 h-5 mr-1.5" strokeWidth={1.5} />
             <span className="font-medium">対戦トップへ</span>
           </Button>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label="計算用紙を開く"
-              onClick={() => setIsScratchPaperOpen(true)}
-              className="relative h-10 border-primary/20 bg-white/80 px-3 text-primary shadow-sm hover:bg-primary/5"
-            >
-              <NotebookPen className="w-4 h-4 sm:mr-2" />
-              <span className="hidden sm:inline">計算用紙</span>
-              {hasScratchStrokes && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-[#F8FAEB]" />}
-            </Button>
-            <div className={`flex items-center font-mono text-lg sm:text-xl px-3 sm:px-4 py-1.5 rounded-full border shadow-inner ${
-              room?.phase === 'countdown'
-                ? 'border-green-200 bg-green-50 text-green-700'
-                : inBuffer
-                  ? 'border-amber-200 bg-amber-50 text-amber-700'
-                  : remainingMs <= 5000
-                    ? 'border-red-200 bg-red-50 text-red-600'
-                    : 'border-primary/20 bg-primary/10 text-primary'
-            }`}>
-              <Clock className="w-5 h-5 mr-2" />
-              {room?.phase === 'loading'
-                ? '準備中'
-                : inBuffer
-                  ? `スタート ${Math.ceil((questionStartedAtMs - nowMs) / 1000)}`
-                  : room?.phase === 'countdown'
-                    ? `次へ ${Math.ceil(countdownRemainingMs / 1000)}`
-                    : `残り ${Math.ceil(remainingMs / 1000)}`}
-            </div>
+          <div className={`flex items-center font-mono text-lg sm:text-xl px-3 sm:px-4 py-1.5 rounded-full border shadow-inner ${
+            room?.phase === 'countdown'
+              ? 'border-green-200 bg-green-50 text-green-700'
+              : inBuffer
+                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                : remainingMs <= 5000
+                  ? 'border-red-200 bg-red-50 text-red-600'
+                  : 'border-primary/20 bg-primary/10 text-primary'
+          }`}>
+            <Clock className="w-5 h-5 mr-2" />
+            {room?.phase === 'loading'
+              ? '準備中'
+              : inBuffer
+                ? `スタート ${Math.ceil((questionStartedAtMs - nowMs) / 1000)}`
+                : room?.phase === 'countdown'
+                  ? `次へ ${Math.ceil(countdownRemainingMs / 1000)}`
+                  : `残り ${Math.ceil(remainingMs / 1000)}`}
           </div>
         </div>
 
@@ -452,41 +526,73 @@ export default function KanjiBattlePlayPage() {
                 <span dangerouslySetInnerHTML={{ __html: currentQuestion.question_text }} />
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6 px-8 pb-8">
+            <CardContent className="px-8 pb-4">
               {currentQuestion.image_url && (
                 <div className="mb-6 bg-gray-50 p-6 rounded-xl flex justify-center border shadow-inner">
-                  <img src={currentQuestion.image_url} alt="問題画像" className="max-h-72 object-contain rounded-md shadow-sm mix-blend-multiply" />
+                  <img src={currentQuestion.image_url} alt="問題画像" className="max-h-60 object-contain rounded-md shadow-sm mix-blend-multiply" />
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {currentQuestion.options.map((option, index) => {
-                  const isSelected = selectedIndex === index;
-                  return (
-                    <button
-                      key={`${currentQuestion.id}-${index}`}
-                      type="button"
-                      onClick={() => setSelectedIndex(index)}
-                      disabled={!!myAnswer || room.phase !== 'answering' || inBuffer}
-                      className={`w-full text-left p-5 rounded-xl border-2 transition-all duration-200 ${
-                        isSelected
-                          ? 'border-primary bg-primary/5 shadow-md scale-[1.02] ring-2 ring-primary/20'
-                          : 'border-gray-200 bg-white hover:border-primary/50 hover:bg-gray-50 hover:shadow-sm'
-                      }`}
-                    >
-                      <div className="flex items-start">
-                        <span className={`flex-shrink-0 inline-block w-8 h-8 text-center leading-8 rounded-full text-sm font-bold mr-4 transition-colors ${
-                          isSelected ? 'bg-primary text-white' : 'bg-gray-100 text-gray-500'
-                        }`}>
-                          {index + 1}
-                        </span>
-                        <div className="pt-1 overflow-visible">
-                          <MathDisplay math={option} />
-                        </div>
+              {/* 手書き入力エリア */}
+              <div className="flex flex-col items-center gap-3">
+                <p className="text-xs text-muted-foreground font-bold">
+                  ※複数文字の場合は「横書き」で書いてください。
+                </p>
+                <div className={`relative w-full aspect-[3/1] shadow-inner rounded-xl border-2 bg-white transition-all ${
+                  myAnswer ? 'border-green-300 opacity-70' : 'border-dashed border-amber-200'
+                }`}>
+                  {/* ガイド線 */}
+                  <div className="absolute inset-0 pointer-events-none border border-orange-100 flex items-center justify-center rounded-xl overflow-hidden">
+                    <div className="w-full h-full absolute border-[0.5px] border-orange-900/10 top-1/2 -translate-y-1/2 border-dashed" />
+                    {Array.from({ length: Math.max(0, currentAnswerCharCount - 1) }).map((_, dividerIndex) => {
+                      const left = `${((dividerIndex + 1) / currentAnswerCharCount) * 100}%`;
+                      return (
+                        <div
+                          key={dividerIndex}
+                          className="h-full absolute border-[0.5px] border-orange-900/10 border-dashed"
+                          style={{ left, transform: 'translateX(-50%)' }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <HandwritingCanvas
+                    ref={canvasRef}
+                    onChange={setHasStrokes}
+                    strokeWidth={8}
+                    strokeColor="#1a1a1a"
+                    className="w-full h-full bg-transparent !border-none !rounded-none !shadow-none"
+                  />
+                  {myAnswer && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-xl pointer-events-none">
+                      <div className="bg-green-100/80 rounded-full p-3">
+                        <CheckCircle2 className="h-8 w-8 text-green-600" />
                       </div>
-                    </button>
-                  );
-                })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 w-full max-w-xs">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!!myAnswer}
+                    onClick={() => canvasRef.current?.undo()}
+                    className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
+                  >
+                    <Undo2 className="w-4 h-4 mr-1" />
+                    戻す
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!!myAnswer}
+                    onClick={() => { canvasRef.current?.clear(); setHasStrokes(false); }}
+                    className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
+                  >
+                    <Eraser className="w-4 h-4 mr-1" />
+                    クリア
+                  </Button>
+                </div>
               </div>
             </CardContent>
 
@@ -497,31 +603,20 @@ export default function KanjiBattlePlayPage() {
                   ? myAnswer.timedOut
                     ? '時間切れです。次の問題へ自動で進みます。'
                     : '送信済みです。次の問題へ自動で進みます。'
-                  : '選択後、「回答を送信」で確定します。次の問題へは自動で進みます。'}
+                  : '書き終えたら「回答する」を押してください。'}
               </div>
               <Button
-                onClick={() => writeAnswer(selectedIndex, false)}
-                disabled={selectedIndex === null || !!myAnswer || room.phase !== 'answering' || inBuffer || submitting}
+                onClick={() => writeAnswer(false)}
+                disabled={!hasStrokes || !!myAnswer || room.phase !== 'answering' || inBuffer || submitting}
                 size="lg"
                 className="h-14 px-10 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
               >
-                {myAnswer ? '送信済み' : '回答を送信'}
+                {myAnswer ? '送信済み' : submitting ? '送信中...' : '回答する'}
               </Button>
             </CardFooter>
           </Card>
         )}
       </main>
-      {currentQuestion && (
-        <ScratchPaperOverlay
-          ref={scratchPaperRef}
-          open={isScratchPaperOpen}
-          questionText={currentQuestion.question_text.replace(/<[^>]*>/g, '')}
-          questionNumber={currentQuestionIndex + 1}
-          totalQuestions={questions.length}
-          onClose={() => setIsScratchPaperOpen(false)}
-          onChange={setHasScratchStrokes}
-        />
-      )}
     </div>
   );
 }

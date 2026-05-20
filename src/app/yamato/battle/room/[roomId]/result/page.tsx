@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { onValue, ref } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
-import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
@@ -12,11 +12,32 @@ import { BattleResultEntry, KANJI_BATTLE_ACCESS_STORAGE_KEY, getBattleXpDelta, s
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 
+interface QuestionResult {
+  questionId: string;
+  questionText: string;
+  recognizedText: string;
+  correctText: string;
+  isCorrect: boolean;
+  responseMs: number;
+  baseScore: number;
+  speedBonus: number;
+  questionScore: number;
+}
+
+interface PlayerScore {
+  score: number;
+  correctCount: number;
+  totalQuestions: number;
+  totalTimeMs: number;
+  questionResults: QuestionResult[];
+}
+
 interface BattleRoom {
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
   unitTitle?: string;
   participants?: Record<string, { uid: string; name: string; abandoned?: boolean }>;
   results?: Record<string, BattleResultEntry & { xpDelta?: number; rank?: number }>;
+  playerScores?: Record<string, PlayerScore>;
   finalizedAt?: number;
 }
 
@@ -76,6 +97,8 @@ export default function KanjiBattleResultPage() {
   const myXpDelta = myResult?.xpDelta ?? (myRankIndex >= 0 ? getBattleXpDelta(Math.max(2, participants.length), myRankIndex) : 0);
   const myRank = myResult?.rank ?? (myRankIndex >= 0 ? myRankIndex + 1 : null);
   const allSubmitted = participants.length > 0 && results.length >= participants.length;
+  const myPlayerScore = user ? room?.playerScores?.[user.uid] : undefined;
+  const myQuestionResults: QuestionResult[] = myPlayerScore?.questionResults || [];
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
@@ -106,6 +129,7 @@ export default function KanjiBattleResultPage() {
           </div>
         ) : (
           <>
+            {/* 自分のサマリー */}
             <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
               <div className="grid gap-3 sm:grid-cols-4">
                 <div className="rounded-xl bg-amber-50 p-4">
@@ -141,6 +165,49 @@ export default function KanjiBattleResultPage() {
               )}
             </div>
 
+            {/* 問題別スコア内訳 */}
+            {myQuestionResults.length > 0 && (
+              <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+                <h2 className="mb-4 text-lg font-black text-gray-900">問題別スコア</h2>
+                <div className="space-y-2">
+                  {myQuestionResults.map((qr, idx) => (
+                    <div
+                      key={qr.questionId}
+                      className={`grid gap-2 rounded-xl border p-4 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center ${
+                        qr.isCorrect ? 'border-green-100 bg-green-50/50' : 'border-gray-100 bg-gray-50/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center">
+                        {qr.isCorrect
+                          ? <CheckCircle2 className="h-5 w-5 text-green-600" />
+                          : <XCircle className="h-5 w-5 text-red-400" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-muted-foreground mb-0.5">Q{idx + 1}</p>
+                        <p
+                          className="truncate text-sm font-bold text-gray-900"
+                          dangerouslySetInnerHTML={{ __html: qr.questionText }}
+                        />
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground font-semibold">
+                          <span>認識: <span className={qr.isCorrect ? 'text-green-700' : 'text-red-600'}>{qr.recognizedText}</span></span>
+                          {!qr.isCorrect && <span>正解: <span className="text-gray-700">{qr.correctText}</span></span>}
+                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{(qr.responseMs / 1000).toFixed(1)}秒</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-black text-gray-900">{qr.questionScore}点</p>
+                        <p className="text-xs text-muted-foreground font-semibold">
+                          基礎 {qr.baseScore}
+                          {qr.isCorrect && <span className="ml-1 text-amber-600">+ 速度 {qr.speedBonus}</span>}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ランキング */}
             <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <Swords className="h-5 w-5 text-amber-500" />
