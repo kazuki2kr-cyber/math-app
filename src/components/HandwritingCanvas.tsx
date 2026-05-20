@@ -18,6 +18,7 @@ interface Stroke {
   points: Point[];
   color: string;
   width: number;
+  tool?: 'pen' | 'eraser';
 }
 
 interface HandwritingCanvasProps {
@@ -25,17 +26,29 @@ interface HandwritingCanvasProps {
   height?: number | string;
   strokeColor?: string;
   strokeWidth?: number;
+  tool?: 'pen' | 'eraser';
+  eraserWidth?: number;
   className?: string;
   onChange?: (hasStrokes: boolean) => void;
 }
 
 export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCanvasProps>(
-  ({ width = '100%', height = 300, strokeColor = '#000000', strokeWidth = 5, className = '', onChange }, ref) => {
+  ({
+    width = '100%',
+    height = 300,
+    strokeColor = '#000000',
+    strokeWidth = 5,
+    tool = 'pen',
+    eraserWidth = 24,
+    className = '',
+    onChange
+  }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [strokes, setStrokes] = useState<Stroke[]>([]);
     const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
+    const [eraserPreviewPoint, setEraserPreviewPoint] = useState<Point | null>(null);
 
     // 描画系の状態を最新に保つためにコールバックで通知
     useEffect(() => {
@@ -97,6 +110,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
         if (stroke.points.length === 0) return;
         
         ctx.beginPath();
+        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
         ctx.strokeStyle = stroke.color;
         ctx.lineWidth = stroke.width;
         
@@ -106,6 +120,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
         }
         ctx.stroke();
       });
+      ctx.globalCompositeOperation = 'source-over';
     };
 
     const getMousePos = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
@@ -124,7 +139,12 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
       
       const pos = getMousePos(e);
       setIsDrawing(true);
-      setCurrentStroke({ points: [pos], color: strokeColor, width: strokeWidth });
+      setCurrentStroke({
+        points: [pos],
+        color: tool === 'eraser' ? '#000000' : strokeColor,
+        width: tool === 'eraser' ? eraserWidth : strokeWidth,
+        tool,
+      });
       
       const canvas = canvasRef.current;
       if (canvas) {
@@ -136,6 +156,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
       if (!isDrawing || !currentStroke) return;
       
       const pos = getMousePos(e);
+      if (tool === 'eraser') setEraserPreviewPoint(pos);
       setCurrentStroke(prev => {
         if (!prev) return prev;
         return { ...prev, points: [...prev.points, pos] };
@@ -181,12 +202,37 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
       >
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            touchAction: 'none',
+            cursor: tool === 'eraser' ? 'cell' : 'crosshair',
+          }}
           onPointerDown={startDrawing}
-          onPointerMove={draw}
+          onPointerMove={(event) => {
+            if (tool === 'eraser') setEraserPreviewPoint(getMousePos(event));
+            draw(event);
+          }}
           onPointerUp={stopDrawing}
           onPointerCancel={stopDrawing}
+          onPointerEnter={(event) => {
+            if (tool === 'eraser') setEraserPreviewPoint(getMousePos(event));
+          }}
+          onPointerLeave={() => setEraserPreviewPoint(null)}
         />
+        {tool === 'eraser' && eraserPreviewPoint && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute rounded-full border-2 border-primary/80 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
+            style={{
+              width: eraserWidth,
+              height: eraserWidth,
+              left: eraserPreviewPoint.x - eraserWidth / 2,
+              top: eraserPreviewPoint.y - eraserWidth / 2,
+            }}
+          />
+        )}
       </div>
     );
   }

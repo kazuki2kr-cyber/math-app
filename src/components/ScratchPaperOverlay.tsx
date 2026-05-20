@@ -1,7 +1,7 @@
 'use client';
 
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Eraser, RotateCcw, X } from 'lucide-react';
+import { Eraser, PenLine, RotateCcw, Trash2, X } from 'lucide-react';
 import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
@@ -12,8 +12,15 @@ const STROKE_WIDTH_OPTIONS = [
   { id: 'thin', label: '細い', width: 2.5 },
   { id: 'extraThin', label: 'かなり細い', width: 1.5 },
 ] as const;
+const ERASER_SIZE_OPTIONS = [
+  { id: 'small', label: '小', width: 18 },
+  { id: 'medium', label: '中', width: 28 },
+  { id: 'large', label: '大', width: 42 },
+] as const;
 
 type StrokeWidthId = (typeof STROKE_WIDTH_OPTIONS)[number]['id'];
+type EraserSizeId = (typeof ERASER_SIZE_OPTIONS)[number]['id'];
+type ScratchTool = 'pen' | 'eraser';
 
 function isStrokeWidthId(value: string | null): value is StrokeWidthId {
   return STROKE_WIDTH_OPTIONS.some((option) => option.id === value);
@@ -31,6 +38,8 @@ interface ScratchPaperOverlayProps {
 export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaperOverlayProps>(
   ({ open, questionText, questionNumber, totalQuestions, onClose, onChange }, ref) => {
     const [hasStrokes, setHasStrokes] = useState(false);
+    const [activeTool, setActiveTool] = useState<ScratchTool>('pen');
+    const [eraserSizeId, setEraserSizeId] = useState<EraserSizeId>('medium');
     const [strokeWidthId, setStrokeWidthId] = useState<StrokeWidthId>(() => {
       if (typeof window === 'undefined') return 'standard';
 
@@ -39,6 +48,7 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
     });
     const canvasRef = useRef<HandwritingCanvasRef>(null);
     const selectedStrokeWidth = STROKE_WIDTH_OPTIONS.find((option) => option.id === strokeWidthId)?.width ?? 4;
+    const selectedEraserWidth = ERASER_SIZE_OPTIONS.find((option) => option.id === eraserSizeId)?.width ?? 28;
 
     const handleChange = (nextHasStrokes: boolean) => {
       setHasStrokes(nextHasStrokes);
@@ -50,6 +60,7 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
       clear: () => {
         canvasRef.current?.clear();
         handleChange(false);
+        setActiveTool('pen');
       },
       hasStrokes: () => canvasRef.current?.hasStrokes() ?? false,
       toDataURL: () => null,
@@ -77,9 +88,16 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
       window.localStorage.setItem(STROKE_WIDTH_STORAGE_KEY, strokeWidthId);
     }, [strokeWidthId]);
 
+    useEffect(() => {
+      if (!hasStrokes && activeTool === 'eraser') {
+        setActiveTool('pen');
+      }
+    }, [activeTool, hasStrokes]);
+
     const handleClear = () => {
       canvasRef.current?.clear();
       handleChange(false);
+      setActiveTool('pen');
     };
 
     return (
@@ -123,6 +141,70 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                   );
                 })}
               </div>
+              <div
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
+                aria-label="計算用紙の道具"
+              >
+                <button
+                  type="button"
+                  tabIndex={open ? 0 : -1}
+                  aria-label="ペンで書く"
+                  aria-pressed={activeTool === 'pen'}
+                  onClick={() => setActiveTool('pen')}
+                  className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors ${
+                    activeTool === 'pen'
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                  }`}
+                >
+                  <PenLine className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  tabIndex={open ? 0 : -1}
+                  disabled={!hasStrokes}
+                  aria-label="消しゴムで消す"
+                  aria-pressed={activeTool === 'eraser'}
+                  onClick={() => setActiveTool('eraser')}
+                  className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    activeTool === 'eraser'
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                  }`}
+                >
+                  <Eraser className="h-4 w-4" />
+                </button>
+              </div>
+              <div
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
+                aria-label="消しゴムのサイズ"
+              >
+                {ERASER_SIZE_OPTIONS.map((option) => {
+                  const isSelected = eraserSizeId === option.id;
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      tabIndex={open ? 0 : -1}
+                      disabled={!hasStrokes}
+                      aria-label={`消しゴムのサイズ: ${option.label}`}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setEraserSizeId(option.id);
+                        setActiveTool('eraser');
+                      }}
+                      className={`h-8 min-w-8 rounded-md px-2 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isSelected
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -130,7 +212,12 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 tabIndex={open ? 0 : -1}
                 disabled={!hasStrokes}
                 aria-label="計算用紙を戻す"
-                onClick={() => canvasRef.current?.undo()}
+                onClick={() => {
+                  canvasRef.current?.undo();
+                  if (canvasRef.current && !canvasRef.current.hasStrokes()) {
+                    setActiveTool('pen');
+                  }
+                }}
                 className="h-10 px-3"
               >
                 <RotateCcw className="h-4 w-4 md:mr-2" />
@@ -142,12 +229,12 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 size="sm"
                 tabIndex={open ? 0 : -1}
                 disabled={!hasStrokes}
-                aria-label="計算用紙を消す"
+                aria-label="計算用紙を全部消す"
                 onClick={handleClear}
                 className="h-10 px-3"
               >
-                <Eraser className="h-4 w-4 md:mr-2" />
-                <span className="hidden md:inline">消す</span>
+                <Trash2 className="h-4 w-4 md:mr-2" />
+                <span className="hidden md:inline">全部消す</span>
               </Button>
               <Button
                 type="button"
@@ -182,6 +269,8 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
               onChange={handleChange}
               strokeWidth={selectedStrokeWidth}
               strokeColor="#111827"
+              tool={activeTool}
+              eraserWidth={selectedEraserWidth}
               className="h-full w-full !rounded-none !border-gray-200 !shadow-none"
             />
           </div>

@@ -88,7 +88,9 @@ test.describe('ドリル演習', () => {
 
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
+    const eraserButton = page.getByRole('button', { name: '消しゴムで消す' });
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
+    await expect(eraserButton).toBeDisabled({ timeout: 5000 });
     await expect(page.locator('section[aria-hidden="false"]').getByText('Q1/3')).toBeVisible();
     await expect(page.getByRole('button', { name: 'ペンの太さ: 標準' })).toHaveAttribute('aria-pressed', 'true');
 
@@ -106,6 +108,20 @@ test.describe('ドリル演習', () => {
     await page.mouse.move(box.x + 160, box.y + 120);
     await page.mouse.up();
     await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await expect(eraserButton).toBeEnabled({ timeout: 5000 });
+
+    await eraserButton.click();
+    await expect(eraserButton).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: '消しゴムのサイズ: 大' }).click();
+    await expect(page.getByRole('button', { name: '消しゴムのサイズ: 大' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(eraserButton).toHaveAttribute('aria-pressed', 'true');
+    await page.mouse.move(box.x + 84, box.y + 64);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 108, box.y + 84);
+    await page.mouse.up();
+    await expect(page.getByRole('button', { name: 'ペンで書く' })).toHaveAttribute('aria-pressed', 'false');
+    await page.getByRole('button', { name: 'ペンで書く' }).click();
+    await expect(page.getByRole('button', { name: 'ペンで書く' })).toHaveAttribute('aria-pressed', 'true');
 
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
     await page.getByRole('button', { name: '計算用紙を開く' }).click();

@@ -4,7 +4,7 @@
 
 ## 1. プロジェクト概要
 
-中学生向け数学学習 Web アプリケーション。単元ごとの演習ドリル、スコア・経験値システム、ランキング機能を提供する。Firebase + Next.js 構成で、Cloud Functions がスコア処理のすべてを担う。
+中学生向け数学学習 Web アプリケーション。単元ごとの演習ドリル、スコア・経験値システム、ランキング機能、漢字モード、リアルタイム対戦、管理者向け分析を提供する。Firebase + Next.js 構成で、Cloud Functions がスコア処理や集計更新などの信頼境界を担う。
 
 - **本番 URL**: [https://math-app-sooty.vercel.app/](https://math-app-sooty.vercel.app/)
 - **Firebase プロジェクト**: `math-app-26c77`（Blaze プラン）
@@ -16,10 +16,10 @@
 | フロントエンド | Next.js 16 (App Router), React 19, TypeScript |
 | スタイリング | Tailwind CSS v4, shadcn/ui, framer-motion |
 | 数式表示 | KaTeX (`react-katex`) |
-| バックエンド | Firebase Cloud Functions (Node.js 20, us-central1, 1st Gen) |
-| データベース | Cloud Firestore (asia-northeast1) |
+| バックエンド | Firebase Cloud Functions (Node.js 22, us-central1, 1st Gen / `firebase-functions/v1`) |
+| データベース | Cloud Firestore (asia-northeast1), Firebase Realtime Database (対戦ルーム) |
 | 認証 | Firebase Auth (Google サインイン) |
-| ホスティング | Vercel (フロント) / Firebase Hosting (静的出力) |
+| ホスティング | Vercel (フロントエンド)。`firebase.json` に Hosting 設定は残っているが、現行の Next.js 設定は静的 `out` 出力ではない |
 | テスト | Jest (unit), Playwright (e2e), Firebase Emulator (rules) |
 
 ---
@@ -35,14 +35,26 @@ math.app/
 ├── functions/src/         # Cloud Functions（プロセス重要ロジック）
 ├── firestore.rules        # Firestore セキュリティルール
 ├── .agents/               # AIエージェント用スキル・ワークフロー
-└── data/                  # 問題データ (CSV等)
+├── scripts/               # 運用・移行・シード・監査スクリプト、漢字CSV
+├── docs/                  # 分析仕様などの補助ドキュメント
+├── 問題PDFデータ/         # 数学問題PDF
+└── *.csv                  # ルート直下の数学問題CSV
 ```
 
 ### 主要 Firestore コレクション
 - `users/{uid}`: ユーザープロファイル、XP、レベル、統計
+- `users/{uid}/attempts/{attemptId}`: 演習ごとの軽量記録。`expireAt` による削除対象
 - `units/{unitId}`: 単元データ、問題リスト
-- `leaderboards/overall`: 全体ランキングキャッシュ
+- `leaderboards/overall`, `leaderboards/kanji`, `leaderboards/kanjiSeason1`: ランキング・シーズン記録
 - `suspicious_activities`: 不審な操作ログ
+- `user_feedback`: アプリ内フィードバック
+- `analytics_events`: BigQuery 連携用の演習イベントログ
+- `analytics_serving/*`: 管理画面向けの集計済み分析データ
+- `battle_results`, `kanji_battle_results`, `kanji_battle_ocr`: 対戦・漢字対戦の確定結果や冪等性管理
+
+### 主要 Realtime Database パス
+- `battleRooms/{roomId}`: 数学対戦ルーム
+- `kanjiBattleRooms/{roomId}`: 漢字対戦ルーム
 
 ---
 
@@ -51,12 +63,14 @@ math.app/
 ### セキュリティの原則 (CRITICAL)
 > [!IMPORTANT]
 > **Firestore セキュリティルール** は生命線です。学生によるデータの直接書き換えを厳格に防ぎます。
-- **直接書き込み禁止**: `users` (XP等), `scores`, `stats` へのクライアントからの直接書き込みは禁止。
-- **Functions 経由**: データ更新は必ず Cloud Functions (`processDrillResult`) を経由させる。
+- **直接書き込み禁止**: `users` のXP・スコア・統計、`stats`、`analytics_events` など信頼境界内のデータをクライアントから直接書き換えない。旧 `scores` コレクションは互換・参照用途が残るが、新規の成績更新は `users/{uid}/unitStats` と `users/{uid}/attempts` を中心に扱う。
+- **Functions 経由**: 数学ドリルの成績更新は `processDrillResult`、漢字ドリルは `submitKanjiDrillResult`、対戦の確定処理は `finalizeBattleRoom` / `finalizeKanjiBattleRoom` を経由させる。
 - **ルール変更時の義務**: `firestore.rules` を変更した場合は、必ず `tests/firestore.rules.spec.ts` にテストを追加し、`npm run test:security` を実行すること。
 
 ### 信頼境界
-- スコア計算はクライアント側で行うが、Functions 側で `Math.min(100, Math.max(0, ...))` にクランプし、二重送信防止（`attemptId` 固定）を実施する。
+- クライアントは選択肢・回答・時間・演習モードだけを送信し、正誤判定、スコア、XP、ランキング反映は Cloud Functions 側で再計算する。
+- 数学ドリルのスコアは `mode` により異なる。`standard` / `wrong` は正解1問あたり10点、`all` は正答率ベース。復習モードも解いた問題数ぶんだけスコア・XP・集計に反映する。
+- 二重送信防止は演習開始時に固定した `attemptId` と `users/{uid}/attempts/{attemptId}` で実施する。
 
 ---
 
@@ -71,12 +85,15 @@ npm run test:e2e      # Playwright E2Eテスト
 cd functions && npx tsc --noEmit # Functions 型チェック
 ```
 
+Windows PowerShell で `npm.ps1` の実行ポリシーに当たる場合は `npm.cmd` を使う。
+
 ### デプロイフロー
 1. **GitHub push (main)** → Vercel 自動デプロイ（フロントエンド）。
    - `pre-push` フックが自動でパッチバージョンを上げます。
-2. **Firebase deploy** (手動実施必須)
-   - `firebase deploy --only functions`
-   - `firebase deploy --only firestore:rules`
+2. **Firebase deploy** (Functions / ルールは手動実施)
+   - `.firebaserc` に既定プロジェクトが入っていない環境では `--project math-app-26c77` を付ける
+   - `firebase deploy --project math-app-26c77 --only functions`
+   - `firebase deploy --project math-app-26c77 --only firestore:rules,database`
 
 ---
 
