@@ -98,7 +98,7 @@ export default function KanjiBattleRoomPage() {
         });
       } catch (err) {
         console.error('Failed to preload kanji battle questions:', err);
-        setPreloadError(err instanceof Error ? err.message : '問題を読み込めませんでした。別の単元でルームを作り直してください。');
+        setPreloadError(err instanceof Error ? err.message : '問題を読み込めませんでした。別の範囲でルームを作り直してください。');
       } finally {
         setPreloadingQuestions(false);
       }

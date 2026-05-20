@@ -185,11 +185,11 @@ export default function KanjiBattlePage() {
   const createRandomRoom = () => {
     const eligible = units.filter(u => (u.totalQuestions || 0) >= 10);
     if (eligible.length === 0) {
-      setError('ランダム対戦できる単元がありません。');
+      setError('ランダム対戦できる範囲がありません。');
       return;
     }
     const unit = eligible[Math.floor(Math.random() * eligible.length)];
-    createRoom(unit);
+    createRoom({ ...unit, title: '???', category: 'ランダム範囲' });
   };
 
   const createRoom = async (unit: BattleUnit) => {
@@ -592,7 +592,7 @@ export default function KanjiBattlePage() {
                   </div>
                   <CardTitle className="flex items-center gap-2 text-lg font-black leading-tight text-gray-900">
                     <Shuffle className="h-5 w-5 text-amber-500" />
-                    ランダム単元
+                    ランダム範囲で対戦
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 p-5">
@@ -601,7 +601,7 @@ export default function KanjiBattlePage() {
                     2〜4人 / 10問
                   </div>
                   <div className="mt-3 text-xs font-semibold text-muted-foreground">
-                    単元をランダムに選んで対戦を始めます。
+                    出題範囲をランダムに選んで対戦を始めます。
                   </div>
                 </CardContent>
                 <CardFooter className="p-5 pt-0">
