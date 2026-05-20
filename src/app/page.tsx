@@ -302,16 +302,6 @@ export default function Home() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => router.push('/battle')}
-            className="inline-flex border-amber-200 bg-amber-50/80 text-amber-700 hover:bg-amber-100 hover:text-amber-800 font-bold shadow-sm"
-          >
-            <Trophy className="w-4 h-4 mr-2" />
-            <span className="hidden sm:inline">対戦モード（β版）</span>
-            <span className="sm:hidden">対戦β</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
             onClick={() => setIsFeedbackModalOpen(true)}
             className="inline-flex border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 font-bold"
           >
