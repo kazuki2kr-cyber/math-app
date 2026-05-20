@@ -50,6 +50,10 @@ interface AnswerRecord {
   timedOut?: boolean;
 }
 
+const FINALIZE_RETRY_MAX = 5;
+const FINALIZE_RETRY_BASE_MS = 2000;
+const FINALIZE_RETRY_MAX_DELAY_MS = 30000;
+
 function clampResponseMs(value: number) {
   if (!Number.isFinite(value)) return BATTLE_ANSWER_LIMIT_MS;
   return Math.min(BATTLE_ANSWER_LIMIT_MS, Math.max(0, Math.round(value)));
@@ -76,6 +80,8 @@ export default function BattlePlayPage() {
   const lastQuestionIndexRef = useRef<number | null>(null);
   const redirectedToResultRef = useRef(false);
   const finalizeRequestedRef = useRef(false);
+  const finalizeRetryCountRef = useRef(0);
+  const finalizeRetryTimerRef = useRef<number | null>(null);
   const answerSubmittingRef = useRef(false);
 
   useEffect(() => {
@@ -87,6 +93,14 @@ export default function BattlePlayPage() {
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (finalizeRetryTimerRef.current !== null) {
+        window.clearTimeout(finalizeRetryTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -295,15 +309,39 @@ export default function BattlePlayPage() {
       finalizeRequestedRef.current = true;
       setFinalizing(true);
       setFinalizeError(null);
+      let retryScheduled = false;
       try {
         const finalizeBattleRoom = httpsCallable(functions, 'finalizeBattleRoom');
         await finalizeBattleRoom({ roomId });
+        finalizeRetryCountRef.current = 0;
       } catch (err) {
         console.error('Failed to finalize battle room:', err);
-        finalizeRequestedRef.current = false;
-        setFinalizeError('結果の集計に失敗しました。自動で再試行します...');
+        const nextRetryCount = finalizeRetryCountRef.current + 1;
+        finalizeRetryCountRef.current = nextRetryCount;
+
+        if (nextRetryCount <= FINALIZE_RETRY_MAX) {
+          const retryDelayMs = Math.min(
+            FINALIZE_RETRY_MAX_DELAY_MS,
+            FINALIZE_RETRY_BASE_MS * (2 ** (nextRetryCount - 1))
+          );
+          retryScheduled = true;
+          setFinalizeError(`結果の集計に失敗しました。${Math.ceil(retryDelayMs / 1000)}秒後に自動で再試行します...`);
+          if (finalizeRetryTimerRef.current !== null) {
+            window.clearTimeout(finalizeRetryTimerRef.current);
+          }
+          finalizeRetryTimerRef.current = window.setTimeout(() => {
+            finalizeRetryTimerRef.current = null;
+            finalizeRequestedRef.current = false;
+            setFinalizing(false);
+          }, retryDelayMs);
+          return;
+        }
+
+        setFinalizeError('結果の集計に失敗しました。時間をおいて結果画面を再読み込みしてください。');
       } finally {
-        setFinalizing(false);
+        if (!retryScheduled) {
+          setFinalizing(false);
+        }
       }
     }
 
