@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 
 const db = admin.firestore();
+const realtimeDb = admin.database();
 
 const RETENTION = {
   attemptsDays: 90,
@@ -9,7 +10,29 @@ const RETENTION = {
   suspiciousActivitiesDays: 30,
   maxDeletesPerCollection: 400,
   maxLoopCount: 5,
+  // 作成から何時間後のルームを削除するか（BATTLE_ROOM_TTL_MS の 2 倍の余裕を持たせる）
+  battleRoomGracePeriodHours: 2,
 } as const;
+
+async function deleteExpiredRtdbRooms(path: string): Promise<number> {
+  const cutoff = Date.now() - RETENTION.battleRoomGracePeriodHours * 60 * 60 * 1000;
+  const snap = await realtimeDb.ref(path)
+    .orderByChild("expiresAt")
+    .endAt(cutoff)
+    .get();
+
+  if (!snap.exists()) return 0;
+
+  const updates: Record<string, null> = {};
+  snap.forEach((child) => {
+    updates[child.key!] = null;
+  });
+  await realtimeDb.ref(path).update(updates);
+
+  const count = Object.keys(updates).length;
+  functions.logger.info(`[cleanupRetentionData] deleted ${count} expired rooms from ${path}`);
+  return count;
+}
 
 async function deleteQueryBatch(
   getQuery: () => FirebaseFirestore.Query<FirebaseFirestore.DocumentData>,
@@ -68,10 +91,17 @@ export const cleanupRetentionData = functions
       "suspicious_activities"
     );
 
+    const [deletedKanjiBattleRooms, deletedBattleRooms] = await Promise.all([
+      deleteExpiredRtdbRooms("kanjiBattleRooms"),
+      deleteExpiredRtdbRooms("battleRooms"),
+    ]);
+
     functions.logger.info("[cleanupRetentionData] completed", {
       deletedAttempts,
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
+      deletedKanjiBattleRooms,
+      deletedBattleRooms,
       retention: RETENTION,
     });
 
@@ -79,5 +109,7 @@ export const cleanupRetentionData = functions
       deletedAttempts,
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
+      deletedKanjiBattleRooms,
+      deletedBattleRooms,
     };
   });
