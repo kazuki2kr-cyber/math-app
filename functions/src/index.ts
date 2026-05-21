@@ -70,6 +70,12 @@ function getBattleXpDelta(playerCount: number, rankIndex: number): number {
   return table[rankIndex] ?? table[table.length - 1] ?? 0;
 }
 
+function applyNonNegativeBattleXp(currentXp: unknown, xpDelta: number): number {
+  const numericCurrentXp = Number(currentXp);
+  const safeCurrentXp = Number.isFinite(numericCurrentXp) ? Math.max(0, numericCurrentXp) : 0;
+  return Math.max(0, safeCurrentXp + xpDelta);
+}
+
 function buildAttemptSubmittedAnalyticsEvent(params: {
   now: admin.firestore.Timestamp;
   attemptId: string;
@@ -513,13 +519,18 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
     }
 
     const now = Timestamp.now();
+    const userSnapshots = await Promise.all(
+      resultEntries.map((entry) => transaction.get(db.doc(`users/${entry.uid}`)))
+    );
     resultEntries.forEach((entry, index) => {
       const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
       const xpDelta = getBattleXpDelta(validParticipants.length, rankIndex);
       const userRef = db.doc(`users/${entry.uid}`);
+      const userData = userSnapshots[index].exists ? userSnapshots[index].data() || {} : {};
+      const currentStats = userData.battleStats || {};
       transaction.set(userRef, {
         battleStats: {
-          xp: FieldValue.increment(xpDelta),
+          xp: applyNonNegativeBattleXp(currentStats.xp, xpDelta),
           wins: FieldValue.increment(index === 0 ? 1 : 0),
           totalBattles: FieldValue.increment(1),
           lastBattleAt: now,
@@ -902,13 +913,18 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
     }
 
     const now = Timestamp.now();
+    const userSnapshots = await Promise.all(
+      resultEntries.map((entry) => transaction.get(db.doc(`users/${entry.uid}`)))
+    );
     resultEntries.forEach((entry, index) => {
       const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
       const xpDelta = getBattleXpDelta(validParticipants.length, rankIndex);
       const userRef = db.doc(`users/${entry.uid}`);
+      const userData = userSnapshots[index].exists ? userSnapshots[index].data() || {} : {};
+      const currentStats = userData.kanjiBattleStats || {};
       transaction.set(userRef, {
         kanjiBattleStats: {
-          xp: FieldValue.increment(xpDelta),
+          xp: applyNonNegativeBattleXp(currentStats.xp, xpDelta),
           wins: FieldValue.increment(index === 0 && !entry.abandoned ? 1 : 0),
           totalBattles: FieldValue.increment(1),
           lastBattleAt: now,

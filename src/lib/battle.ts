@@ -19,10 +19,10 @@ export const BATTLE_XP_TABLE: Record<number, number[]> = {
 };
 
 export const BATTLE_RANKS = [
-  { minXp: 0, title: 'ベーシッククラス', icon: '🥉' },
-  { minXp: 500, title: 'ブロンズクラス', icon: '🥈' },
-  { minXp: 1000, title: 'シルバークラス', icon: '🥇' },
-  { minXp: 1500, title: 'ゴールドクラス', icon: '🏅' },
+  { minXp: 0, title: 'ベーシッククラス', icon: '🔰' },
+  { minXp: 500, title: 'ブロンズクラス', icon: '🥉' },
+  { minXp: 1000, title: 'シルバークラス', icon: '🥈' },
+  { minXp: 1500, title: 'ゴールドクラス', icon: '🥇' },
   { minXp: 2000, title: 'プラチナクラス', icon: '💎' },
   { minXp: 2500, title: 'マスタークラス', icon: '👑' },
 ] as const;
