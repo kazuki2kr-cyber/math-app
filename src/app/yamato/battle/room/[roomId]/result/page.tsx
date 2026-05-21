@@ -8,7 +8,7 @@ import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy, XCircle } from '
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
-import { BattleResultEntry, KANJI_BATTLE_ACCESS_STORAGE_KEY, getBattleXpDelta, sortBattleResults } from '@/lib/battle';
+import { BattleResultEntry, getBattleXpDelta, sortBattleResults } from '@/lib/battle';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 const FINALIZE_TIMEOUT_MS = 90000;
@@ -54,12 +54,6 @@ export default function KanjiBattleResultPage() {
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const finalizeRequestedRef = useRef(false);
-
-  useEffect(() => {
-    if (sessionStorage.getItem(KANJI_BATTLE_ACCESS_STORAGE_KEY) !== 'true') {
-      router.replace('/yamato/battle');
-    }
-  }, [router]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);

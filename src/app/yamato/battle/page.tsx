@@ -69,7 +69,7 @@ function getJoinErrorMessage(err: unknown) {
 export default function KanjiBattlePage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [hasBattleAccess, setHasBattleAccess] = useState(false);
+  const [hasBattleAccess, setHasBattleAccess] = useState(true);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
@@ -86,7 +86,7 @@ export default function KanjiBattlePage() {
   const isJoiningRoomRef = useRef(false);
 
   useEffect(() => {
-    setHasBattleAccess(sessionStorage.getItem(KANJI_BATTLE_ACCESS_STORAGE_KEY) === 'true');
+    setHasBattleAccess(true);
   }, []);
 
   useEffect(() => {

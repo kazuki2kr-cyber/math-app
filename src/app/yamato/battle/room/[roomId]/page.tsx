@@ -7,7 +7,6 @@ import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Copy, Flame, Play, Swords, Users, XCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
-import { KANJI_BATTLE_ACCESS_STORAGE_KEY } from '@/lib/battle';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -48,12 +47,6 @@ export default function KanjiBattleRoomPage() {
   const [preloadError, setPreloadError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const preloadedQuestionsKeyRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (sessionStorage.getItem(KANJI_BATTLE_ACCESS_STORAGE_KEY) !== 'true') {
-      router.replace('/yamato/battle');
-    }
-  }, [router]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);

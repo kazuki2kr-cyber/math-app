@@ -14,7 +14,6 @@ import {
   BATTLE_ANSWER_LIMIT_MS,
   BATTLE_NEXT_QUESTION_COUNTDOWN_MS,
   BATTLE_QUESTION_COUNT,
-  KANJI_BATTLE_ACCESS_STORAGE_KEY,
 } from '@/lib/battle';
 import { buildOcrPayload, getExpectedCharCount, OcrQuestionLayout } from '@/lib/kanjiOcr';
 
@@ -92,12 +91,6 @@ export default function KanjiBattlePlayPage() {
   const answerSubmittingRef = useRef(false);
   const ocrSubmittingRef = useRef(false);
   const ocrRetryCountRef = useRef(0);
-
-  useEffect(() => {
-    if (sessionStorage.getItem(KANJI_BATTLE_ACCESS_STORAGE_KEY) !== 'true') {
-      router.replace('/yamato/battle');
-    }
-  }, [router]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);
