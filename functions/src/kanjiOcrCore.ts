@@ -106,6 +106,15 @@ function distanceSquared(point: { x: number; y: number }, targetX: number, targe
   return dx * dx + dy * dy;
 }
 
+function distanceToBox(
+  point: { x: number; y: number },
+  box: { x: number; y: number; width: number; height: number }
+): number {
+  const dx = Math.max(box.x - point.x, 0, point.x - (box.x + box.width));
+  const dy = Math.max(box.y - point.y, 0, point.y - (box.y + box.height));
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 function scoreCharForSlot(
   char: RecognizedCharacter,
   slot: { x: number; y: number; width: number; height: number },
@@ -171,13 +180,24 @@ export function assignRecognizedCharactersToQuestions(
         score: scoreCharForQuestion(char, layout),
         overlapRatio: getOverlapRatio(char, layout),
         withinQuestion: isWithinBox(char, layout, layout.width * 0.01, layout.height * 0.005),
+        nearQuestion: isWithinBox(char, layout, layout.width * 0.08, layout.height * 0.08),
+        distanceToQuestion: distanceToBox(char, layout),
       }))
-      .filter(({ overlapRatio, withinQuestion }) => overlapRatio > 0 || withinQuestion)
-      .sort((a, b) => b.score - a.score);
+      .filter(({ overlapRatio, withinQuestion, nearQuestion }) => overlapRatio > 0 || withinQuestion || nearQuestion)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.distanceToQuestion - b.distanceToQuestion;
+      });
 
     const bestCandidate = candidates[0];
     if (!bestCandidate) return;
-    if (!bestCandidate.withinQuestion && bestCandidate.overlapRatio < 0.08) return;
+    if (
+      !bestCandidate.withinQuestion &&
+      bestCandidate.overlapRatio < 0.08 &&
+      bestCandidate.distanceToQuestion > Math.max(bestCandidate.layout.width, bestCandidate.layout.height) * 0.08
+    ) {
+      return;
+    }
 
     charsByQuestionId.get(bestCandidate.layout.questionId)?.push(char);
   });

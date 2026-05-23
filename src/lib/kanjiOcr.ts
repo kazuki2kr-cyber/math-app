@@ -32,6 +32,16 @@ export function getExpectedCharCount(answer?: string): number {
   return Math.max(1, Array.from(normalized).length || 1);
 }
 
+function getOcrGridSize(questionCount: number): { columns: number; rows: number } {
+  if (questionCount <= 1) {
+    return { columns: 1, rows: Math.max(1, questionCount) };
+  }
+
+  const columns = 2;
+  const rows = questionCount <= 10 ? 5 : Math.ceil(questionCount / columns);
+  return { columns, rows };
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -46,8 +56,7 @@ export async function buildOcrPayload(
   questions: Array<{ id: string; answer?: string; expectedCharCount?: number }>,
   answers: Record<string, string>
 ): Promise<SynthesizedImageResult> {
-  const columns = questions.length > 4 ? 2 : 1;
-  const rows = Math.ceil(questions.length / columns);
+  const { columns, rows } = getOcrGridSize(questions.length);
   const cellWidth = 640;
   const cellHeight = 320;
   const gridGapX = 48;
