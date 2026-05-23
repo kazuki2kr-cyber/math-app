@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
+const QUESTION_CACHE_PREFIX = 'kanji_battle_questions';
 
 interface Participant {
   uid: string;
@@ -79,7 +80,7 @@ export default function KanjiBattleRoomPage() {
       try {
         const getKanjiBattleQuestions = httpsCallable<{ roomId: string }, { questions: unknown[] }>(functions, 'getKanjiBattleQuestions');
         const response = await getKanjiBattleQuestions({ roomId });
-        sessionStorage.setItem(`kanji_battle_questions:${roomId}`, JSON.stringify(response.data.questions || []));
+        sessionStorage.setItem(`${QUESTION_CACHE_PREFIX}:${roomId}:${user.uid}`, JSON.stringify(response.data.questions || []));
         const realtimeDb = getRealtimeDb();
         await update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/participants/${user.uid}`), {
           uid: user.uid,

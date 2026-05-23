@@ -57,6 +57,7 @@ interface BattleQuestion {
   question_text: string;
   image_url?: string | null;
   expectedCharCount: number;
+  answer?: string;
 }
 
 function clampResponseMs(value: number) {
@@ -67,7 +68,7 @@ function clampResponseMs(value: number) {
 export default function KanjiBattlePlayPage() {
   const params = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const roomId = String(params.roomId || '');
   const [room, setRoom] = useState<BattleRoom | null>(null);
   const [questions, setQuestions] = useState<BattleQuestion[]>([]);
@@ -139,11 +140,12 @@ export default function KanjiBattlePlayPage() {
 
   useEffect(() => {
     async function fetchQuestions() {
-      if (!room?.unitId) return;
+      if (!room?.unitId || !user) return;
       setLoading(true);
       setError(null);
       try {
-        const cachedQuestions = sessionStorage.getItem(`${QUESTION_CACHE_PREFIX}:${roomId}`);
+        const questionCacheKey = `${QUESTION_CACHE_PREFIX}:${roomId}:${user?.uid || 'anonymous'}`;
+        const cachedQuestions = sessionStorage.getItem(questionCacheKey);
         if (cachedQuestions) {
           const parsedQuestions = JSON.parse(cachedQuestions);
           if (Array.isArray(parsedQuestions) && parsedQuestions.length >= BATTLE_QUESTION_COUNT) {
@@ -156,7 +158,7 @@ export default function KanjiBattlePlayPage() {
         const response = await getKanjiBattleQuestions({ roomId });
         const nextQuestions = response.data.questions || [];
         if (nextQuestions.length < BATTLE_QUESTION_COUNT) throw new Error('not-enough-questions');
-        sessionStorage.setItem(`${QUESTION_CACHE_PREFIX}:${roomId}`, JSON.stringify(nextQuestions));
+        sessionStorage.setItem(questionCacheKey, JSON.stringify(nextQuestions));
         setQuestions(nextQuestions);
       } catch (err) {
         console.error('Failed to load kanji battle questions:', err);
@@ -167,7 +169,7 @@ export default function KanjiBattlePlayPage() {
     }
 
     fetchQuestions();
-  }, [room?.unitId, roomId]);
+  }, [room?.unitId, roomId, user?.uid]);
 
   const currentQuestionIndex = Math.min(Number(room?.currentQuestionIndex || 0), Math.max(0, questions.length - 1));
   const currentQuestion = questions[currentQuestionIndex];
@@ -190,6 +192,9 @@ export default function KanjiBattlePlayPage() {
   const currentAnswerCharCount = currentQuestion
     ? (currentQuestion.expectedCharCount || getExpectedCharCount())
     : 1;
+  const currentAnswerText = typeof currentQuestion?.answer === 'string'
+    ? currentQuestion.answer.trim()
+    : '';
 
   useEffect(() => {
     async function markPlayReady() {
@@ -518,6 +523,11 @@ export default function KanjiBattlePlayPage() {
               <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
                 <span dangerouslySetInnerHTML={{ __html: currentQuestion.question_text }} />
               </CardTitle>
+              {isAdmin && currentAnswerText && (
+                <div className="mt-4 inline-flex w-fit rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black text-amber-800 shadow-sm">
+                  管理者用: 正解 {currentAnswerText}
+                </div>
+              )}
             </CardHeader>
             <CardContent className="px-8 pb-4">
               {currentQuestion.image_url && (

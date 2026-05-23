@@ -52,7 +52,7 @@ export default function KanjiDrillPageWrapper({ params }: { params: Promise<{ un
 }
 
 function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const mode = searchParams.get('mode');
@@ -289,6 +289,14 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
 
   const currentQ = questions[currentIndex];
   const currentAnswerCharCount = getExpectedCharCount(currentQ.answer);
+  const currentAnswerText = (() => {
+    if (typeof currentQ.answer === 'string' && currentQ.answer.trim()) return currentQ.answer.trim();
+    const answerIndex = Number(currentQ.answer_index) - 1;
+    if (Number.isInteger(answerIndex) && Array.isArray(currentQ.options)) {
+      return String(currentQ.options[answerIndex] || '').trim();
+    }
+    return '';
+  })();
   // 問題文の表示（問題の該当箇所が「〇〇」などの場合、そこを対象として表示）
   const text = currentQ.question_text || 'この漢字を書いてください';
   const progress = ((currentIndex + 1) / questions.length) * 100;
@@ -325,6 +333,11 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center"
                 dangerouslySetInnerHTML={{ __html: text.replace(/([一-龠]+)/g, '<span class="text-orange-900 border-b-2 border-orange-400">$1</span>') }}
             />
+            {isAdmin && currentAnswerText && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-white px-4 py-2 text-sm font-bold text-amber-800 shadow-sm">
+                管理者用: 正解 {currentAnswerText}
+              </div>
+            )}
 
           </div>
           

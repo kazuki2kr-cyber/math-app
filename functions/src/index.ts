@@ -608,6 +608,7 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
 
   // 正解（answer/answer_index）はクライアントに送らない。問題文・画像・文字数のみ返す
   const { normalizeKanjiText } = require("./kanjiOcrCore");
+  const includeAnswerForAdmin = context.auth.token?.admin === true;
   const questions = selectedQuestions.map((question) => {
     let resolvedAnswer = "";
     if (question.answer_index !== undefined && Array.isArray(question.options)) {
@@ -622,6 +623,7 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
       question_text: String(question.question_text || ""),
       image_url: question.image_url || null,
       expectedCharCount,
+      ...(includeAnswerForAdmin ? { answer: resolvedAnswer } : {}),
     };
   });
 
