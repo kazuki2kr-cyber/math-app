@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Archive, Ban, Loader2, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus } from 'lucide-react';
+import { Archive, Ban, Loader2, RotateCcw, Save, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus, X } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { deleteField, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
@@ -65,6 +66,45 @@ function getSeason1BadgeFields(user: any, archivedAt: string) {
   };
 }
 
+function calculateKanjiLevel(kanjiXp: number) {
+  const maxLevel = 999;
+  const normalizedXp = Math.max(0, Math.round(kanjiXp));
+  let level = 1;
+  let accumulatedXp = 0;
+
+  while (level < maxLevel) {
+    const xpForNext = 200;
+    if (normalizedXp >= accumulatedXp + xpForNext) {
+      accumulatedXp += xpForNext;
+      level++;
+    } else {
+      const currentLevelXp = normalizedXp - accumulatedXp;
+      return {
+        level,
+        currentLevelXp,
+        nextLevelXp: xpForNext,
+        progressPercent: Math.min(100, Math.max(0, (currentLevelXp / xpForNext) * 100)),
+      };
+    }
+  }
+
+  return { level: maxLevel, currentLevelXp: 0, nextLevelXp: 0, progressPercent: 100 };
+}
+
+function getKanjiTitle(level: number) {
+  if (level >= 100) return '万葉の匠';
+  if (level >= 90) return '言葉の錬金術師';
+  if (level >= 80) return '文豪の卵';
+  if (level >= 70) return '筆の達人';
+  if (level >= 60) return '書の探求者';
+  if (level >= 50) return '墨客';
+  if (level >= 40) return '漢字愛好家';
+  if (level >= 30) return '文字の探求者';
+  if (level >= 20) return '見習い書士';
+  if (level >= 10) return '漢字の初学者';
+  return 'ひらがなユーザー';
+}
+
 function buildSeason1Archive(users: any[], archivedAt: string) {
   const participants = users.filter((user) => user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined);
   const topXpRankings = participants
@@ -108,6 +148,8 @@ function buildSeason1Archive(users: any[], archivedAt: string) {
 }
 
 export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage }: KanjiUsersTabProps) {
+  const [editingStats, setEditingStats] = useState<Record<string, { xp: string; totalScore: string }>>({});
+
   const getKanjiAccessStatus = (user: any) => {
     const failedCount = Number(user.kanjiAccessFailedCount || 0);
 
@@ -169,6 +211,75 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
       }
 
       setMessage(`✅ ${name} の漢字データを初期化しました。`);
+      refreshUsers();
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`エラー: ${e.message}`);
+    }
+  };
+
+  const handleUpdateKanjiStats = async (uid: string, name: string) => {
+    const draft = editingStats[uid];
+    if (!draft) return;
+
+    const nextXp = Number(draft.xp);
+    const nextTotalScore = Number(draft.totalScore);
+    if (!Number.isFinite(nextXp) || !Number.isInteger(nextXp) || nextXp < 0) {
+      setMessage('エラー: 漢字XPは0以上の整数を入力してください。');
+      return;
+    }
+    if (!Number.isFinite(nextTotalScore) || !Number.isInteger(nextTotalScore) || nextTotalScore < 0) {
+      setMessage('エラー: 漢字スコアは0以上の整数を入力してください。');
+      return;
+    }
+
+    try {
+      const levelData = calculateKanjiLevel(nextXp);
+      const updatedAt = new Date().toISOString();
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        kanjiXp: nextXp,
+        kanjiLevel: levelData.level,
+        kanjiTitle: getKanjiTitle(levelData.level),
+        kanjiProgressPercent: levelData.progressPercent,
+        kanjiCurrentLevelXp: levelData.currentLevelXp,
+        kanjiNextLevelXp: levelData.nextLevelXp,
+        kanjiTotalScore: nextTotalScore,
+        kanjiUpdatedAt: updatedAt,
+        kanjiIcon: '📜',
+      });
+
+      const lbRef = doc(db, 'leaderboards', 'kanji');
+      const lbSnap = await getDoc(lbRef);
+      const currentRankings = lbSnap.exists() ? (lbSnap.data().rankings || []) : [];
+      const targetUser = users.find((u) => u.docId === uid) || {};
+      const season1Badge = targetUser.kanjiSeasonBadges?.season1 || targetUser.kanjiSeason1Badge || null;
+      const entry = {
+        uid,
+        name,
+        totalScore: nextTotalScore,
+        xp: nextXp,
+        icon: targetUser.kanjiIcon || '📜',
+        level: levelData.level,
+        certified: Boolean(season1Badge || targetUser.kanjiSeason1Certified === true),
+        badgeImageUrl: season1Badge?.badgeImageUrl || (targetUser.kanjiSeason1Certified === true ? KANJI_SEASON1_BADGE_URL : null),
+      };
+      const nextRankings = [
+        ...currentRankings.filter((ranking: any) => ranking.uid !== uid),
+        entry,
+      ].sort((a: any, b: any) => {
+        if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+        return b.xp - a.xp;
+      }).slice(0, 40);
+
+      await setDoc(lbRef, { rankings: nextRankings, updatedAt }, { merge: true });
+
+      setEditingStats((prev) => {
+        const next = { ...prev };
+        delete next[uid];
+        return next;
+      });
+      setMessage(`✅ ${name} の漢字XP・スコアを更新しました。`);
       refreshUsers();
     } catch (e: any) {
       console.error(e);
@@ -316,11 +427,13 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
             {users.map((user) => {
               const kanjiXp = user.kanjiXp || 0;
               const kanjiLevel = user.kanjiLevel || 1;
+              const kanjiTotalScore = user.kanjiTotalScore || 0;
               const hasKanjiData = user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined;
               const accessStatus = getKanjiAccessStatus(user);
               const AccessIcon = accessStatus.Icon;
               const name = getUserName(user);
               const hasSeason1Badge = user.kanjiSeasonBadges?.season1 || user.kanjiSeason1Certified === true;
+              const editing = editingStats[user.docId];
 
               return (
                 <div
@@ -347,14 +460,85 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
                           <span className="text-gray-400">漢字プレイ履歴なし</span>
                         )}
                       </span>
+                      <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-800">
+                        スコア {kanjiTotalScore.toLocaleString()} 点
+                      </span>
                       <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${accessStatus.className}`}>
                         <AccessIcon className="h-3.5 w-3.5" />
                         {accessStatus.label}
                         <span className="font-medium opacity-80">{accessStatus.detail}</span>
                       </span>
                     </div>
+                    {editing && (
+                      <div className="mt-3 grid gap-2 rounded-xl border border-orange-100 bg-orange-50/50 p-3 sm:grid-cols-[160px_160px_auto] sm:items-end">
+                        <label className="text-xs font-bold text-orange-900/70">
+                          漢字XP
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={editing.xp}
+                            onChange={(e) => setEditingStats((prev) => ({
+                              ...prev,
+                              [user.docId]: { ...prev[user.docId], xp: e.target.value },
+                            }))}
+                            className="mt-1 h-9 bg-white"
+                          />
+                        </label>
+                        <label className="text-xs font-bold text-orange-900/70">
+                          漢字スコア
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={editing.totalScore}
+                            onChange={(e) => setEditingStats((prev) => ({
+                              ...prev,
+                              [user.docId]: { ...prev[user.docId], totalScore: e.target.value },
+                            }))}
+                            className="mt-1 h-9 bg-white"
+                          />
+                        </label>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleUpdateKanjiStats(user.docId, name)}
+                            className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                          >
+                            <Save className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingStats((prev) => {
+                              const next = { ...prev };
+                              delete next[user.docId];
+                              return next;
+                            })}
+                            className="border-gray-200 text-gray-600 hover:bg-gray-50"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row lg:flex-shrink-0">
+                    <Button
+                      variant="outline"
+                      onClick={() => setEditingStats((prev) => ({
+                        ...prev,
+                        [user.docId]: {
+                          xp: String(kanjiXp),
+                          totalScore: String(kanjiTotalScore),
+                        },
+                      }))}
+                      disabled={Boolean(editing)}
+                      className="border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+                    >
+                      XP・スコア編集
+                    </Button>
                     <Button
                       variant="outline"
                       onClick={() => handleResetKanjiAccess(user.docId, name)}

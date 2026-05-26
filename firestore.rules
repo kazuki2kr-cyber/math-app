@@ -129,6 +129,11 @@ service cloud.firestore {
       allow create: if false;
     }
 
+    match /kanji_battle_results/{roomId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
+    }
+
     // ------------------------------------------
     // 5. 分析キャッシュ (管理者のみ)
     // ------------------------------------------

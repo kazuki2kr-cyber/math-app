@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
-import { FileText, Database, Users, Settings } from 'lucide-react';
+import { writeBatch, doc, collection, getDocs, getDoc, setDoc, query, orderBy, limit } from 'firebase/firestore';
+import { FileText, Database, Users, Settings, Swords } from 'lucide-react';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
 
@@ -12,15 +12,17 @@ import KanjiImportTab from './components/KanjiImportTab';
 import KanjiUnitsTab from './components/KanjiUnitsTab';
 import KanjiUsersTab from './components/KanjiUsersTab';
 import KanjiSettingsTab from './components/KanjiSettingsTab';
+import KanjiBattleHistoryTab from './components/KanjiBattleHistoryTab';
 
 export default function KanjiAdminPage() {
   const { isAdmin } = useAuth();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'users' | 'settings'>('units');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'users' | 'battles' | 'settings'>('units');
   const [units, setUnits] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [battles, setBattles] = useState<any[]>([]);
 
   // Maintenance mode state
   const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
@@ -32,6 +34,7 @@ export default function KanjiAdminPage() {
     if (!isAdmin) return;
     if (activeTab === 'units') fetchUnits();
     if (activeTab === 'users') fetchUsers();
+    if (activeTab === 'battles') fetchBattles();
     if (activeTab === 'settings') fetchMaintenanceStatus();
   }, [activeTab, isAdmin]);
 
@@ -72,6 +75,19 @@ export default function KanjiAdminPage() {
     } catch (e) {
       console.error(e);
       setMessage('ユーザー情報の取得に失敗しました。');
+    }
+    setLoading(false);
+  };
+
+  const fetchBattles = async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      const snap = await getDocs(query(collection(db, 'kanji_battle_results'), orderBy('finalizedAt', 'desc'), limit(50)));
+      setBattles(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    } catch (e) {
+      console.error(e);
+      setMessage('対戦履歴の取得に失敗しました。');
     }
     setLoading(false);
   };
@@ -218,6 +234,9 @@ export default function KanjiAdminPage() {
           <Button variant={activeTab === 'users' ? 'default' : 'outline'} onClick={() => setActiveTab('users')} className={activeTab === 'users' ? 'bg-orange-900 border-none' : 'border-orange-200 text-orange-900 bg-white'}>
             <Users className="w-4 h-4 mr-2" /> 個別ユーザー管理
           </Button>
+          <Button variant={activeTab === 'battles' ? 'default' : 'outline'} onClick={() => setActiveTab('battles')} className={activeTab === 'battles' ? 'bg-orange-900 border-none' : 'border-orange-200 text-orange-900 bg-white'}>
+            <Swords className="w-4 h-4 mr-2" /> 対戦履歴
+          </Button>
           <Button variant={activeTab === 'settings' ? 'default' : 'outline'} onClick={() => setActiveTab('settings')} className={activeTab === 'settings' ? 'bg-orange-900 border-none' : 'border-orange-200 text-orange-900 bg-white'}>
             <Settings className="w-4 h-4 mr-2" /> システム設定
           </Button>
@@ -244,6 +263,13 @@ export default function KanjiAdminPage() {
             loading={loading}
             refreshUsers={fetchUsers}
             setMessage={setMessage}
+          />
+        )}
+        {activeTab === 'battles' && (
+          <KanjiBattleHistoryTab
+            battles={battles}
+            loading={loading}
+            onRefresh={fetchBattles}
           />
         )}
         {activeTab === 'settings' && (

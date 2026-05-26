@@ -410,4 +410,49 @@ describe('Firestore Security Rules', () => {
       setDoc(ref, { enabled: false, message: '' })
     ).resolves.toBeUndefined();
   });
+
+  test('一般ユーザーは漢字対戦履歴を読み取れない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'kanji_battle_results', '1234'), {
+        roomId: '1234',
+        playerCount: 2,
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const ref = doc(aliceContext.firestore(), 'kanji_battle_results', '1234');
+    await expect(getDoc(ref)).rejects.toThrow();
+  });
+
+  test('管理者は漢字対戦履歴を読み取れる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'kanji_battle_results', '1234'), {
+        roomId: '1234',
+        playerCount: 2,
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const ref = doc(adminContext.firestore(), 'kanji_battle_results', '1234');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+  });
+
+  test('管理者は漢字XPとスコアを更新でき、一般ユーザーは更新できない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', aliceId), {
+        uid: aliceId,
+        displayName: 'Alice',
+        kanjiXp: 100,
+        kanjiTotalScore: 80,
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
+    await expect(updateDoc(aliceRef, { kanjiXp: 9999, kanjiTotalScore: 500 })).rejects.toThrow();
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const adminRef = doc(adminContext.firestore(), 'users', aliceId);
+    await expect(updateDoc(adminRef, { kanjiXp: 9999, kanjiTotalScore: 500 })).resolves.toBeUndefined();
+  });
 });
