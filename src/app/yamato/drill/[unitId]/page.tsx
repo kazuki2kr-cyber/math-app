@@ -318,6 +318,11 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
         </div>
         <div className="text-sm font-bold text-orange-900/70">
           {currentIndex + 1} <span className="font-normal opacity-60">/ {questions.length}</span>
+          {isAdmin && currentAnswerText && (
+            <span className="ml-2 text-[10px] font-medium text-orange-900/25 align-middle">
+              ・ {currentAnswerText}
+            </span>
+          )}
         </div>
       </header>
       
@@ -333,11 +338,6 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
             <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center"
                 dangerouslySetInnerHTML={{ __html: text.replace(/([一-龠]+)/g, '<span class="text-orange-900 border-b-2 border-orange-400">$1</span>') }}
             />
-            {isAdmin && currentAnswerText && (
-              <div className="mt-4 rounded-lg border border-amber-200 bg-white px-4 py-2 text-sm font-bold text-amber-800 shadow-sm">
-                管理者用: 正解 {currentAnswerText}
-              </div>
-            )}
 
           </div>
           

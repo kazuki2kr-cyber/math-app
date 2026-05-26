@@ -508,6 +508,11 @@ export default function KanjiBattlePlayPage() {
             <CardHeader className="px-8 pt-8 pb-4">
               <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
                 Question {currentQuestionIndex + 1} <span className="opacity-50 mx-1">/</span> {questions.length}
+                {isAdmin && currentAnswerText && (
+                  <span className="ml-2 text-[10px] font-medium tracking-normal text-primary/25 align-middle">
+                    ・ {currentAnswerText}
+                  </span>
+                )}
                 <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">対戦</span>
               </CardDescription>
               <p className="mb-4 text-sm font-bold text-muted-foreground">
@@ -523,11 +528,6 @@ export default function KanjiBattlePlayPage() {
               <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
                 <span dangerouslySetInnerHTML={{ __html: currentQuestion.question_text }} />
               </CardTitle>
-              {isAdmin && currentAnswerText && (
-                <div className="mt-4 inline-flex w-fit rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black text-amber-800 shadow-sm">
-                  管理者用: 正解 {currentAnswerText}
-                </div>
-              )}
             </CardHeader>
             <CardContent className="px-8 pb-4">
               {currentQuestion.image_url && (
