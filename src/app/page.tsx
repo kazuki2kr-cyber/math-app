@@ -480,9 +480,12 @@ export default function Home() {
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年5月20日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年6月1日</span>
               </div>
               <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
+                <li className="rounded-lg border border-blue-100 bg-blue-50/80 px-3 py-2 text-blue-900">
+                  <span className="font-black text-blue-700">記述式問題（β版）</span>を追加しました。ぜひ取り組んでみてください。提出後の採点結果画面では、本格運用に向けて採点基準を改善するため、フィードバックの送信に必ずご協力ください。
+                </li>
                 <li>・ 計算用紙に<span className="font-semibold text-primary">消しゴム機能</span>を追加し、書いた内容を部分的に消せるようにしました。</li>
                 <li>・ <span className="font-semibold text-primary">間違えた問題のみ復習</span>で、出題数が少ない場合でも実際に解いた問題数に応じたスコアになるよう修正しました。</li>
                 <li>・ 単元内の全問題に取り組める<span className="font-semibold text-primary">全問演習モード</span>を追加しました。</li>
