@@ -21,6 +21,9 @@ interface Unit {
   subject?: string;
   baseSubject?: string;
   mode?: string;
+  drillType?: 'multiple_choice' | 'written';
+  writtenAttemptLimit?: number;
+  eventStatus?: string;
 }
 
 interface Score {
@@ -38,8 +41,45 @@ interface OverallRank {
   level?: number;
 }
 
+interface WrittenStat {
+  maxScore?: number;
+  attemptCount?: number;
+  remainingAttempts?: number;
+  limit?: number;
+}
+
+const UNITS_CACHE_KEY = 'math_units_cache_v4';
+const UNITS_CACHE_EXPIRY_MS = 60 * 1000;
+
 function isBattleUnit(unit: Unit) {
-  return unit.mode === 'battle' || String(unit.subject || '').endsWith('対戦');
+  const subject = String(unit.subject || '');
+  return unit.mode === 'battle' || subject.endsWith('対戦') || subject.endsWith('蟇ｾ謌ｦ');
+}
+
+function isMathSubjectValue(value?: string) {
+  return !value || value === 'math' || value === '数学' || value === '謨ｰ蟄ｦ';
+}
+
+function parseEventDate(value: any): number | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const timestamp = Date.parse(value);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+  if (value?.toDate) return value.toDate().getTime();
+  return null;
+}
+
+function isVisibleUnit(unit: Unit) {
+  if (unit.drillType !== 'written') return true;
+  if ((unit.eventStatus || 'active') !== 'active') return false;
+
+  const now = Date.now();
+  const startsAt = parseEventDate((unit as any).eventStartsAt);
+  const endsAt = parseEventDate((unit as any).eventEndsAt);
+  if (startsAt && startsAt > now) return false;
+  if (endsAt && endsAt < now) return false;
+  return true;
 }
 
 export default function Home() {
@@ -59,6 +99,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [wrongAnswers, setWrongAnswers] = useState<Record<string, number>>({});
   const [drillCounts, setDrillCounts] = useState<Record<string, number>>({});
+  const [writtenStats, setWrittenStats] = useState<Record<string, WrittenStat>>({});
   const [showXpInfo, setShowXpInfo] = useState(false);
   const [userData, setUserData] = useState<{ xp: number; icon: string; title: string; level: number; progress: number } | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -69,6 +110,7 @@ export default function Home() {
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [unitsRefreshToken, setUnitsRefreshToken] = useState(0);
   const router = useRouter();
 
   useEffect(() => {
@@ -86,16 +128,14 @@ export default function Home() {
       setError(null);
       try {
         // 1. Fetch units with caching
-        const CACHE_KEY = 'math_units_cache_v3';
-        const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day
         localStorage.removeItem('math_units_cache'); // v1 cleanup
-        const cachedUnits = localStorage.getItem(CACHE_KEY);
+        const cachedUnits = unitsRefreshToken > 0 ? null : localStorage.getItem(UNITS_CACHE_KEY);
         let unitsData: Unit[] = [];
         
         if (cachedUnits) {
           try {
             const parsed = JSON.parse(cachedUnits);
-            if (Date.now() - parsed.timestamp < CACHE_EXPIRY) {
+            if (Date.now() - parsed.timestamp < UNITS_CACHE_EXPIRY_MS) {
               unitsData = parsed.data;
             }
           } catch (e) {
@@ -106,15 +146,16 @@ export default function Home() {
         if (unitsData.length === 0) {
           const unitsSnap = await getDocs(collection(db, 'units'));
           unitsData = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
+          localStorage.setItem(UNITS_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
         }
 
-        const soloUnitsData = unitsData.filter(unit => !isBattleUnit(unit));
+        const soloUnitsData = unitsData.filter(unit => !isBattleUnit(unit) && isVisibleUnit(unit));
 
         // 2 & 3. Fetch user's stats and extract scores / wrong answers
         const newScores: Record<string, Score> = {};
         const newWrongAnswers: Record<string, number> = {};
         const newDrillCounts: Record<string, number> = {};
+        const newWrittenStats: Record<string, WrittenStat> = {};
 
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
@@ -154,6 +195,14 @@ export default function Home() {
               }
             });
           }
+          if (ud.writtenStats) {
+            soloUnitsData.forEach(unit => {
+              const stat = ud.writtenStats[unit.id];
+              if (stat) {
+                newWrittenStats[unit.id] = stat;
+              }
+            });
+          }
 
           setUserData({
             xp: ud.xp || 0,
@@ -166,6 +215,7 @@ export default function Home() {
 
         setWrongAnswers(newWrongAnswers);
         setDrillCounts(newDrillCounts);
+        setWrittenStats(newWrittenStats);
         // Sort units: Category ASC, then Title ASC
         soloUnitsData.sort((a, b) => {
           const catA = a.category || 'その他';
@@ -190,7 +240,7 @@ export default function Home() {
     }
 
     fetchData();
-  }, [user]);
+  }, [user, unitsRefreshToken]);
 
   const startDrill = (unitId: string) => {
     router.push(`/drill/${unitId}`);
@@ -453,6 +503,20 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      localStorage.removeItem(UNITS_CACHE_KEY);
+                      setUnitsRefreshToken(prev => prev + 1);
+                    }}
+                    disabled={loading}
+                    className="h-10 font-bold"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                    更新
+                  </Button>
                   {/* Subject Selector */}
                   <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner group transition-all hover:border-primary/30">
                     <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">教科</span>
@@ -497,12 +561,17 @@ export default function Home() {
               ) : (
                 <div className="grid gap-6 sm:grid-cols-2">
                   {units
-                    .filter(unit => selectedSubject === '数学' ? (unit.subject === 'math' || unit.subject === '数学' || !unit.subject) : unit.subject === selectedSubject)
+                    .filter(unit => isMathSubjectValue(selectedSubject) ? isMathSubjectValue(unit.subject) : unit.subject === selectedSubject)
                     .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
                     .map((unit) => {
                       const myScore = scores[unit.id];
                       const totalQ = unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
-                      const hasPlayed = !!myScore;
+                      const isWrittenUnit = unit.drillType === 'written';
+                      const writtenStat = writtenStats[unit.id];
+                      const writtenLimit = 1;
+                      const writtenAttemptCount = writtenStat?.attemptCount || 0;
+                      const writtenRemaining = writtenStat?.remainingAttempts ?? Math.max(0, writtenLimit - writtenAttemptCount);
+                      const hasPlayed = isWrittenUnit ? !!writtenStat : !!myScore;
                       const displayTitle = unit.title.replace(/^単元\s*/, '');
                       const drillCount = drillCounts[unit.id];
 
@@ -526,15 +595,21 @@ export default function Home() {
                               <div className="space-y-1 mt-1 bg-green-50/70 p-4 rounded-xl border border-green-100/50 shadow-inner">
                                 <div className="text-xs font-semibold text-green-800/70 flex items-center mb-2 uppercase tracking-wide">
                                   <Trophy className="w-3.5 h-3.5 mr-1" />
-                                  Highest Score
+                                  {isWrittenUnit ? 'Best Written Score' : 'Highest Score'}
                                 </div>
                                 <div className="text-4xl font-extrabold text-primary flex items-baseline gap-1">
-                                  {myScore.maxScore} <span className="text-sm font-medium text-primary/60">/ 100</span>
+                                  {isWrittenUnit ? writtenStat?.maxScore || 0 : myScore.maxScore} <span className="text-sm font-medium text-primary/60">/ 100</span>
                                 </div>
-                                <div className="flex items-center text-xs text-primary/70 mt-2 font-mono">
-                                  <Clock className="w-3 h-3 mr-1" />
-                                  Time: {myScore.bestTime}s
-                                </div>
+                                {isWrittenUnit ? (
+                                  <div className="text-xs text-primary/70 mt-2 font-mono">
+                                    残り提出回数: {writtenRemaining}/{writtenLimit}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center text-xs text-primary/70 mt-2 font-mono">
+                                    <Clock className="w-3 h-3 mr-1" />
+                                    Time: {myScore.bestTime}s
+                                  </div>
+                                )}
                                 {drillCount !== undefined && (
                                   <div className="mt-2 pt-2 border-t border-green-100">
                                     <span className="text-xs text-gray-400 font-mono">演習回数: {drillCount}回</span>
@@ -551,12 +626,12 @@ export default function Home() {
                             <Button
                               className="w-full shadow-md hover:shadow-lg transition-shadow bg-primary text-primary-foreground font-semibold"
                               onClick={() => startDrill(unit.id)}
-                              disabled={totalQ === 0}
+                              disabled={totalQ === 0 || (isWrittenUnit && writtenRemaining <= 0)}
                             >
                               <PlayCircle className="w-4 h-4 mr-2" />
                               演習開始
                             </Button>
-                            <Button
+                            {!isWrittenUnit && <Button
                               variant="outline"
                               className="w-full shadow-sm hover:shadow-md transition-shadow border-primary/20 bg-white text-primary text-xs font-bold"
                               onClick={() => router.push(`/drill/${unit.id}?mode=all`)}
@@ -564,8 +639,13 @@ export default function Home() {
                             >
                               <PlayCircle className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                               全問に取り組む ({totalQ}問)
-                            </Button>
-                            {wrongAnswers[unit.id] > 0 && (
+                            </Button>}
+                            {isWrittenUnit && (
+                              <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+                                1問イベントです。スコアは総合ランキングには含まれず、XPのみ得点に応じて反映されます。
+                              </p>
+                            )}
+                            {!isWrittenUnit && wrongAnswers[unit.id] > 0 && (
                               <Button
                                 variant="secondary"
                                 className="w-full shadow-sm hover:shadow-md transition-shadow bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200 text-xs font-bold"

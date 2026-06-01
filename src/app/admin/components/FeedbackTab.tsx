@@ -62,9 +62,17 @@ export default function FeedbackTab({ feedbackItems, loading, onRefresh, onDelet
                 </td>
                 <td className="px-4 py-4 max-w-md">
                   <p className="whitespace-pre-wrap leading-relaxed text-gray-800">{item.message}</p>
+                  {item.feedbackType === 'written_grading' && (
+                    <div className="mt-3 space-y-1 rounded-lg border bg-blue-50 p-3 text-[11px] text-blue-900">
+                      <p className="font-bold">{item.unitTitle || item.unitId || '-'}</p>
+                      <p>score: {item.score ?? '-'} / rating: {item.rating || '-'} / strictness: {item.strictness || '-'}</p>
+                      <p>usefulness: {item.usefulness || '-'} / clarity: {item.clarity || '-'}</p>
+                      {item.questionText && <p className="line-clamp-2 text-blue-800/80">{item.questionText}</p>}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-4 text-[10px] text-primary font-bold break-all">
-                  {item.pagePath || '-'}
+                  {item.pagePath || item.attemptId || '-'}
                 </td>
                 <td className="px-4 py-4">
                   <span className="inline-flex rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">

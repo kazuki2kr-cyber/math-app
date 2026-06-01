@@ -30,6 +30,31 @@ export default function UnitsTab({
     return sMatch && cMatch;
   });
 
+  const formatEventDate = (value: any) => {
+    if (!value) return '未設定';
+    if (typeof value === 'string') return value || '未設定';
+    if (value?.toDate) return value.toDate().toLocaleString('ja-JP');
+    return String(value);
+  };
+
+  const renderRubric = (rubric: any) => {
+    if (!rubric || (Array.isArray(rubric) && rubric.length === 0)) {
+      return <span className="text-xs text-gray-400">未設定</span>;
+    }
+    if (!Array.isArray(rubric)) {
+      return <span className="text-xs text-gray-600">{String(rubric)}</span>;
+    }
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {rubric.map((item, index) => (
+          <span key={index} className="rounded border bg-white px-2 py-1 text-xs text-gray-600">
+            {typeof item === 'string' ? item : `${item.label || '項目'} ${item.points || item.maxScore || ''}`}
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6 mt-4">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gray-50 p-4 rounded-xl border">
@@ -87,6 +112,31 @@ export default function UnitsTab({
                 </span>
               </div>
               <CardTitle className="text-lg text-primary">{unit.title} (ID: {unit.id})</CardTitle>
+              {unit.drillType === 'written' && (
+                <div className="mt-2 grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">種別:</span> 記述式イベント
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">状態:</span> {unit.eventStatus || 'active'}
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">提出上限:</span> 1回
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">満点時XP:</span> {unit.writtenXpBase || 232}
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">開始:</span> {formatEventDate(unit.eventStartsAt)}
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2">
+                    <span className="font-bold text-gray-700">終了:</span> {formatEventDate(unit.eventEndsAt)}
+                  </div>
+                  <div className="rounded border bg-blue-50 px-3 py-2 text-blue-700 sm:col-span-2">
+                    総合ランキング対象外。1問構成で運用してください。
+                  </div>
+                </div>
+              )}
               <CardDescription>問題数: {unit.totalQuestions || 0}問</CardDescription>
             </div>
             <Button variant="destructive" size="sm" onClick={() => onDeleteUnit(unit.id)}>
@@ -102,7 +152,18 @@ export default function UnitsTab({
                     <MathDisplay math={q.question_text || '問題文なし'} />
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs">
-                    {q.options?.map((opt: string, oi: number) => (
+                    {unit.drillType === 'written' ? (
+                      <div className="w-full space-y-2 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700">模範解答</p>
+                          <MathDisplay math={q.modelAnswer || q.model_answer || q.explanation || '未設定'} />
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700">採点ルーブリック</p>
+                          {renderRubric(q.gradingRubric || q.grading_rubric)}
+                        </div>
+                      </div>
+                    ) : q.options?.map((opt: string, oi: number) => (
                       <span key={oi} className={`px-2 py-1 rounded border ${oi + 1 === q.answer_index ? 'bg-green-100 border-green-300 text-green-800 font-bold' : 'bg-white text-gray-500'}`}>
                         {oi + 1}: <MathDisplay math={opt} />
                       </span>

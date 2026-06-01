@@ -16,6 +16,8 @@ const BATTLE_ANSWER_LIMIT_MS = 30000;
 const BATTLE_MAX_SPEED_BONUS = 15;
 const BATTLE_FAST_BONUS_MS = 3000;
 const KANJI_BATTLE_FINALIZE_TIMEOUT_MS = 90000;
+const MATH_MAX_LEVEL = 100;
+const MATH_LEVEL_XP_CAP_LEVEL = 40;
 const BATTLE_XP_TABLE: Record<number, number[]> = {
   2: [100, -20],
   3: [125, 0, -20],
@@ -23,6 +25,17 @@ const BATTLE_XP_TABLE: Record<number, number[]> = {
 };
 
 type DrillMode = "standard" | "wrong" | "all";
+type WrittenRubricScore = {
+  label: string;
+  score: number;
+  maxScore: number;
+  comment: string;
+};
+
+function calculateMathXpForNextLevel(level: number): number {
+  const cappedLevel = Math.min(level, MATH_LEVEL_XP_CAP_LEVEL);
+  return Math.floor(2.2 * Math.pow(cappedLevel, 2)) + 50;
+}
 
 type AttemptSubmittedQuestionResult = {
   questionId: string;
@@ -44,6 +57,57 @@ function calculateServerScore(correctCount: number, totalAnswered: number, mode:
   }
 
   return Math.min(100, correctCount * 10);
+}
+
+function clampScore(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.min(100, Math.max(0, Math.round(numeric)));
+}
+
+function calculateWrittenXp(score: number, maxWrittenXp = 232): number {
+  return Math.floor(maxWrittenXp * (clampScore(score) / 100));
+}
+
+function parseOptionalDate(value: any): Date | null {
+  if (!value) return null;
+  if (value?.toDate?.()) return value.toDate();
+  if (typeof value === "string") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
+function calculateLevelAndProgressServer(totalXp: number) {
+  let level = 1;
+  let accumulatedXp = 0;
+  while (level < MATH_MAX_LEVEL) {
+    const xpForNext = calculateMathXpForNextLevel(level);
+    if (totalXp >= accumulatedXp + xpForNext) {
+      accumulatedXp += xpForNext;
+      level++;
+    } else {
+      const xpIntoCurrentLevel = totalXp - accumulatedXp;
+      const progressPercent = Math.min(100, Math.max(0, (xpIntoCurrentLevel / xpForNext) * 100));
+      return { level, currentLevelXp: xpIntoCurrentLevel, nextLevelXp: xpForNext, progressPercent };
+    }
+  }
+  return { level: MATH_MAX_LEVEL, currentLevelXp: 0, nextLevelXp: 0, progressPercent: 100 };
+}
+
+function getTitleForLevelServer(level: number): string {
+  if (level >= 100) return "Grandmaster";
+  if (level >= 90) return "次世代のオイラー";
+  if (level >= 80) return "数学の覇者";
+  if (level >= 70) return "数学マスター";
+  if (level >= 60) return "数学の賢者";
+  if (level >= 50) return "芝浦の数理ハンター";
+  if (level >= 40) return "数学のひらめき";
+  if (level >= 30) return "論理の探求者";
+  if (level >= 20) return "計算の達人";
+  if (level >= 10) return "数学ビギナー";
+  return "計算卒業生";
 }
 
 function clampBattleResponseMs(value: unknown): number {
@@ -210,6 +274,76 @@ export const submitFeedback = functions.region("us-central1").https.onCall(async
 // 3. processDrillResult — 演習結果の統合処理
 // ==========================================
 // 選択肢をパース（Firestore の options フィールドが文字列の場合も対応）
+export const submitWrittenGradingFeedback = functions
+  .region("us-central1")
+  .runWith({ invoker: "public" })
+  .https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+  }
+
+  const payload = data as any;
+  const unitId = clampString(payload?.unitId, 120);
+  const attemptId = clampString(payload?.attemptId, 120);
+  const questionId = clampString(payload?.questionId, 120);
+  const unitTitle = clampString(payload?.unitTitle, 200);
+  const questionText = clampString(payload?.questionText, 1000);
+  const message = clampString(payload?.message, 1000);
+  const score = clampScore(payload?.score);
+  const rating = clampString(payload?.rating, 40);
+  const strictness = clampString(payload?.strictness, 40);
+  const usefulness = clampString(payload?.usefulness, 40);
+  const clarity = clampString(payload?.clarity, 40);
+  const allowedRatings = new Set(["helpful", "partly_helpful", "not_helpful"]);
+  const allowedStrictness = new Set(["too_lenient", "appropriate", "too_strict", "unsure"]);
+  const allowedUsefulness = new Set(["very_useful", "somewhat_useful", "not_useful"]);
+  const allowedClarity = new Set(["clear", "somewhat_unclear", "unclear"]);
+
+  if (!unitId || !attemptId || !questionId) {
+    throw new functions.https.HttpsError("invalid-argument", "必要な情報が不足しています。");
+  }
+  if (!allowedRatings.has(rating) || !allowedStrictness.has(strictness) || !allowedUsefulness.has(usefulness) || !allowedClarity.has(clarity)) {
+    throw new functions.https.HttpsError("invalid-argument", "フィードバック項目が不正です。");
+  }
+
+  const uid = context.auth.uid;
+  const attemptRef = db.doc(`users/${uid}/attempts/${attemptId}`);
+  const attemptSnap = await attemptRef.get();
+  if (!attemptSnap.exists || attemptSnap.data()?.type !== "written" || attemptSnap.data()?.unitId !== unitId) {
+    throw new functions.https.HttpsError("permission-denied", "対象の記述式結果が確認できません。");
+  }
+
+  const now = Timestamp.now();
+  await db.collection("written_grading_feedback").add({
+    feedbackType: "written_grading",
+    status: "new",
+    uid,
+    userName: context.auth.token?.name || "",
+    userEmail: context.auth.token?.email || "",
+    unitId,
+    unitTitle,
+    questionId,
+    questionText,
+    attemptId,
+    score,
+    rating,
+    strictness,
+    usefulness,
+    clarity,
+    message,
+    rubricScores: Array.isArray(payload?.rubricScores) ? payload.rubricScores.slice(0, 10).map((item: any) => ({
+      label: clampString(item?.label, 80),
+      score: clampScore(item?.score),
+      maxScore: Math.max(0, Math.min(100, Math.round(Number(item?.maxScore) || 0))),
+    })) : [],
+    source: "written_result",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return { success: true };
+  });
+
 function parseOptionsServer(options: any): string[] {
   if (Array.isArray(options)) return options.map(String);
   if (typeof options === "string") {
@@ -1193,12 +1327,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     // 2-3. XP / レベル計算
     const newTotalXp = currentXp + finalXpGain;
 
-    const MAX_LEVEL = 100;
     const calculateLevelAndProgress = (totalXp: number) => {
       let level = 1;
       let accumulatedXp = 0;
-      while (level < MAX_LEVEL) {
-        const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50;
+      while (level < MATH_MAX_LEVEL) {
+        const xpForNext = calculateMathXpForNextLevel(level);
         if (totalXp >= accumulatedXp + xpForNext) {
           accumulatedXp += xpForNext;
           level++;
@@ -1208,7 +1341,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
           return { level, currentLevelXp: xpIntoCurrentLevel, nextLevelXp: xpForNext, progressPercent };
         }
       }
-      return { level: MAX_LEVEL, currentLevelXp: 0, nextLevelXp: 0, progressPercent: 100 };
+      return { level: MATH_MAX_LEVEL, currentLevelXp: 0, nextLevelXp: 0, progressPercent: 100 };
     };
 
     const getTitleForLevel = (level: number): string => {
@@ -1386,6 +1519,358 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   throw new functions.https.HttpsError("internal", "内部処理エラーが発生しました。");
 }
 });
+
+function parseDataUrlImage(dataUrl: string): { mimeType: string; data: string } {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!match) {
+    throw new functions.https.HttpsError("invalid-argument", "解答画像の形式が不正です。");
+  }
+  return { mimeType: match[1], data: match[2] };
+}
+
+function extractJsonObject(text: string): any {
+  const escapeLikelyLatexBackslashes = (raw: string) => raw
+    .replace(/\\(?=(?:frac|sqrt|pi|times|div|cdot|left|right|le|ge|neq|theta|alpha|beta|gamma|Delta)\b)/g, "\\\\")
+    .replace(/\\(?=[()])/g, "\\\\");
+
+  const parseJson = (raw: string) => {
+    try {
+      return JSON.parse(escapeLikelyLatexBackslashes(raw));
+    } catch {
+      // Some Gemini models may emit LaTeX like \( ... \) inside JSON strings
+      // without escaping the backslash for JSON. Preserve valid JSON escapes and
+      // double only invalid ones before retrying.
+      const repaired = escapeLikelyLatexBackslashes(raw).replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+      return JSON.parse(repaired);
+    }
+  };
+
+  try {
+    return parseJson(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON object in Gemini response.");
+    return parseJson(match[0]);
+  }
+}
+
+function normalizeRubricScores(value: unknown): WrittenRubricScore[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).map((item: any) => ({
+    label: clampString(item?.label, 80) || "評価項目",
+    score: clampScore(item?.score),
+    maxScore: Math.max(1, Math.min(100, Math.round(Number(item?.maxScore) || 100))),
+    comment: clampString(item?.comment, 500),
+  }));
+}
+
+async function gradeWrittenAnswerWithGemini(params: {
+  unitTitle: string;
+  questionText: string;
+  modelAnswer: string;
+  gradingRubric: unknown;
+  answerImageDataUrl: string;
+}) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new functions.https.HttpsError("failed-precondition", "Gemini API key is not configured.");
+  }
+
+  const model = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+  const image = parseDataUrlImage(params.answerImageDataUrl);
+  const prompt = [
+    "You are grading a Japanese middle-school math written answer.",
+    "Return only strict JSON. Do not include markdown.",
+    "Score the full handwritten work, including intermediate steps, out of 100.",
+    "Use the provided model answer and rubric. Grade strictly, but keep feedback concise and age-appropriate.",
+    "Default scoring policy: process/reasoning is 60 points, final answer/conclusion is 40 points. Follow a more specific rubric only if it is stricter.",
+    "If the final answer or required conclusion is mathematically wrong, the total score must be at most 60, even if the process is mostly correct.",
+    "If the final answer is correct but there is no meaningful reasoning, setup, proof, or calculation process, the total score must be at most 40.",
+    "If the final answer is correct but the reasoning is incomplete, award 40 points for the result plus only the justified part of the 60 process points.",
+    "If the final answer is missing, ambiguous, or does not answer the exact question, the total score must be at most 60.",
+    "If the reasoning contains a serious contradiction or invalid step that happens to lead to the right answer, the total score must be at most 50.",
+    "For proof problems, treat the proved conclusion as the 40-point result component and the assumptions, logical chain, and cited reasons as the 60-point process component.",
+    "For pure calculation problems, still require enough written work to identify the method unless the problem explicitly asks for answer only.",
+    "For word/explanation problems, check the exact target, unit, sign, comparison direction, and what the final value refers to. Missing or wrong target/unit/sign/comparison should be penalized.",
+    "For problems that require explanation, do not accept formulas alone as a complete response unless their meaning is clear from the student's written words.",
+    "For variable introductions, theorem use, formulas, substitutions, and case splits, require visible definitions or reasons in the answer. Do not supply them yourself.",
+    "Do not infer unstated reasoning. Grade only what is visible in the submitted answer image.",
+    "Do not give full credit for a correct final answer if the reasoning is incomplete.",
+    "Deduct points when variables are introduced without definition, for example using r or h without stating what they represent.",
+    "Deduct points for missing units, missing conclusion sentence, unclear comparison target, skipped justification, formula misuse, algebra mistakes, or ambiguous notation.",
+    "If the rubric is vague, reserve 10 to 20 points for mathematical communication: variable definitions, readable steps, and answering the exact question.",
+    "In feedback, improvementPoints, rubric comments, and detectedAnswer, wrap all mathematical expressions in LaTeX delimiters like \\( ... \\). Use \\times, \\div, \\frac{}, and \\pi instead of plain symbols where appropriate.",
+    "",
+    `Unit: ${params.unitTitle}`,
+    `Question: ${params.questionText}`,
+    `Model answer: ${params.modelAnswer || "Not provided"}`,
+    `Rubric: ${JSON.stringify(params.gradingRubric || [])}`,
+    "",
+    "JSON schema:",
+    '{"score":number,"detectedAnswer":string,"rubricScores":[{"label":string,"score":number,"maxScore":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
+  ].join("\n");
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType: image.mimeType, data: image.data } },
+          ],
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[submitWrittenDrillResult] Gemini error:", response.status, errorText.slice(0, 1000));
+    throw new functions.https.HttpsError("internal", "AI採点に失敗しました。");
+  }
+
+  const json = await response.json() as any;
+  const responseText = json?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || "").join("") || "";
+  const parsed = extractJsonObject(responseText);
+  return {
+    score: clampScore(parsed?.score),
+    detectedAnswer: clampString(parsed?.detectedAnswer, 300),
+    rubricScores: normalizeRubricScores(parsed?.rubricScores),
+    feedback: clampString(parsed?.feedback, 1200),
+    improvementPoints: Array.isArray(parsed?.improvementPoints)
+      ? parsed.improvementPoints.slice(0, 5).map((point: unknown) => clampString(point, 300)).filter(Boolean)
+      : [],
+  };
+}
+
+export const submitWrittenDrillResult = functions
+  .region("us-central1")
+  .runWith({ timeoutSeconds: 120, memory: "512MB", invoker: "public" })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+    }
+
+    const callerEmail = context.auth.token.email || "";
+    const isAllowedDomain = callerEmail.endsWith("@shibaurafzk.com");
+    const isIndividualAllowed = callerEmail === "kazuki2kr@gmail.com";
+    if (!isAllowedDomain && !isIndividualAllowed) {
+      throw new functions.https.HttpsError("permission-denied", "このサービスの対象外アカウントです。");
+    }
+
+    const { attemptId, unitId: rawUnitId, questionId: rawQuestionId, time: rawTime, answerImageDataUrl } = data as any;
+    const unitId = clampString(rawUnitId, 120);
+    const questionId = clampString(rawQuestionId, 120);
+    const imageDataUrl = typeof answerImageDataUrl === "string" ? answerImageDataUrl : "";
+    const rawTimeNumber = Number(rawTime);
+    const time = Math.max(1, Math.round(rawTimeNumber));
+
+    if (!unitId || !questionId || !Number.isFinite(rawTimeNumber) || rawTimeNumber < 0 || time > 86400 || imageDataUrl.length < 100) {
+      throw new functions.https.HttpsError("invalid-argument", "必要なパラメータが不足しています。");
+    }
+    if (imageDataUrl.length > 4_500_000) {
+      throw new functions.https.HttpsError("invalid-argument", "解答画像が大きすぎます。");
+    }
+
+    const uid = context.auth.uid;
+    const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+    const now = Timestamp.now();
+    const dateStr = now.toDate().toISOString();
+
+    const unitDoc = await db.doc(`units/${unitId}`).get();
+    if (!unitDoc.exists) {
+      throw new functions.https.HttpsError("not-found", "指定された記述式イベントが見つかりません。");
+    }
+    const unitData = unitDoc.data() || {};
+    if (unitData.drillType !== "written") {
+      throw new functions.https.HttpsError("failed-precondition", "この単元は記述式イベントではありません。");
+    }
+    if ((unitData.eventStatus || "active") !== "active") {
+      throw new functions.https.HttpsError("failed-precondition", "この記述式イベントは現在受け付けていません。");
+    }
+    const startsAt = parseOptionalDate(unitData.eventStartsAt);
+    const endsAt = parseOptionalDate(unitData.eventEndsAt);
+    const nowDate = now.toDate();
+    if ((startsAt && nowDate < startsAt) || (endsAt && nowDate > endsAt)) {
+      throw new functions.https.HttpsError("failed-precondition", "この記述式イベントは開催期間外です。");
+    }
+
+    const unitQuestions = await loadUnitQuestions(unitId, unitData);
+    if (unitQuestions.length !== 1) {
+      throw new functions.https.HttpsError("failed-precondition", "記述式イベントは1問構成である必要があります。");
+    }
+    const question = unitQuestions.find((q) => String(q.id) === questionId);
+    if (!question) {
+      throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
+    }
+
+    const modelAnswerText = String(question.modelAnswer || question.model_answer || question.explanation || "");
+    const limit = 1;
+    const limitRef = db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`);
+    const attemptDocId = clampString(attemptId, 120) || db.collection(`users/${uid}/attempts`).doc().id;
+    const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
+    const [attemptSnap, limitSnap] = await Promise.all([attemptRef.get(), limitRef.get()]);
+    if (attemptSnap.exists) {
+      const existing = attemptSnap.data() || {};
+      return {
+        success: true,
+        alreadyProcessed: true,
+        isHighScore: false,
+        isLevelUp: false,
+        score: existing.score || 0,
+        xpGain: 0,
+        remainingAttempts: Math.max(0, limit - (limitSnap.data()?.usedAttempts || 0)),
+        grading: existing.grading || null,
+        modelAnswer: modelAnswerText,
+      };
+    }
+    if ((limitSnap.data()?.usedAttempts || 0) >= limit) {
+      throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
+    }
+
+    const grading = await gradeWrittenAnswerWithGemini({
+      unitTitle: String(unitData.title || unitId),
+      questionText: String(question.question_text || ""),
+      modelAnswer: modelAnswerText,
+      gradingRubric: question.gradingRubric || question.grading_rubric || unitData.gradingRubric || [],
+      answerImageDataUrl: imageDataUrl,
+    });
+    const finalXpGain = calculateWrittenXp(grading.score, Number(unitData.writtenXpBase) || 232);
+
+    const result = await db.runTransaction(async (transaction) => {
+      const userRef = db.doc(`users/${uid}`);
+      const analyticsEventRef = db.collection("analytics_events").doc(`written_${attemptDocId}`);
+      const [userSnap, attemptTxnSnap, limitTxnSnap] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(attemptRef),
+        transaction.get(limitRef),
+      ]);
+
+      if (attemptTxnSnap.exists) {
+        return {
+          success: true,
+          alreadyProcessed: true,
+          isHighScore: false,
+          isLevelUp: false,
+          xpGain: 0,
+          remainingAttempts: Math.max(0, limit - (limitTxnSnap.data()?.usedAttempts || 0)),
+          modelAnswer: modelAnswerText,
+        };
+      }
+
+      const usedAttempts = limitTxnSnap.data()?.usedAttempts || 0;
+      if (usedAttempts >= limit) {
+        throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
+      }
+
+      const userData = userSnap.exists ? userSnap.data() || {} : {};
+      const currentXp = Number(userData.xp) || 0;
+      const currentIcon = userData.icon || "📐";
+      const existingWrittenStats = userData.writtenStats?.[unitId] || {};
+      const previousMaxScore = Number(existingWrittenStats.maxScore) || 0;
+      const isHighScore = grading.score > previousMaxScore;
+      const newTotalXp = currentXp + finalXpGain;
+      const oldLevelData = calculateLevelAndProgressServer(currentXp);
+      const newLevelData = calculateLevelAndProgressServer(newTotalXp);
+      const isLevelUp = newLevelData.level > oldLevelData.level;
+      const remainingAttempts = Math.max(0, limit - (usedAttempts + 1));
+      const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
+
+      transaction.set(userRef, {
+        xp: newTotalXp,
+        level: newLevelData.level,
+        title: getTitleForLevelServer(newLevelData.level),
+        progressPercent: newLevelData.progressPercent,
+        currentLevelXp: newLevelData.currentLevelXp,
+        nextLevelXp: newLevelData.nextLevelXp,
+        updatedAt: dateStr,
+        ...(currentIcon !== "📐" ? {} : { icon: "📐" }),
+      }, { merge: true });
+      transaction.update(userRef, new FieldPath("writtenStats", unitId), {
+        maxScore: isHighScore ? grading.score : previousMaxScore,
+        bestAttemptId: isHighScore ? attemptDocId : (existingWrittenStats.bestAttemptId || null),
+        attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
+        totalXpEarned: (existingWrittenStats.totalXpEarned || 0) + finalXpGain,
+        remainingAttempts,
+        limit,
+        updatedAt: dateStr,
+      });
+      transaction.set(limitRef, {
+        unitId,
+        usedAttempts: usedAttempts + 1,
+        limit,
+        lastAttemptAt: now,
+        updatedAt: now,
+      }, { merge: true });
+      transaction.set(attemptRef, {
+        uid,
+        userName,
+        type: "written",
+        unitId,
+        unitTitle: String(unitData.title || unitId),
+        questionId,
+        score: grading.score,
+        time,
+        date: dateStr,
+        xpGain: finalXpGain,
+        includeInTotalScore: false,
+        remainingAttempts,
+        grading,
+        expireAt: Timestamp.fromDate(expireAt),
+      });
+      transaction.set(analyticsEventRef, {
+        eventType: "WRITTEN_ATTEMPT_SUBMITTED",
+        eventVersion: 1,
+        occurredAt: now,
+        logicalDate: buildLogicalDate(now.toDate()),
+        attemptId: attemptDocId,
+        uid,
+        unitId,
+        unitTitle: String(unitData.title || unitId),
+        subject: unitData.subject || "math",
+        category: unitData.category || "written",
+        score: grading.score,
+        timeSec: time,
+        xpGain: finalXpGain,
+        source: "submitWrittenDrillResult",
+        includeInTotalScore: false,
+        questionResults: [{ questionId, questionOrder: Number(question.order || 1), score: grading.score }],
+      });
+
+      return {
+        success: true,
+        isHighScore,
+        isLevelUp,
+        oldLevel: oldLevelData.level,
+        newLevel: newLevelData.level,
+        xpGain: finalXpGain,
+        newTotalXp,
+        remainingAttempts,
+        grading,
+        modelAnswer: modelAnswerText,
+        _leaderboardUpdate: isLevelUp ? { uid, userName, currentIcon, newLevel: newLevelData.level, newTotalXp } : null,
+      };
+    });
+
+    const resultAny = result as any;
+    if (resultAny._leaderboardUpdate) {
+      try {
+        await updateLeaderboard(resultAny._leaderboardUpdate);
+      } catch (leaderboardErr) {
+        console.error("[submitWrittenDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
+      }
+    }
+    const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
+    return { ...clientResult, score: grading.score };
+  });
 
 // ==========================================
 // 3. updateLeaderboard — リーダーボード更新ヘルパー

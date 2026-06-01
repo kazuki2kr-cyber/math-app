@@ -6,16 +6,30 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { MathDisplay } from '@/components/MathDisplay';
-import { HandwritingCanvasRef } from '@/components/HandwritingCanvas';
+import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
 import { ScratchPaperOverlay } from '@/components/ScratchPaperOverlay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
-import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen } from 'lucide-react';
+import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, RotateCcw, Trash2 } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 
 const STANDARD_DRILL_QUESTION_COUNT = 10;
+const STROKE_WIDTH_OPTIONS = [
+  { id: 'standard', label: '標準', width: 4 },
+  { id: 'thin', label: '細い', width: 2.5 },
+  { id: 'extraThin', label: 'かなり細い', width: 1.5 },
+] as const;
+const ERASER_SIZE_OPTIONS = [
+  { id: 'small', label: '小', width: 18 },
+  { id: 'medium', label: '中', width: 28 },
+  { id: 'large', label: '大', width: 42 },
+] as const;
 
 type DrillMode = 'standard' | 'wrong' | 'all';
+type DrillType = 'multiple_choice' | 'written';
+type StrokeWidthId = (typeof STROKE_WIDTH_OPTIONS)[number]['id'];
+type EraserSizeId = (typeof ERASER_SIZE_OPTIONS)[number]['id'];
+type ScratchTool = 'pen' | 'eraser';
 
 // Firestore から取得する生データ（answer_index を含む）
 // answer_index は選択肢シャッフル処理のみに使用し、状態には保持しない
@@ -26,6 +40,7 @@ interface RawQuestion {
   answer_index: number;
   explanation: string;
   image_url: string | null;
+  questionType?: DrillType;
 }
 
 // 演習中に使う状態の型（answer_index を意図的に除外 → クライアントに正解位置を持たせない）
@@ -34,6 +49,7 @@ interface Question {
   question_text: string;
   options: string[]; // シャッフル済み
   image_url: string | null;
+  questionType?: DrillType;
 }
 
 interface Unit {
@@ -41,6 +57,8 @@ interface Unit {
   title: string;
   questions?: Question[];
   mode: DrillMode;
+  drillType?: DrillType;
+  writtenAttemptLimit?: number;
 }
 
 export default function DrillPage() {
@@ -76,7 +94,20 @@ export default function DrillPage() {
   const [isScratchPaperOpen, setIsScratchPaperOpen] = useState(false);
   const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
   const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
+  const writtenPageRefs = useRef<Array<HandwritingCanvasRef | null>>([]);
+  const [writtenPageCount, setWrittenPageCount] = useState(1);
+  const [activeWrittenPage, setActiveWrittenPage] = useState(0);
+  const [writtenHasStrokes, setWrittenHasStrokes] = useState(false);
+  const [writtenTool, setWrittenTool] = useState<ScratchTool>('pen');
+  const [writtenStrokeWidthId, setWrittenStrokeWidthId] = useState<StrokeWidthId>('standard');
+  const [writtenEraserSizeId, setWrittenEraserSizeId] = useState<EraserSizeId>('medium');
+  const selectedWrittenStrokeWidth = STROKE_WIDTH_OPTIONS.find((option) => option.id === writtenStrokeWidthId)?.width ?? 4;
+  const selectedWrittenEraserWidth = ERASER_SIZE_OPTIONS.find((option) => option.id === writtenEraserSizeId)?.width ?? 28;
   const currentQuestionId = unit?.questions?.[currentIndex]?.id ?? null;
+
+  const refreshWrittenHasStrokes = () => {
+    setWrittenHasStrokes(writtenPageRefs.current.slice(0, writtenPageCount).some(ref => ref?.hasStrokes()));
+  };
 
   const getSeenHistoryKey = () => `math_seen_questions_v1:${user?.uid || 'guest'}:${unitId}`;
 
@@ -118,8 +149,9 @@ export default function DrillPage() {
           let filteredQuestions = [...parsedQuestions];
           const rawMode = new URLSearchParams(window.location.search).get('mode');
           const mode: DrillMode = rawMode === 'wrong' ? 'wrong' : rawMode === 'all' ? 'all' : 'standard';
+          const drillType: DrillType = rawUnit.drillType === 'written' ? 'written' : 'multiple_choice';
 
-          if (mode === 'wrong' && user) {
+          if (mode === 'wrong' && user && drillType !== 'written') {
             const userDocRef = doc(db, 'users', user.uid);
             const userSnap = await getDoc(userDocRef);
             if (userSnap.exists() && userSnap.data().unitStats?.[unitId]) {
@@ -148,7 +180,9 @@ export default function DrillPage() {
           };
 
           let selectedQuestions: RawQuestion[];
-          if (mode === 'all') {
+          if (drillType === 'written') {
+            selectedQuestions = filteredQuestions.slice(0, 1);
+          } else if (mode === 'all') {
             selectedQuestions = fisherYatesShuffle(filteredQuestions);
           } else if (mode === 'standard') {
             const seenIds = new Set(readSeenQuestionIds());
@@ -174,10 +208,18 @@ export default function DrillPage() {
             question_text: q.question_text,
             options: fisherYatesShuffle(q.options),
             image_url: q.image_url ?? null,
+            questionType: q.questionType || drillType,
             // answer_index は意図的に除外
           }));
 
-          setUnit({ id: unitId, title: rawUnit.title, questions: finalQuestions, mode });
+          setUnit({
+            id: unitId,
+            title: rawUnit.title,
+            questions: finalQuestions,
+            mode,
+            drillType,
+            writtenAttemptLimit: 1,
+          });
           setStartTime(Date.now());
         } else {
           setError('指定された単元が見つかりません。');
@@ -269,6 +311,92 @@ export default function DrillPage() {
     }
   };
 
+  const composeWrittenAnswerImage = async (pageImages: string[]) => {
+    if (pageImages.length === 1) return pageImages[0];
+
+    const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load answer page'));
+      img.src = src;
+    });
+
+    const images = await Promise.all(pageImages.map(loadImage));
+    const gap = 36;
+    const pageLabelHeight = 34;
+    const width = Math.max(...images.map(img => img.width));
+    const height = images.reduce((sum, img) => sum + img.height + pageLabelHeight, 0) + gap * (images.length - 1);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Failed to compose answer image');
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    let y = 0;
+    images.forEach((img, index) => {
+      ctx.fillStyle = '#f3f4f6';
+      ctx.fillRect(0, y, width, pageLabelHeight);
+      ctx.fillStyle = '#374151';
+      ctx.font = '24px sans-serif';
+      ctx.fillText(`Page ${index + 1}`, 18, y + 24);
+      y += pageLabelHeight;
+      ctx.drawImage(img, (width - img.width) / 2, y);
+      y += img.height + gap;
+    });
+
+    return canvas.toDataURL('image/jpeg', 0.9);
+  };
+
+  const handleWrittenSubmit = async () => {
+    if (!unit || isCompleting) return;
+    const question = unit.questions?.[0];
+    if (!question) return;
+
+    const activeRefs = writtenPageRefs.current.slice(0, writtenPageCount);
+    if (!activeRefs.some(ref => ref?.hasStrokes())) {
+      alert('解答欄に途中式や答えを書いてから提出してください。');
+      return;
+    }
+
+    const pageImages = activeRefs
+      .map(ref => ref?.toDataURL())
+      .filter((value): value is string => Boolean(value));
+    if (pageImages.length === 0) {
+      alert('解答画像の作成に失敗しました。もう一度お試しください。');
+      return;
+    }
+
+    let answerImageDataUrl = '';
+    try {
+      answerImageDataUrl = await composeWrittenAnswerImage(pageImages);
+    } catch {
+      alert('解答画像の作成に失敗しました。もう一度お試しください。');
+      return;
+    }
+
+    if (timerRef.current) clearInterval(timerRef.current);
+    const finalTime = Math.floor((Date.now() - startTime) / 1000);
+    const writtenResult = {
+      type: 'written',
+      attemptId: attemptIdRef.current,
+      unitId,
+      unitTitle: unit.title,
+      totalQuestions: 1,
+      questionId: question.id,
+      questionText: question.question_text,
+      time: finalTime,
+      answerImageDataUrl,
+    };
+
+    isCompletingRef.current = true;
+    setIsCompleting(true);
+    sessionStorage.setItem('drillResult', JSON.stringify(writtenResult));
+    router.push(`/result/${unitId}`);
+  };
+
   const cancelDrill = () => {
     if (confirm('演習を中断してダッシュボードに戻りますか？')) {
       router.push('/');
@@ -295,6 +423,205 @@ export default function DrillPage() {
   const questions = unit.questions || [];
   const currentQ = questions[currentIndex];
   const progressPercent = (currentIndex / (questions.length || 1)) * 100;
+
+  if (unit.drillType === 'written') {
+    return (
+      <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">
+        <div className="max-w-5xl mx-auto w-full space-y-5">
+          <div className="flex items-center justify-between gap-3">
+            <Button variant="ghost" size="sm" onClick={cancelDrill} className="text-muted-foreground hover:text-destructive transition-colors">
+              <XCircle className="w-5 h-5 mr-1.5" strokeWidth={1.5} />
+              <span className="font-medium">中断する</span>
+            </Button>
+            <div className="flex items-center text-primary font-mono text-lg sm:text-xl bg-primary/10 px-3 sm:px-4 py-1.5 rounded-full border border-primary/20 shadow-inner">
+              <Clock className="w-5 h-5 mr-2" />
+              {Math.floor(elapsed / 60).toString().padStart(2, '0')}:{(elapsed % 60).toString().padStart(2, '0')}
+            </div>
+          </div>
+
+          <Card className="shadow-xl border-0 overflow-hidden bg-white">
+            <div className="h-2 w-full bg-primary/80"></div>
+            <CardHeader className="px-6 sm:px-8 pt-7 pb-4">
+              <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
+                Written Event
+                <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                  1問 / 最大1回
+                </span>
+              </CardDescription>
+              <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
+                <MathDisplay math={currentQ.question_text} />
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5 px-4 sm:px-8 pb-6">
+              {currentQ.image_url && (
+                <div className="bg-gray-50 p-5 rounded-xl flex justify-center border shadow-inner">
+                  <img src={currentQ.image_url} alt="Problem visual" className="max-h-72 object-contain rounded-md shadow-sm mix-blend-multiply" />
+                </div>
+              )}
+              <div className="rounded-xl border border-primary/10 bg-primary/5 p-3 text-xs font-medium text-primary">
+                途中式・考え方・答えをこの解答欄にまとめて書いてください。提出後、AIが100点満点で採点し、改善ポイントを返します。
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-2">
+                <div className="inline-flex rounded-lg border bg-white p-1 shadow-sm">
+                  {Array.from({ length: writtenPageCount }).map((_, index) => (
+                    <Button
+                      key={index}
+                      type="button"
+                      size="sm"
+                      variant={activeWrittenPage === index ? 'default' : 'ghost'}
+                      onClick={() => setActiveWrittenPage(index)}
+                      className="h-8 px-3 text-xs"
+                    >
+                      {index + 1}ページ
+                    </Button>
+                  ))}
+                </div>
+                {writtenPageCount < 2 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setWrittenPageCount(2);
+                      setActiveWrittenPage(1);
+                    }}
+                  >
+                    2ページ目を追加
+                  </Button>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-lg border bg-white p-1 shadow-sm">
+                    {STROKE_WIDTH_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-label={`ペンの太さ: ${option.label}`}
+                        aria-pressed={writtenStrokeWidthId === option.id}
+                        onClick={() => {
+                          setWrittenStrokeWidthId(option.id);
+                          setWrittenTool('pen');
+                        }}
+                        className={`h-8 rounded-md px-2 text-xs font-bold transition-colors ${
+                          writtenStrokeWidthId === option.id && writtenTool === 'pen'
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    variant={writtenTool === 'pen' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWrittenTool('pen')}
+                    className="h-10 px-3"
+                  >
+                    <PenLine className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">ペン</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={writtenTool === 'eraser' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWrittenTool('eraser')}
+                    className="h-10 px-3"
+                  >
+                    <Eraser className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">消しゴム</span>
+                  </Button>
+                  <div className="inline-flex rounded-lg border bg-white p-1 shadow-sm">
+                    {ERASER_SIZE_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-label={`消しゴムのサイズ: ${option.label}`}
+                        aria-pressed={writtenEraserSizeId === option.id}
+                        onClick={() => {
+                          setWrittenEraserSizeId(option.id);
+                          setWrittenTool('eraser');
+                        }}
+                        className={`h-8 min-w-8 rounded-md px-2 text-xs font-bold transition-colors ${
+                          writtenEraserSizeId === option.id && writtenTool === 'eraser'
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!writtenHasStrokes}
+                    onClick={() => {
+                      writtenPageRefs.current[activeWrittenPage]?.undo();
+                      setTimeout(refreshWrittenHasStrokes, 0);
+                    }}
+                    className="h-10 px-3"
+                  >
+                    <RotateCcw className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">戻す</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!writtenHasStrokes}
+                    onClick={() => {
+                      writtenPageRefs.current[activeWrittenPage]?.clear();
+                      setTimeout(refreshWrittenHasStrokes, 0);
+                    }}
+                    className="h-10 px-3"
+                  >
+                    <Trash2 className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">このページを消す</span>
+                  </Button>
+                </div>
+              </div>
+              <div className="h-[58vh] min-h-[420px] overflow-hidden rounded-xl border bg-white">
+                <div className="relative h-full w-full">
+                  {Array.from({ length: writtenPageCount }).map((_, index) => (
+                    <div
+                      key={index}
+                      className={`absolute inset-0 ${activeWrittenPage === index ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'}`}
+                      aria-hidden={activeWrittenPage !== index}
+                    >
+                      <HandwritingCanvas
+                        ref={(node) => { writtenPageRefs.current[index] = node; }}
+                        width="100%"
+                        height="100%"
+                        strokeWidth={selectedWrittenStrokeWidth}
+                        strokeColor="#111827"
+                        tool={writtenTool}
+                        eraserWidth={selectedWrittenEraserWidth}
+                        onChange={refreshWrittenHasStrokes}
+                        className="h-full w-full !rounded-none !border-0 !shadow-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter className="bg-gray-50/80 border-t p-5 flex justify-end items-center">
+              <Button
+                size="lg"
+                disabled={isCompleting}
+                onClick={handleWrittenSubmit}
+                className="px-8 h-13 text-base font-bold shadow-lg"
+              >
+                {isCompleting ? '提出中...' : '解答を提出する'}
+                <ArrowRight className="w-5 h-5 ml-2" />
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">

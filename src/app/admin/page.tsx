@@ -25,6 +25,8 @@ function getImportSubjectMetadata(importSubject: string) {
   switch (importSubject) {
     case 'math':
       return { subject: '数学', baseSubject: '数学', mode: 'solo' };
+    case 'math_written':
+      return { subject: '数学', baseSubject: '数学', mode: 'solo', drillType: 'written' };
     case 'english':
       return { subject: '英語', baseSubject: '英語', mode: 'solo' };
     case 'math_battle':
@@ -91,7 +93,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'feedback' | 'roles' | 'changelog'>('roles');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'feedback' | 'writtenFeedback' | 'roles' | 'changelog'>('roles');
   const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
@@ -100,6 +102,7 @@ export default function AdminPage() {
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [feedbackItems, setFeedbackItems] = useState<any[]>([]);
+  const [writtenFeedbackItems, setWrittenFeedbackItems] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
   const [suspiciousFilter, setSuspiciousFilter] = useState<'red' | 'yellow' | 'all'>('red');
   const [displayScoresCount, setDisplayScoresCount] = useState(50);
@@ -135,6 +138,7 @@ export default function AdminPage() {
     if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
     if (activeTab === 'xp') fetchUsers();
     if (activeTab === 'feedback') fetchFeedback();
+    if (activeTab === 'writtenFeedback') fetchWrittenFeedback();
     if (activeTab === 'roles') {
       fetchAdminList();
       fetchMaintenanceStatus();
@@ -170,6 +174,20 @@ export default function AdminPage() {
     setLoading(false);
   };
 
+  const fetchWrittenFeedback = async () => {
+    if (!isAdmin) return;
+    setLoading(true);
+    setMessage('');
+    try {
+      const snap = await getDocs(query(collection(db, 'written_grading_feedback'), orderBy('createdAt', 'desc'), limit(100)));
+      setWrittenFeedbackItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error(e);
+      setMessage('記述式採点フィードバックの取得に失敗しました。');
+    }
+    setLoading(false);
+  };
+
   const handleDeleteFeedback = async (feedback: any) => {
     if (!feedback?.id) return;
     const preview = String(feedback.message || '').slice(0, 80);
@@ -184,6 +202,24 @@ export default function AdminPage() {
     } catch (e: any) {
       console.error(e);
       setMessage(`フィードバックの削除に失敗しました: ${e.message || e}`);
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteWrittenFeedback = async (feedback: any) => {
+    if (!feedback?.id) return;
+    const preview = String(feedback.message || feedback.unitTitle || '').slice(0, 80);
+    if (!window.confirm(`記述式採点フィードバックを削除しますか？\n\n${preview}`)) return;
+
+    setLoading(true);
+    setMessage('');
+    try {
+      await deleteDoc(doc(db, 'written_grading_feedback', feedback.id));
+      setWrittenFeedbackItems(prev => prev.filter(item => item.id !== feedback.id));
+      setMessage('記述式採点フィードバックを削除しました。');
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`記述式採点フィードバックの削除に失敗しました: ${e.message || e}`);
     }
     setLoading(false);
   };
@@ -784,8 +820,24 @@ export default function AdminPage() {
           const subjectMetadata = getImportSubjectMetadata(importSubject);
 
           data.forEach((row) => {
-            const { unit_id, question_text, options, answer_index, explanation, image_url, category } = row;
+            const {
+              unit_id,
+              question_text,
+              options,
+              answer_index,
+              explanation,
+              image_url,
+              category,
+              question_type,
+              model_answer,
+              grading_rubric,
+              event_status,
+              event_starts_at,
+              event_ends_at,
+              written_attempt_limit,
+            } = row;
             if (!unit_id) return;
+            const rowDrillType = question_type === 'written' || subjectMetadata.drillType === 'written' ? 'written' : 'multiple_choice';
 
             if (!unitsMap[unit_id]) {
               unitsMap[unit_id] = {
@@ -795,6 +847,13 @@ export default function AdminPage() {
                   subject: subjectMetadata.subject,
                   baseSubject: subjectMetadata.baseSubject,
                   mode: subjectMetadata.mode,
+                  drillType: rowDrillType,
+                  eventStatus: rowDrillType === 'written' ? (event_status || 'active') : null,
+                  eventStartsAt: event_starts_at || null,
+                  eventEndsAt: event_ends_at || null,
+                  writtenAttemptLimit: rowDrillType === 'written' ? 1 : null,
+                  writtenXpBase: rowDrillType === 'written' ? 232 : null,
+                  includeInTotalScore: rowDrillType !== 'written',
                   category: category || '1.正の数と負の数',
                   totalQuestions: 0
                 },
@@ -813,6 +872,9 @@ export default function AdminPage() {
               answer_index: parseInt(answer_index) || 1,
               explanation: explanation || '',
               image_url: image_url || null,
+              questionType: rowDrillType,
+              modelAnswer: model_answer || '',
+              gradingRubric: grading_rubric ? parseOptions(grading_rubric) : [],
             });
             unitsMap[unit_id].unitDoc.totalQuestions = unitsMap[unit_id].questions.length;
           });
@@ -831,6 +893,7 @@ export default function AdminPage() {
             await batch.commit();
           }
 
+          localStorage.removeItem('math_units_cache_v4');
           setMessage(`完了: ${Object.keys(unitsMap).length} 個の単元データと ${writes.length - Object.keys(unitsMap).length} 問の問題を保存しました。`);
         } catch (err: any) {
           console.error("Firestore Upload Error", err);
@@ -860,7 +923,7 @@ export default function AdminPage() {
     // answer_index は選択肢の番号（1始まり）。options の2番目が正解なら 2 と記入
     // image_url は省略可（末尾のカンマだけ残して空欄にする）
     const csvContent =
-`unit_id,category,question_text,options,answer_index,explanation,image_url
+`unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at
 1.正負の数の加減,1.正の数と負の数,$1+1$は？,"[""1"",""2"",""3"",""4""]",2,1足す1は2です。,
 1.正負の数の加減,1.正の数と負の数,$x^2=4$ を解け,"[""x=2"",""x=-2"",""x=\\pm 2"",""解なし""]",3,平方根をとります。,
 2.文字と式,2.文字と式,次の図形の面積を求めよ,"[""10"",""20"",""30"",""40""]",2,底辺×高さ÷2です。,https://example.com/image.png
@@ -931,6 +994,13 @@ export default function AdminPage() {
         >
           <MessageSquare className="inline w-4 h-4 mr-2" />
           フィードバック
+        </button>
+        <button
+          onClick={() => setActiveTab('writtenFeedback')}
+          className={`px-4 py-2 font-medium ${activeTab === 'writtenFeedback' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <MessageSquare className="inline w-4 h-4 mr-2" />
+          記述採点FB
         </button>
         <button 
           onClick={() => setActiveTab('roles')} 
@@ -1053,6 +1123,15 @@ export default function AdminPage() {
           loading={loading}
           onRefresh={fetchFeedback}
           onDeleteFeedback={handleDeleteFeedback}
+        />
+      )}
+
+      {activeTab === 'writtenFeedback' && (
+        <FeedbackTab
+          feedbackItems={writtenFeedbackItems}
+          loading={loading}
+          onRefresh={fetchWrittenFeedback}
+          onDeleteFeedback={handleDeleteWrittenFeedback}
         />
       )}
 

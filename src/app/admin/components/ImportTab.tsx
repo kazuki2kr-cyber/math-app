@@ -35,6 +35,7 @@ export default function ImportTab({ loading, importSubject, setImportSubject, on
             className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white font-medium focus:border-primary outline-none"
           >
             <option value="math">数学</option>
+            <option value="math_written">数学（記述式イベント）</option>
             <option value="english">英語</option>
             <option value="math_battle">数学対戦</option>
             <option value="english_battle">英語対戦</option>
