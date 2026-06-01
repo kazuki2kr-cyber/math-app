@@ -162,6 +162,7 @@ export default function WrittenAnalyticsTab() {
   const [loadingAttempts, setLoadingAttempts] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [restoreXp, setRestoreXp] = useState(true);
+  const [showIndividualResponses, setShowIndividualResponses] = useState(false);
   const [message, setMessage] = useState('');
 
   const selectedUnit = writtenUnits.find((unit) => unit.id === selectedUnitId) || null;
@@ -217,6 +218,7 @@ export default function WrittenAnalyticsTab() {
         .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
         .sort((left: any, right: any) => Number(left.order || 0) - Number(right.order || 0))[0] || null;
       setSelectedQuestion(firstQuestion);
+      setShowIndividualResponses(false);
       setAttempts(attemptSnap.docs.map((docSnap) => ({
         id: docSnap.id,
         path: docSnap.ref.path,
@@ -292,6 +294,7 @@ export default function WrittenAnalyticsTab() {
             setSelectedUnitId(event.target.value);
             setAttempts([]);
             setSelectedQuestion(null);
+            setShowIndividualResponses(false);
             setMessage('');
           }}
           className="w-full rounded-md border bg-white px-3 py-2 text-sm focus:border-primary focus:ring-2 focus:ring-primary/20 md:max-w-xl"
@@ -327,15 +330,15 @@ export default function WrittenAnalyticsTab() {
         <>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="rounded-xl border bg-white p-4 shadow-sm">
-              <h4 className="mb-4 text-sm font-bold text-gray-900">ルーブリック別平均点</h4>
+              <h4 className="mb-4 text-sm font-bold text-gray-900">ルーブリック別平均得点率</h4>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={rubricSummary.map((item) => ({ name: item.label, average: Number(item.average.toFixed(1)) }))} margin={{ left: -20, right: 10, bottom: 40 }}>
+                  <BarChart data={rubricSummary.map((item) => ({ name: item.label, rate: Number(item.averageRate.toFixed(1)) }))} margin={{ left: -20, right: 10, bottom: 40 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="name" interval={0} angle={-20} textAnchor="end" fontSize={10} />
-                    <YAxis fontSize={10} />
-                    <Tooltip />
-                    <Bar dataKey="average" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    <YAxis fontSize={10} domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+                    <Tooltip formatter={(value: any) => [`${value}%`, '平均得点率']} />
+                    <Bar dataKey="rate" fill="#2563eb" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -388,47 +391,66 @@ export default function WrittenAnalyticsTab() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-            <div className="border-b bg-gray-50 px-4 py-3">
-              <h4 className="text-sm font-bold text-gray-900">個別回答一覧</h4>
+          <div className="rounded-xl border bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-gray-900">個別回答一覧</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  生徒への画面共有時に個人名と点数が出ないよう、必要なときだけ表示します。
+                </p>
+              </div>
+              <Button
+                variant={showIndividualResponses ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowIndividualResponses((current) => !current)}
+                className="shrink-0"
+              >
+                {showIndividualResponses ? '個別回答を隠す' : '個別回答を表示'}
+              </Button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b bg-white">
-                  <tr>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">生徒</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">合計</th>
-                    {rubricSummary.map((item) => (
-                      <th key={item.key} className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">{item.label}</th>
-                    ))}
-                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">提出日時</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {sortedAttempts.map((attempt) => {
-                    const scores = Array.isArray(attempt.grading?.rubricScores) ? attempt.grading.rubricScores : [];
-                    return (
-                      <tr key={attempt.path}>
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900">{attempt.userName || '名前なし'}</p>
-                          <p className="text-[10px] text-gray-400">{attempt.uid || '-'}</p>
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold text-primary">{formatNumber(toNumber(attempt.score), 0)}</td>
-                        {rubricSummary.map((item) => {
-                          const score = scores.find((rubricItem, index) => `${index}:${rubricItem?.label || `項目${index + 1}`}` === item.key);
-                          return (
-                            <td key={item.key} className="px-4 py-3 text-right">
-                              {score ? `${formatNumber(toNumber(score.score), 0)} / ${formatNumber(toNumber(score.maxScore), 0)}` : '-'}
-                            </td>
-                          );
-                        })}
-                        <td className="px-4 py-3 text-right text-xs text-gray-500">{formatDate(attempt.date)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {showIndividualResponses ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b bg-white">
+                    <tr>
+                      <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">生徒</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">合計</th>
+                      {rubricSummary.map((item) => (
+                        <th key={item.key} className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">{item.label}</th>
+                      ))}
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">提出日時</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {sortedAttempts.map((attempt) => {
+                      const scores = Array.isArray(attempt.grading?.rubricScores) ? attempt.grading.rubricScores : [];
+                      return (
+                        <tr key={attempt.path}>
+                          <td className="px-4 py-3">
+                            <p className="font-medium text-gray-900">{attempt.userName || '名前なし'}</p>
+                            <p className="text-[10px] text-gray-400">{attempt.uid || '-'}</p>
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-primary">{formatNumber(toNumber(attempt.score), 0)}</td>
+                          {rubricSummary.map((item) => {
+                            const score = scores.find((rubricItem, index) => `${index}:${rubricItem?.label || `項目${index + 1}`}` === item.key);
+                            return (
+                              <td key={item.key} className="px-4 py-3 text-right">
+                                {score ? `${formatNumber(toNumber(score.score), 0)} / ${formatNumber(toNumber(score.maxScore), 0)}` : '-'}
+                              </td>
+                            );
+                          })}
+                          <td className="px-4 py-3 text-right text-xs text-gray-500">{formatDate(attempt.date)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
+                個別の生徒名と点数は非表示です。教員確認が必要な場合のみ表示してください。
+              </div>
+            )}
           </div>
         </>
       ) : (
