@@ -1,4 +1,10 @@
 export const MAX_LEVEL = 100;
+export const LEVEL_XP_CAP_LEVEL = 40;
+
+export function getXpForNextLevel(level: number): number {
+  const cappedLevel = Math.min(level, LEVEL_XP_CAP_LEVEL);
+  return Math.floor(2.2 * Math.pow(cappedLevel, 2)) + 50;
+}
 
 // Calculate Level based on total XP
 // We use a progressive curve so higher levels require much more XP.
@@ -14,10 +20,8 @@ export function calculateLevelAndProgress(totalXp: number): {
   let accumulatedXp = 0;
   
   while (level < MAX_LEVEL) {
-    // 王道RPGのような二次関数のXPカーブを採用
-    // 例: Lv1->2: 52XP, Lv10->11: 270XP, Lv50->51: 5550XP, Lv99->100: 21612XP
-    // 累計で100まで約76万XP（全問ボーナス込みで約3280回プレイ≒55時間）
-    const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50; 
+    // Level-up XP follows the quadratic curve until level 40, then stays flat.
+    const xpForNext = getXpForNextLevel(level);
     
     if (totalXp >= accumulatedXp + xpForNext) {
       accumulatedXp += xpForNext;

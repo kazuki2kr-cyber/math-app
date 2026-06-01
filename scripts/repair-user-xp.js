@@ -19,6 +19,8 @@ const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const adminEmail = process.env.TEST_USER_EMAIL;
 const adminPassword = process.env.TEST_USER_PASSWORD;
 const isDryRun = process.argv.includes('--dry-run');
+const MAX_LEVEL = 100;
+const LEVEL_XP_CAP_LEVEL = 40;
 
 function ensureConfig() {
   if (!apiKey || !adminEmail || !adminPassword) {
@@ -27,12 +29,12 @@ function ensureConfig() {
 }
 
 function calculateLevelAndProgress(totalXp) {
-  const MAX_LEVEL = 100;
   let level = 1;
   let accumulatedXp = 0;
 
   while (level < MAX_LEVEL) {
-    const xpForNext = Math.floor(2.2 * Math.pow(level, 2)) + 50;
+    const cappedLevel = Math.min(level, LEVEL_XP_CAP_LEVEL);
+    const xpForNext = Math.floor(2.2 * Math.pow(cappedLevel, 2)) + 50;
     if (totalXp >= accumulatedXp + xpForNext) {
       accumulatedXp += xpForNext;
       level++;

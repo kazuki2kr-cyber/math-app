@@ -2,13 +2,23 @@ import {
   calculateLevelAndProgress,
   getTitleForLevel,
   getAvailableIcons,
+  getXpForNextLevel,
   MAX_LEVEL,
+  LEVEL_XP_CAP_LEVEL,
   LEVEL_ICONS,
 } from '../../src/lib/xp';
 
-// xpForNext at level N = floor(2.2 * N^2) + 50
+// xpForNext at level N = floor(2.2 * min(N, 40)^2) + 50
 // Level 1 → 2 requires floor(2.2 * 1) + 50 = 52 XP
 // Level 2 → 3 requires floor(2.2 * 4) + 50 = 58 XP
+
+function totalXpRequiredForLevel(level: number): number {
+  let total = 0;
+  for (let currentLevel = 1; currentLevel < level; currentLevel++) {
+    total += getXpForNextLevel(currentLevel);
+  }
+  return total;
+}
 
 describe('calculateLevelAndProgress', () => {
   test('xp=0 → level 1, currentLevelXp=0, progressPercent=0', () => {
@@ -62,6 +72,27 @@ describe('calculateLevelAndProgress', () => {
   test('MAX_LEVEL 到達時は currentLevelXp=0', () => {
     const result = calculateLevelAndProgress(10_000_000);
     expect(result.currentLevelXp).toBe(0);
+  });
+
+  test('level-up XP is capped at the level 40 requirement', () => {
+    expect(LEVEL_XP_CAP_LEVEL).toBe(40);
+    expect(getXpForNextLevel(39)).toBe(3396);
+    expect(getXpForNextLevel(40)).toBe(3570);
+    expect(getXpForNextLevel(41)).toBe(3570);
+    expect(getXpForNextLevel(99)).toBe(3570);
+  });
+
+  test('level 40 and later use the capped XP curve', () => {
+    const level40TotalXp = totalXpRequiredForLevel(40);
+    const level50TotalXp = totalXpRequiredForLevel(50);
+
+    expect(level40TotalXp).toBe(47122);
+    expect(level50TotalXp).toBe(82822);
+
+    expect(calculateLevelAndProgress(level40TotalXp).level).toBe(40);
+    expect(calculateLevelAndProgress(level40TotalXp).nextLevelXp).toBe(3570);
+    expect(calculateLevelAndProgress(level50TotalXp).level).toBe(50);
+    expect(calculateLevelAndProgress(level50TotalXp).nextLevelXp).toBe(3570);
   });
 });
 
