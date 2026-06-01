@@ -5,11 +5,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, History, MessageSquare } from 'lucide-react';
+import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
-import { VersionHistoryPanel } from './components/VersionHistoryPanel';
 import ImportTab from './components/ImportTab';
 import UnitsTab from './components/UnitsTab';
 import ScoresTab from './components/ScoresTab';
@@ -17,6 +16,7 @@ import XpTab from './components/XpTab';
 import SuspiciousTab from './components/SuspiciousTab';
 import RolesTab from './components/RolesTab';
 import FeedbackTab from './components/FeedbackTab';
+import WrittenAnalyticsTab from './components/WrittenAnalyticsTab';
 import 'katex/dist/katex.min.css';
 
 const ANALYTICS_EVENT_BATCH_SIZE = 200;
@@ -93,7 +93,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'feedback' | 'writtenFeedback' | 'roles' | 'changelog'>('roles');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'writtenAnalytics' | 'feedback' | 'writtenFeedback' | 'roles'>('roles');
   const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
@@ -989,6 +989,13 @@ export default function AdminPage() {
           統計・分析
         </button>
         <button
+          onClick={() => setActiveTab('writtenAnalytics')}
+          className={`px-4 py-2 font-medium ${activeTab === 'writtenAnalytics' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <BarChart className="inline w-4 h-4 mr-2" />
+          記述式分析
+        </button>
+        <button
           onClick={() => setActiveTab('feedback')}
           className={`px-4 py-2 font-medium ${activeTab === 'feedback' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
         >
@@ -1008,13 +1015,6 @@ export default function AdminPage() {
         >
           <Users className="inline w-4 h-4 mr-2" />
           管理者ロール
-        </button>
-        <button 
-          onClick={() => setActiveTab('changelog')} 
-          className={`px-4 py-2 font-medium ${activeTab === 'changelog' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          <History className="inline w-4 h-4 mr-2" />
-          更新履歴
         </button>
       </div>
 
@@ -1117,6 +1117,10 @@ export default function AdminPage() {
         />
       )}
 
+      {activeTab === 'writtenAnalytics' && (
+        <WrittenAnalyticsTab />
+      )}
+
       {activeTab === 'feedback' && (
         <FeedbackTab
           feedbackItems={feedbackItems}
@@ -1154,13 +1158,6 @@ export default function AdminPage() {
           onSetMessage={setMessage}
         />
       )}
-      
-      {activeTab === 'changelog' && (
-        <div className="animate-in fade-in duration-500">
-          <VersionHistoryPanel />
-        </div>
-      )}
-
     </div>
   );
 }

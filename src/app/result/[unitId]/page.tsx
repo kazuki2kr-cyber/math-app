@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
 const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
-import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send } from 'lucide-react';
+import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
 
 // sessionStorage 縺ｫ菫晏ｭ倥＆繧後※縺・ｋ貍皮ｿ偵ョ繝ｼ繧ｿ・医け繝ｩ繧､繧｢繝ｳ繝医・豁｣隱､諠・ｱ繧呈戟縺溘↑縺・ｼ・
@@ -499,6 +499,18 @@ ${wrongList || 'なし'}
               </div>
             </CardHeader>
             <CardContent className="px-8 pb-8 space-y-6">
+              {storedData.questionText && (
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-black text-primary">
+                    <BookOpen className="h-4 w-4" />
+                    問題文
+                  </div>
+                  <div className="text-gray-900 leading-relaxed">
+                    <MathDisplay math={storedData.questionText} />
+                  </div>
+                </div>
+              )}
+
               {storedData.answerImageDataUrl && (
                 <div className="rounded-xl border bg-white p-4">
                   <p className="text-xs font-bold text-muted-foreground mb-3">提出した解答画像</p>

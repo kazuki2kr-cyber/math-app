@@ -51,6 +51,18 @@ function buildLogicalDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+function safeAnalyticsEventIdPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "unknown";
+}
+
+function isMathWrittenUnit(unitData: any): boolean {
+  if (unitData?.drillType !== "written") return false;
+  const subject = String(unitData?.subject || "").toLowerCase();
+  const baseSubject = String(unitData?.baseSubject || "").toLowerCase();
+  const subjectText = `${subject} ${baseSubject}`;
+  return subjectText.includes("math") || subjectText.includes("数学");
+}
+
 function calculateServerScore(correctCount: number, totalAnswered: number, mode: DrillMode): number {
   if (mode === "all") {
     return totalAnswered > 0 ? Math.min(100, Math.round((correctCount / totalAnswered) * 100)) : 0;
@@ -1871,6 +1883,118 @@ export const submitWrittenDrillResult = functions
     const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
     return { ...clientResult, score: grading.score };
   });
+
+export const resetWrittenEventData = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth?.token?.admin) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "管理者のみがこの操作を実行できます。"
+    );
+  }
+
+  const unitId = clampString((data as any)?.unitId, 120);
+  const restoreXp = (data as any)?.restoreXp === true;
+  if (!unitId) {
+    throw new functions.https.HttpsError("invalid-argument", "unitId is required.");
+  }
+
+  const unitSnap = await db.doc(`units/${unitId}`).get();
+  if (!unitSnap.exists || !isMathWrittenUnit(unitSnap.data() || {})) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "指定された単元は数学の記述式イベントではありません。"
+    );
+  }
+
+  const attemptsSnap = await db.collectionGroup("attempts")
+    .where("type", "==", "written")
+    .where("unitId", "==", unitId)
+    .get();
+
+  const xpByUid = new Map<string, number>();
+  const touchedUids = new Set<string>();
+
+  for (let index = 0; index < attemptsSnap.docs.length; index += 150) {
+    const batch = db.batch();
+    attemptsSnap.docs.slice(index, index + 150).forEach((attemptDoc) => {
+      const attempt = attemptDoc.data() || {};
+      const pathSegments = attemptDoc.ref.path.split("/");
+      const uid = clampString(attempt.uid || pathSegments[1], 128);
+      if (uid) {
+        touchedUids.add(uid);
+        if (restoreXp) {
+          xpByUid.set(uid, (xpByUid.get(uid) || 0) + Math.max(0, Number(attempt.xpGain) || 0));
+        }
+        batch.delete(db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`));
+      }
+      batch.delete(attemptDoc.ref);
+      batch.delete(db.collection("analytics_events").doc(`written_${attemptDoc.id}`));
+    });
+    await batch.commit();
+  }
+
+  let restoredXp = 0;
+  const touchedUidList = Array.from(touchedUids);
+  for (let index = 0; index < touchedUidList.length; index += 400) {
+    const batch = db.batch();
+    const users = await Promise.all(touchedUidList.slice(index, index + 400).map(async (uid) => {
+      const userRef = db.doc(`users/${uid}`);
+      const userSnap = await userRef.get();
+      return { uid, userRef, userSnap };
+    }));
+
+    users.forEach(({ uid, userRef, userSnap }) => {
+      if (!userSnap.exists) return;
+
+      const updatePayload: Record<string, unknown> = {
+        updatedAt: Timestamp.now().toDate().toISOString(),
+      };
+      if (restoreXp) {
+        const xpDelta = xpByUid.get(uid) || 0;
+        restoredXp += xpDelta;
+        const currentXp = Math.max(0, Number(userSnap.data()?.xp) || 0);
+        const newXp = Math.max(0, currentXp - xpDelta);
+        const levelData = calculateLevelAndProgressServer(newXp);
+        updatePayload.xp = newXp;
+        updatePayload.level = levelData.level;
+        updatePayload.title = getTitleForLevelServer(levelData.level);
+        updatePayload.progressPercent = levelData.progressPercent;
+        updatePayload.currentLevelXp = levelData.currentLevelXp;
+        updatePayload.nextLevelXp = levelData.nextLevelXp;
+      }
+
+      batch.update(
+        userRef,
+        new FieldPath("writtenStats", unitId), FieldValue.delete(),
+        ...Object.entries(updatePayload).flatMap(([key, value]) => [key, value])
+      );
+    });
+
+    await batch.commit();
+  }
+
+  await db.collection("analytics_events").doc(`reset_written_${safeAnalyticsEventIdPart(unitId)}_${Date.now()}`).set({
+    eventType: "WRITTEN_EVENT_DATA_RESET",
+    eventVersion: 1,
+    occurredAt: Timestamp.now(),
+    logicalDate: buildLogicalDate(new Date()),
+    unitId,
+    restoreXp,
+    deletedAttempts: attemptsSnap.size,
+    touchedUsers: touchedUids.size,
+    restoredXp,
+    source: "resetWrittenEventData",
+    actor: context.auth.uid,
+  });
+
+  return {
+    success: true,
+    unitId,
+    deletedAttempts: attemptsSnap.size,
+    touchedUsers: touchedUids.size,
+    restoredXp,
+  };
+});
 
 // ==========================================
 // 3. updateLeaderboard — リーダーボード更新ヘルパー
