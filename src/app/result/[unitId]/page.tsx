@@ -149,6 +149,14 @@ export default function ResultPage() {
   const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
+  const writtenFeedbackRef = React.useRef<HTMLDivElement | null>(null);
+
+  const openWrittenFeedbackForm = () => {
+    setWrittenFeedbackOpen(true);
+    window.setTimeout(() => {
+      writtenFeedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  };
 
   const processResult = useCallback(async () => {
     if (!user) return;
@@ -480,7 +488,7 @@ ${wrongList || 'なし'}
                   <Button
                     type="button"
                     size="lg"
-                    onClick={() => setWrittenFeedbackOpen(true)}
+                    onClick={openWrittenFeedbackForm}
                     disabled={writtenFeedbackSent}
                     className="shrink-0 bg-blue-700 px-6 font-black hover:bg-blue-800"
                   >
@@ -553,7 +561,7 @@ ${wrongList || 'なし'}
                 </div>
               )}
 
-              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-5">
+              <div ref={writtenFeedbackRef} className="scroll-mt-24 rounded-xl border border-blue-100 bg-blue-50/60 p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="flex items-center gap-2 text-sm font-bold text-blue-900">
@@ -568,7 +576,13 @@ ${wrongList || 'なし'}
                     type="button"
                     variant={writtenFeedbackOpen ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => setWrittenFeedbackOpen(prev => !prev)}
+                    onClick={() => {
+                      if (writtenFeedbackOpen) {
+                        setWrittenFeedbackOpen(false);
+                      } else {
+                        openWrittenFeedbackForm();
+                      }
+                    }}
                     disabled={writtenFeedbackSent}
                   >
                     {writtenFeedbackSent ? '送信済み' : writtenFeedbackOpen ? '閉じる' : '送る'}
