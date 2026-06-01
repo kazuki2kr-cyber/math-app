@@ -55,6 +55,30 @@ function safeAnalyticsEventIdPart(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "unknown";
 }
 
+function normalizeEmail(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isSchoolEmail(email: string): boolean {
+  return normalizeEmail(email).endsWith("@shibaurafzk.com");
+}
+
+function hasAppAccess(context: functions.https.CallableContext): boolean {
+  if (!context.auth) return false;
+  const token = context.auth.token || {};
+  const email = normalizeEmail(token.email);
+  return token.admin === true || token.appAccess === true || isSchoolEmail(email);
+}
+
+function assertAppAccess(context: functions.https.CallableContext): void {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+  if (!hasAppAccess(context)) {
+    throw new functions.https.HttpsError("permission-denied", "This account is not allowed to use this service.");
+  }
+}
+
 function isMathWrittenUnit(unitData: any): boolean {
   if (unitData?.drillType !== "written") return false;
   const subject = String(unitData?.subject || "").toLowerCase();
@@ -228,6 +252,7 @@ export const setAdminClaim = functions.region("us-central1").https.onCall(async 
     
     // 1. Auth Custom Claims の更新
     await auth.setCustomUserClaims(targetUser.uid, {
+      ...(targetUser.customClaims || {}),
       admin: isAdmin,
     });
 
@@ -252,6 +277,143 @@ export const setAdminClaim = functions.region("us-central1").https.onCall(async 
 // ==========================================
 // 2. submitFeedback — アプリ内フィードバックの受付
 // ==========================================
+export const setAppAccessClaim = functions.region("us-central1").https.onCall(async (data, context) => {
+  if (!context.auth?.token?.admin) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only admins can change app access."
+    );
+  }
+
+  const email = normalizeEmail((data as any)?.email);
+  const allowed = (data as any)?.allowed;
+  if (!email || typeof allowed !== "boolean") {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "email (string) and allowed (boolean) are required."
+    );
+  }
+
+  if (isSchoolEmail(email)) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "School domain accounts are already allowed automatically."
+    );
+  }
+
+  const inviteRef = db.collection("accessInvites").doc(email);
+  const now = Timestamp.now();
+
+  try {
+    const targetUser = await auth.getUserByEmail(email);
+    await auth.setCustomUserClaims(targetUser.uid, {
+      ...(targetUser.customClaims || {}),
+      appAccess: allowed,
+    });
+
+    await db.collection("users").doc(targetUser.uid).set({
+      email,
+      appAccess: allowed,
+      accessUpdatedAt: now.toDate().toISOString(),
+      accessUpdatedBy: context.auth.token.email || context.auth.uid,
+    }, { merge: true });
+
+    if (allowed) {
+      await inviteRef.delete().catch(() => undefined);
+    } else {
+      await inviteRef.set({
+        email,
+        allowed: false,
+        revokedAt: now,
+        revokedBy: context.auth.uid,
+        revokedByEmail: context.auth.token.email || "",
+      }, { merge: true });
+    }
+
+    return {
+      success: true,
+      status: allowed ? "granted" : "revoked",
+      message: `${email} app access ${allowed ? "granted" : "revoked"}.`,
+    };
+  } catch (error: any) {
+    if (error?.code !== "auth/user-not-found") {
+      throw new functions.https.HttpsError(
+        "internal",
+        `Failed to update app access for ${email}: ${error.message || error}`
+      );
+    }
+
+    if (!allowed) {
+      await inviteRef.delete().catch(() => undefined);
+      return {
+        success: true,
+        status: "invite-deleted",
+        message: `${email} pending app access invite deleted.`,
+      };
+    }
+
+    await inviteRef.set({
+      email,
+      allowed: true,
+      createdAt: now,
+      createdBy: context.auth.uid,
+      createdByEmail: context.auth.token.email || "",
+    }, { merge: true });
+
+    return {
+      success: true,
+      status: "invited",
+      message: `${email} is not registered yet. A pending app access invite was saved.`,
+    };
+  }
+});
+
+export const claimAppAccessFromInvite = functions.region("us-central1").https.onCall(async (_data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const email = normalizeEmail(context.auth.token.email);
+  if (!email) {
+    throw new functions.https.HttpsError("failed-precondition", "The signed-in account has no email.");
+  }
+
+  if (hasAppAccess(context)) {
+    return { granted: true, alreadyAllowed: true };
+  }
+
+  const inviteRef = db.collection("accessInvites").doc(email);
+  const inviteSnap = await inviteRef.get();
+  const invite = inviteSnap.data();
+  if (!inviteSnap.exists || invite?.allowed !== true) {
+    return { granted: false };
+  }
+
+  const userRecord = await auth.getUser(context.auth.uid);
+  await auth.setCustomUserClaims(context.auth.uid, {
+    ...(userRecord.customClaims || {}),
+    appAccess: true,
+  });
+
+  const now = Timestamp.now();
+  await db.collection("users").doc(context.auth.uid).set({
+    uid: context.auth.uid,
+    email,
+    displayName: context.auth.token.name || "",
+    appAccess: true,
+    accessUpdatedAt: now.toDate().toISOString(),
+    accessUpdatedBy: "invite",
+  }, { merge: true });
+
+  await inviteRef.set({
+    claimedAt: now,
+    claimedBy: context.auth.uid,
+    allowed: false,
+  }, { merge: true });
+
+  return { granted: true };
+});
+
 export const submitFeedback = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
@@ -1108,7 +1270,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   // ドメイン制限: フロントエンドと同じルールをサーバーでも強制
   const callerEmail = context.auth.token.email || "";
   const isAllowedDomain = callerEmail.endsWith("@shibaurafzk.com");
-  const isIndividualAllowed = callerEmail === "kazuki2kr@gmail.com";
+  const isIndividualAllowed = context.auth.token.admin === true || context.auth.token.appAccess === true;
   if (!isAllowedDomain && !isIndividualAllowed) {
     throw new functions.https.HttpsError("permission-denied", "このサービスの対象外アカウントです。");
   }
@@ -1673,7 +1835,7 @@ export const submitWrittenDrillResult = functions
 
     const callerEmail = context.auth.token.email || "";
     const isAllowedDomain = callerEmail.endsWith("@shibaurafzk.com");
-    const isIndividualAllowed = callerEmail === "kazuki2kr@gmail.com";
+    const isIndividualAllowed = context.auth.token.admin === true || context.auth.token.appAccess === true;
     if (!isAllowedDomain && !isIndividualAllowed) {
       throw new functions.https.HttpsError("permission-denied", "このサービスの対象外アカウントです。");
     }
@@ -2101,5 +2263,43 @@ export const listAdmins = functions.region("us-central1").https.onCall(async (da
   } while (nextPageToken);
 
   return { admins };
+});
+
+export const listAppAccessAccounts = functions.region("us-central1").https.onCall(async (_data, context) => {
+  if (!context.auth?.token?.admin) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only admins can list app access accounts."
+    );
+  }
+
+  const accounts: Array<{ uid: string; email: string; displayName: string; appAccess: boolean }> = [];
+  let nextPageToken: string | undefined;
+  do {
+    const listResult = await auth.listUsers(1000, nextPageToken);
+    for (const userRecord of listResult.users) {
+      if (userRecord.customClaims?.appAccess === true) {
+        accounts.push({
+          uid: userRecord.uid,
+          email: userRecord.email || "",
+          displayName: userRecord.displayName || "",
+          appAccess: true,
+        });
+      }
+    }
+    nextPageToken = listResult.pageToken;
+  } while (nextPageToken);
+
+  const inviteSnap = await db.collection("accessInvites").where("allowed", "==", true).get();
+  const invites = inviteSnap.docs.map((docSnap) => {
+    const invite = docSnap.data() || {};
+    return {
+      email: String(invite.email || docSnap.id),
+      createdAt: invite.createdAt?.toDate?.()?.toISOString?.() || "",
+      createdByEmail: String(invite.createdByEmail || ""),
+    };
+  });
+
+  return { accounts, invites };
 });
 

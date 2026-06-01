@@ -4,7 +4,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { AlertTriangle, RefreshCw, Save, Shield, Users, X } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Save, Shield, UserCheck, Users, X } from 'lucide-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface RolesTabProps {
@@ -23,6 +23,12 @@ interface RolesTabProps {
   adminList: Array<{ uid: string; email: string; displayName: string }>;
   adminListLoading: boolean;
   onFetchAdminList: () => void;
+  appAccessEmail: string;
+  setAppAccessEmail: (v: string) => void;
+  appAccessAccounts: Array<{ uid: string; email: string; displayName: string; appAccess: boolean }>;
+  appAccessInvites: Array<{ email: string; createdAt: string; createdByEmail: string }>;
+  appAccessListLoading: boolean;
+  onFetchAppAccessList: () => void;
   onSetMessage: (v: string) => void;
 }
 
@@ -33,9 +39,13 @@ export default function RolesTab({
   maintenanceUpdateLoading, onUpdateMaintenance,
   roleEmail, setRoleEmail,
   adminList, adminListLoading,
-  onFetchAdminList, onSetMessage,
+  onFetchAdminList,
+  appAccessEmail, setAppAccessEmail,
+  appAccessAccounts, appAccessInvites, appAccessListLoading, onFetchAppAccessList,
+  onSetMessage,
 }: RolesTabProps) {
   const [localRoleLoading, setLocalRoleLoading] = React.useState(false);
+  const [localAccessLoading, setLocalAccessLoading] = React.useState(false);
 
   const handleRoleAction = async (isAdmin: boolean) => {
     if (!roleEmail || localRoleLoading) return;
@@ -51,6 +61,24 @@ export default function RolesTab({
       onSetMessage(`エラー: ${err.message}`);
     } finally {
       setLocalRoleLoading(false);
+    }
+  };
+
+  const handleAppAccessAction = async (allowed: boolean, targetEmail = appAccessEmail) => {
+    const email = targetEmail.trim().toLowerCase();
+    if (!email || localAccessLoading) return;
+    setLocalAccessLoading(true);
+    try {
+      const functions = getFunctions(undefined, 'us-central1');
+      const setAppAccessClaim = httpsCallable(functions, 'setAppAccessClaim');
+      const result: any = await setAppAccessClaim({ email, allowed });
+      onSetMessage(`笨・${result.data.message}`);
+      setAppAccessEmail('');
+      onFetchAppAccessList();
+    } catch (err: any) {
+      onSetMessage(`繧ｨ繝ｩ繝ｼ: ${err.message}`);
+    } finally {
+      setLocalAccessLoading(false);
     }
   };
 
@@ -198,6 +226,92 @@ export default function RolesTab({
               </tbody>
             </table>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-sm">
+        <CardHeader className="bg-gray-50 border-b">
+          <CardTitle className="text-lg text-primary flex items-center gap-2">
+            <UserCheck className="w-5 h-5" /> アプリ利用許可
+          </CardTitle>
+          <CardDescription>
+            @shibaurafzk.com 以外の Google アカウントに appAccess Custom Claim を付与します。未登録メールは招待として保存され、初回ログイン時に claim 化されます。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-6 space-y-4">
+          <div className="flex gap-3">
+            <Input
+              type="email"
+              placeholder="許可するGoogleアカウントのメールアドレス"
+              value={appAccessEmail}
+              onChange={(e) => setAppAccessEmail(e.target.value)}
+              className="flex-1"
+            />
+            <Button onClick={() => handleAppAccessAction(true)} disabled={localAccessLoading || !appAccessEmail} className="bg-primary">
+              <UserCheck className="w-4 h-4 mr-2" /> 利用を許可
+            </Button>
+            <Button variant="destructive" onClick={() => handleAppAccessAction(false)} disabled={localAccessLoading || !appAccessEmail}>
+              <X className="w-4 h-4 mr-2" /> 許可を解除
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            変更済みのユーザーには次回ログイン、または ID トークン更新後に反映されます。
+          </p>
+
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+              <div className="font-semibold text-sm">許可済みアカウント</div>
+              <Button variant="outline" size="sm" onClick={onFetchAppAccessList} disabled={appAccessListLoading}>
+                <RefreshCw className={`w-4 h-4 mr-2 ${appAccessListLoading ? 'animate-spin' : ''}`} /> 更新
+              </Button>
+            </div>
+            {appAccessListLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full"></div>
+              </div>
+            ) : appAccessAccounts.length === 0 && appAccessInvites.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground">個別許可されたアカウントはありません。</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50/50">
+                    <th className="text-left p-3 font-semibold text-gray-600">状態</th>
+                    <th className="text-left p-3 font-semibold text-gray-600">メールアドレス</th>
+                    <th className="text-left p-3 font-semibold text-gray-600">名前 / 補足</th>
+                    <th className="text-right p-3 font-semibold text-gray-600">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {appAccessAccounts.map((account) => (
+                    <tr key={account.uid} className="border-b hover:bg-gray-50 transition-colors">
+                      <td className="p-3 text-green-700 font-semibold">有効</td>
+                      <td className="p-3 text-muted-foreground">{account.email}</td>
+                      <td className="p-3">{account.displayName || '-'}</td>
+                      <td className="p-3 text-right">
+                        <Button variant="outline" size="sm" onClick={() => handleAppAccessAction(false, account.email)} disabled={localAccessLoading}>
+                          解除
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {appAccessInvites.map((invite) => (
+                    <tr key={invite.email} className="border-b hover:bg-gray-50 transition-colors">
+                      <td className="p-3 text-amber-700 font-semibold">招待中</td>
+                      <td className="p-3 text-muted-foreground">{invite.email}</td>
+                      <td className="p-3 text-xs text-muted-foreground">
+                        {invite.createdByEmail ? `作成者: ${invite.createdByEmail}` : '未登録ユーザー'}
+                      </td>
+                      <td className="p-3 text-right">
+                        <Button variant="outline" size="sm" onClick={() => handleAppAccessAction(false, invite.email)} disabled={localAccessLoading}>
+                          取消
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>

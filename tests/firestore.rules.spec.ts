@@ -36,7 +36,7 @@ describe('Firestore Security Rules', () => {
   // ─────────────────────────────────────────────────────
 
   test('ユーザーは自分のプロフィールを読み取れる', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
 
     await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -52,7 +52,7 @@ describe('Firestore Security Rules', () => {
   });
 
   test('ユーザーは他ユーザーのプロフィールを読み取れない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const bobRef = doc(aliceContext.firestore(), 'users', bobId);
 
     await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -92,7 +92,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
 
     // 許可フィールドのみ → 成功
@@ -110,7 +110,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
 
     // displayName は許可リストにない → 失敗
@@ -125,7 +125,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
     await expect(updateDoc(aliceRef, { xp: 9999 })).rejects.toThrow();
   });
@@ -135,7 +135,7 @@ describe('Firestore Security Rules', () => {
   // ─────────────────────────────────────────────────────
 
   test('クライアントは attempts サブコレクションに書き込めない（Cloud Functions のみ）', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const attemptRef = doc(
       aliceContext.firestore(),
       'users',
@@ -150,7 +150,7 @@ describe('Firestore Security Rules', () => {
   });
 
   test('クライアントは wrong_answers サブコレクションに書き込めない（Cloud Functions のみ）', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const wrongRef = doc(
       aliceContext.firestore(),
       'users',
@@ -172,7 +172,7 @@ describe('Firestore Security Rules', () => {
       );
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const attemptRef = doc(
       aliceContext.firestore(),
       'users',
@@ -195,7 +195,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'leaderboards', 'overall');
     await expect(getDoc(ref)).resolves.toBeDefined();
   });
@@ -212,8 +212,35 @@ describe('Firestore Security Rules', () => {
     await expect(getDoc(ref)).rejects.toThrow();
   });
 
+  test('外部アカウントは appAccess なしではリーダーボードを読み取れない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'leaderboards', 'overall'), {
+        rankings: [],
+      });
+    });
+
+    const externalContext = testEnv.authenticatedContext('external', { email: 'external@example.com' });
+    const ref = doc(externalContext.firestore(), 'leaderboards', 'overall');
+    await expect(getDoc(ref)).rejects.toThrow();
+  });
+
+  test('外部アカウントは appAccess があればリーダーボードを読み取れる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'leaderboards', 'overall'), {
+        rankings: [],
+      });
+    });
+
+    const externalContext = testEnv.authenticatedContext('external', {
+      email: 'external@example.com',
+      appAccess: true,
+    });
+    const ref = doc(externalContext.firestore(), 'leaderboards', 'overall');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+  });
+
   test('クライアントはリーダーボードに書き込めない（Cloud Functions のみ）', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'leaderboards', 'overall');
     await expect(setDoc(ref, { rankings: [] })).rejects.toThrow();
   });
@@ -223,13 +250,13 @@ describe('Firestore Security Rules', () => {
   // ─────────────────────────────────────────────────────
 
   test('認証済みユーザーはスコアを読み取れる（ランキング表示用）', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const scoreRef = doc(aliceContext.firestore(), 'scores', 'score123');
     await expect(getDoc(scoreRef)).resolves.toBeDefined();
   });
 
   test('クライアントはスコアに直接書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const scoreRef = doc(aliceContext.firestore(), 'scores', 'newScore');
     await expect(
       setDoc(scoreRef, { uid: aliceId, score: 100 })
@@ -247,13 +274,25 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'units', 'unit1');
     await expect(getDoc(ref)).resolves.toBeDefined();
   });
 
+  test('外部アカウントは appAccess なしでは units を読み取れない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'units', 'unit1'), {
+        title: 'unit',
+      });
+    });
+
+    const externalContext = testEnv.authenticatedContext('external', { email: 'external@example.com' });
+    const ref = doc(externalContext.firestore(), 'units', 'unit1');
+    await expect(getDoc(ref)).rejects.toThrow();
+  });
+
   test('一般ユーザーは units に書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'units', 'unit1');
     await expect(setDoc(ref, { title: 'ハック' })).rejects.toThrow();
   });
@@ -278,7 +317,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'suspicious_activities', 'act1');
     await expect(getDoc(ref)).rejects.toThrow();
   });
@@ -297,7 +336,7 @@ describe('Firestore Security Rules', () => {
   });
 
   test('クライアントは suspicious_activities に直接書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'suspicious_activities', 'act1');
     await expect(setDoc(ref, { uid: aliceId })).rejects.toThrow();
   });
@@ -314,13 +353,13 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'user_feedback', 'fb1');
     await expect(getDoc(ref)).rejects.toThrow();
   });
 
   test('一般ユーザーは user_feedback に直接書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'user_feedback', 'fb1');
     await expect(setDoc(ref, { message: '直接投稿' })).rejects.toThrow();
   });
@@ -355,7 +394,7 @@ describe('Firestore Security Rules', () => {
   });
 
   test('一般ユーザーは config/maintenance に書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'config', 'maintenance');
     await expect(setDoc(ref, { enabled: true })).rejects.toThrow();
   });
@@ -398,7 +437,7 @@ describe('Firestore Security Rules', () => {
   });
 
   test('一般ユーザーは config/maintenance_kanji に書き込めない', async () => {
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'config', 'maintenance_kanji');
     await expect(setDoc(ref, { enabled: true })).rejects.toThrow();
   });
@@ -419,7 +458,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'kanji_battle_results', '1234');
     await expect(getDoc(ref)).rejects.toThrow();
   });
@@ -447,7 +486,7 @@ describe('Firestore Security Rules', () => {
       });
     });
 
-    const aliceContext = testEnv.authenticatedContext(aliceId);
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
     await expect(updateDoc(aliceRef, { kanjiXp: 9999, kanjiTotalScore: 500 })).rejects.toThrow();
 

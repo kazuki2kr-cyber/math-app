@@ -34,7 +34,7 @@ export default function PrivacyPage() {
               <section>
                 <h3 className="text-xl font-bold border-b pb-2 mb-3 mt-8">第1条（取得する情報と取得方法）</h3>
                 <p>
-                  本サービスは、ユーザーが指定のGoogleアカウント（@shibaurafzk.com）でログインする際に、以下の情報を取得します。
+                  本サービスは、ユーザーが学校アカウント（@shibaurafzk.com）または管理者が許可したGoogleアカウントでログインする際に、以下の情報を取得します。
                 </p>
                 <ul className="list-disc pl-6 space-y-1 mt-2">
                   <li>Googleアカウントのメールアドレス</li>

@@ -9,6 +9,7 @@ import {
   User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth, db } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 
@@ -22,6 +23,7 @@ interface UserData {
   icon?: string;
   hasAgreedToTerms?: boolean;
   isAdmin?: boolean;
+  appAccess?: boolean;
 }
 
 interface AuthContextType {
@@ -61,12 +63,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         // ドメイン制限チェック
         const email = firebaseUser.email || "";
         const isAllowedDomain = email.endsWith('@shibaurafzk.com');
-        const isIndividualAllowed = email === 'kazuki2kr@gmail.com';
+        let tokenResult = await firebaseUser.getIdTokenResult(true);
+        let isIndividualAllowed = tokenResult.claims.admin === true || tokenResult.claims.appAccess === true;
+
+        if (!isAllowedDomain && !isIndividualAllowed) {
+          try {
+            const functions = getFunctions(undefined, 'us-central1');
+            const claimAppAccessFromInvite = httpsCallable(functions, 'claimAppAccessFromInvite');
+            const result: any = await claimAppAccessFromInvite({});
+            if (result.data?.granted === true) {
+              tokenResult = await firebaseUser.getIdTokenResult(true);
+              isIndividualAllowed = tokenResult.claims.admin === true || tokenResult.claims.appAccess === true;
+            }
+          } catch (claimErr) {
+            console.warn('Failed to claim app access invite:', claimErr);
+          }
+        }
 
         if (!isAllowedDomain && !isIndividualAllowed) {
           console.warn("Unauthorized domain. Signing out.");
           await firebaseSignOut(auth);
-          setError('@shibaurafzk.com ドメインのGoogleアカウントでログインしてください。');
+          setError('@shibaurafzk.com のGoogleアカウント、または管理者が許可したGoogleアカウントでログインしてください。');
           setUser(null);
           setIsAdmin(false);
           setLoading(false);
@@ -114,11 +131,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
 
           // Check admin custom claim
-          const tokenResult = await firebaseUser.getIdTokenResult(true); // Force refresh to be sure
           const adminClaim = !!tokenResult.claims.admin;
           setIsAdmin(adminClaim);
 
-          setUser({ ...finalUserData, isAdmin: adminClaim } as UserData);
+          setUser({ ...finalUserData, isAdmin: adminClaim, appAccess: !!tokenResult.claims.appAccess } as UserData);
           setError(null);
         } catch (err) {
           console.error("Firestore user fetch/create error:", err);

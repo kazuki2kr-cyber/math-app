@@ -123,6 +123,10 @@ export default function AdminPage() {
   const [roleEmail, setRoleEmail] = useState('');
   const [adminList, setAdminList] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
   const [adminListLoading, setAdminListLoading] = useState(false);
+  const [appAccessEmail, setAppAccessEmail] = useState('');
+  const [appAccessAccounts, setAppAccessAccounts] = useState<Array<{ uid: string; email: string; displayName: string; appAccess: boolean }>>([]);
+  const [appAccessInvites, setAppAccessInvites] = useState<Array<{ email: string; createdAt: string; createdByEmail: string }>>([]);
+  const [appAccessListLoading, setAppAccessListLoading] = useState(false);
 
   // Maintenance mode state
   const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
@@ -141,6 +145,7 @@ export default function AdminPage() {
     if (activeTab === 'writtenFeedback') fetchWrittenFeedback();
     if (activeTab === 'roles') {
       fetchAdminList();
+      fetchAppAccessList();
       fetchMaintenanceStatus();
     }
     if (activeTab !== 'analytics') setAnalyticsAutoLoad(false);
@@ -256,6 +261,22 @@ export default function AdminPage() {
       setMessage(`管理者一覧取得エラー: ${err.message}`);
     } finally {
       setAdminListLoading(false);
+    }
+  };
+
+  const fetchAppAccessList = async () => {
+    setAppAccessListLoading(true);
+    try {
+      const functions = getFunctions(undefined, 'us-central1');
+      const listAppAccessAccountsFn = httpsCallable(functions, 'listAppAccessAccounts');
+      const result: any = await listAppAccessAccountsFn({});
+      setAppAccessAccounts(result.data.accounts || []);
+      setAppAccessInvites(result.data.invites || []);
+    } catch (err: any) {
+      console.error('Failed to fetch app access list:', err);
+      setMessage(`利用許可一覧の取得エラー: ${err.message}`);
+    } finally {
+      setAppAccessListLoading(false);
     }
   };
 
@@ -1155,6 +1176,12 @@ export default function AdminPage() {
           adminList={adminList}
           adminListLoading={adminListLoading}
           onFetchAdminList={fetchAdminList}
+          appAccessEmail={appAccessEmail}
+          setAppAccessEmail={setAppAccessEmail}
+          appAccessAccounts={appAccessAccounts}
+          appAccessInvites={appAccessInvites}
+          appAccessListLoading={appAccessListLoading}
+          onFetchAppAccessList={fetchAppAccessList}
           onSetMessage={setMessage}
         />
       )}

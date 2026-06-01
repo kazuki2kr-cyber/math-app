@@ -37,7 +37,7 @@ export default function LoginPage() {
           
           <CardTitle className="text-4xl font-extrabold tracking-tight text-gray-900">Formix</CardTitle>
           <CardDescription className="text-base pt-2">
-            学校アカウント（@shibaurafzk.com）でログインしてください
+            学校アカウント（@shibaurafzk.com）または管理者が許可したGoogleアカウントでログインしてください
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5 px-10 pb-10">

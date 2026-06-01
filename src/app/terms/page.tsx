@@ -42,7 +42,7 @@ export default function TermsPage() {
               <section>
                 <h3 className="text-xl font-bold border-b pb-2 mb-3 mt-8">第2条（利用資格とアカウント管理）</h3>
                 <p>
-                  1. 本サービスは、本校が発行する指定のGoogleアカウント（@shibaurafzk.com）を所有する生徒のみが利用できます。<br/>
+                  1. 本サービスは、本校が発行する指定のGoogleアカウント（@shibaurafzk.com）または管理者が個別に許可したGoogleアカウントで利用できます。<br/>
                   2. ユーザーは、自己の責任においてアカウントおよびパスワードを管理するものとし、第三者に譲渡または貸与することはできません。<br/>
                   3. アカウントの管理不十分、使用上の過誤、第三者の使用等による損害の責任はユーザーが負うものとします。
                 </p>
