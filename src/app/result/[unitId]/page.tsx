@@ -11,7 +11,7 @@ const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.def
 import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
 
-// sessionStorage 縺ｫ菫晏ｭ倥＆繧後※縺・ｋ貍皮ｿ偵ョ繝ｼ繧ｿ・医け繝ｩ繧､繧｢繝ｳ繝医・豁｣隱､諠・ｱ繧呈戟縺溘↑縺・ｼ・
+// Drill result data saved in sessionStorage. Correctness is recalculated server-side.
 interface StoredDrillData {
   type?: 'multiple_choice' | 'written';
   attemptId?: string;
@@ -26,13 +26,13 @@ interface StoredDrillData {
   answerImageDataUrl?: string;
 }
 
-// 繧ｵ繝ｼ繝舌・縺九ｉ霑斐▲縺ｦ縺上ｋ豁｣隗｣蝠城｡・
+// Correct questions returned from the server.
 interface CorrectQuestion {
   id: string;
   question_text: string;
 }
 
-// 繧ｵ繝ｼ繝舌・縺九ｉ霑斐▲縺ｦ縺上ｋ荳肴ｭ｣隗｣蝠城｡・
+// Incorrect questions returned from the server.
 interface WrongQuestion {
   id: string;
   question_text: string;
@@ -170,7 +170,7 @@ export default function ResultPage() {
 
     const parsed: StoredDrillData = JSON.parse(stored);
 
-    // 譌ｧ蠖｢蠑擾ｼ・nswers 繝輔ぅ繝ｼ繝ｫ繝峨↑縺暦ｼ峨・繝・・繧ｿ縺梧ｮ九▲縺ｦ縺・◆蝣ｴ蜷医・遐ｴ譽・＠縺ｦ繝繝・す繝･繝懊・繝峨∈
+    // Discard stale non-written data that lacks the answers field.
     if (parsed.type === 'written') {
       if (!parsed.questionId || !parsed.answerImageDataUrl) {
         sessionStorage.removeItem('drillResult');
@@ -187,7 +187,7 @@ export default function ResultPage() {
     setError(null);
     setSaving(true);
 
-    // 騾｣謇馴亟豁｢・・essionStorage 縺ｯ繝ｪ繝ｭ繝ｼ繝牙ｯｾ蠢懊・縺溘ａ谿九☆・・
+    // Prevent duplicate submission while preserving sessionStorage for reload handling.
     if (processedRef.current) return;
     processedRef.current = true;
 
@@ -195,7 +195,7 @@ export default function ResultPage() {
       const functions = getFunctions(undefined, 'us-central1');
       const process = httpsCallable(functions, parsed.type === 'written' ? 'submitWrittenDrillResult' : 'processDrillResult');
 
-      // 15遘偵・繧ｿ繧､繝繧｢繧ｦ繝亥・逅・
+      // Timeout: written grading can take longer because it calls Gemini.
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('TIMEOUT')), parsed.type === 'written' ? 120000 : 15000)
       );
@@ -263,7 +263,7 @@ export default function ResultPage() {
 
         if (data.isLevelUp) {
           const newIcons = getAvailableIcons(data.newLevel);
-          const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '雌';
+          const newlyUnlockedIcon = newIcons[newIcons.length - 1] || '🎓';
           setLevelUpData({
             oldLevel: data.oldLevel,
             newLevel: data.newLevel,
@@ -278,7 +278,7 @@ export default function ResultPage() {
 
     } catch (err: any) {
       console.error('Failed to process drill result:', err);
-      processedRef.current = false; // 蜀崎ｩｦ陦後ｒ蜿ｯ閭ｽ縺ｫ縺吶ｋ
+      processedRef.current = false; // Allow retry.
       if (err.message === 'TIMEOUT') {
         setError('通信がタイムアウトしました。通信環境を確認して、再試行してください。');
       } else {
@@ -795,7 +795,7 @@ ${wrongList || 'なし'}
               <div className="p-8 text-center bg-[#F8FAEB]">
                 <div className="flex justify-center items-center gap-6 mb-8">
                   <div className="text-5xl font-bold text-gray-400">{levelUpData.oldLevel}</div>
-                  <div className="text-muted-foreground w-8 h-8 flex items-center justify-center animate-pulse">笆ｶ</div>
+                  <div className="text-muted-foreground w-8 h-8 flex items-center justify-center animate-pulse">▶</div>
                   <div className="text-7xl font-black text-amber-500 drop-shadow-sm">{levelUpData.newLevel}</div>
                 </div>
 

@@ -53,10 +53,12 @@ const UNITS_CACHE_EXPIRY_MS = 60 * 1000;
 
 function isBattleUnit(unit: Unit) {
   const subject = String(unit.subject || '');
+  // mojibake-ok: legacy imported battle subject values are kept for compatibility.
   return unit.mode === 'battle' || subject.endsWith('対戦') || subject.endsWith('蟇ｾ謌ｦ');
 }
 
 function isMathSubjectValue(value?: string) {
+  // mojibake-ok: legacy imported math subject values are kept for compatibility.
   return !value || value === 'math' || value === '数学' || value === '謨ｰ蟄ｦ';
 }
 

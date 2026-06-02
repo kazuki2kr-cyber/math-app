@@ -103,6 +103,8 @@ Windows PowerShell で `npm.ps1` の実行ポリシーに当たる場合は `npm
 - **UI設計**: `vercel-react-best-practices` および `vercel-composition-patterns` に従い、パフォーマンスと保守性を高める。
 - **エラーハンドリング**: Cloud Functions では `functions.https.HttpsError` を使用。
 - **型定義**: `any` の使用は最小限にする。
+- **文字コード**: ソース、Markdown、CSV、設定ファイルは原則 UTF-8 で保存する。Shift_JIS / CP932 で保存しない。日本語や絵文字を含むファイルを編集する場合は、文字化け（例: `縺`, `繧`, `繝`, `謨`, `笆`, `�`）が混入していないか確認する。<!-- mojibake-ok: this line intentionally documents common mojibake markers. -->
+- **文字化け検知**: 手動確認には `npm run check:mojibake` を使用する。意図的に旧データ互換の文字化け値を残す場合のみ、その行に `mojibake-ok` を明記する。文字化けを見つけた場合は推測で置換せず、git履歴、元CSV、元資料から復元する。
 
 ---
 

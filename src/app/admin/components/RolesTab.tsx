@@ -72,11 +72,11 @@ export default function RolesTab({
       const functions = getFunctions(undefined, 'us-central1');
       const setAppAccessClaim = httpsCallable(functions, 'setAppAccessClaim');
       const result: any = await setAppAccessClaim({ email, allowed });
-      onSetMessage(`笨・${result.data.message}`);
+      onSetMessage(`✅ ${result.data.message}`);
       setAppAccessEmail('');
       onFetchAppAccessList();
     } catch (err: any) {
-      onSetMessage(`繧ｨ繝ｩ繝ｼ: ${err.message}`);
+      onSetMessage(`エラー: ${err.message}`);
     } finally {
       setLocalAccessLoading(false);
     }

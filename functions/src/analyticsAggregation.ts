@@ -549,7 +549,7 @@ async function fetchUnitMetadata(): Promise<Map<string, UnitMetadata>> {
     metadata.set(unitDoc.id, {
       unitId: unitDoc.id,
       unitTitle: unitData.title || unitDoc.id,
-      subject: unitData.subject || "謨ｰ蟄ｦ",
+      subject: unitData.subject || "数学",
       category: unitData.category || "\u305d\u306e\u4ed6",
       questions: questionsSnapshot.docs.map((questionDoc) => {
         const questionData = questionDoc.data() as any;
@@ -573,7 +573,7 @@ async function fetchUserNames(): Promise<Map<string, string>> {
     const data = userDoc.data() as any;
     names.set(
       userDoc.id,
-      data.displayName || data.name || data.email || "繝ｦ繝ｼ繧ｶ繝ｼ"
+      data.displayName || data.name || data.email || "ユーザー"
     );
   }
 
@@ -883,7 +883,7 @@ ${whereClause}
       atRiskUsers: Number(qualityRow?.atRiskUsers || 0),
     },
     bySubject: bySubject.map((row) => ({
-      subject: row.subject || "謨ｰ蟄ｦ",
+      subject: row.subject || "数学",
       totalAttempts: Number(row.totalAttempts || 0),
       avgAccuracy: Number(row.avgAccuracy || 0),
     })),
@@ -1219,7 +1219,7 @@ ORDER BY scope_type, scope_value, rankKind, rank_num
         atRiskUsers: Number(qualityRow.atRiskUsers || 0),
       },
       bySubject: (bySubjectByScope.get(key) || []).map((subjectRow) => ({
-        subject: subjectRow.subject || "隰ｨ・ｰ陝・ｽｦ",
+        subject: subjectRow.subject || "数学",
         totalAttempts: Number(subjectRow.totalAttempts || 0),
         avgAccuracy: Number(subjectRow.avgAccuracy || 0),
       })),
@@ -1660,7 +1660,7 @@ ORDER BY category, occurred_date
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       unitId,
       unitTitle: unitMeta?.unitTitle || row.unit_title || unitId,
-      subject: unitMeta?.subject || row.subject || "謨ｰ蟄ｦ",
+      subject: unitMeta?.subject || row.subject || "数学",
       category: unitMeta?.category || "\u305d\u306e\u4ed6",
       totals: {
         totalAttempts: Number(row.total_attempts || 0),
@@ -1924,7 +1924,7 @@ GROUP BY unit_id, question_id
       unitId,
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       unitTitle: unitMeta?.unitTitle || row.unit_title || unitId,
-      subject: unitMeta?.subject || row.subject || "謨ｰ蟄ｦ",
+      subject: unitMeta?.subject || row.subject || "数学",
       category: unitMeta?.category || "\u305d\u306e\u4ed6",
       totals: {
         totalAttempts: Number(row.total_attempts || 0),
