@@ -103,6 +103,8 @@ unit_id,category,question_text,options,answer_index,explanation,image_url,questi
 4. `explanation` は、元資料の逐語コピーを避け、学習者向けに短く再説明する。
 5. 同じ `unit_id` に記述式問題を複数入れない。
 
+採点API側では答案画像の読み取り結果を `transcription` として保存します。CSV作成時の `model_answer` と `grading_rubric` は問題固有の数学的基準に絞り、OCR・文字起こし・画像品質に関する共通指示は書き込まないでください。
+
 ### 記述式ルーブリックの厳格化
 
 記述式問題では、正答値だけでなく答案としての説明力を採点します。採点者が行間を好意的に補う前提にせず、答案に書かれた内容だけで判断できるルーブリックにします。

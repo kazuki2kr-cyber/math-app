@@ -312,8 +312,6 @@ export default function DrillPage() {
   };
 
   const composeWrittenAnswerImage = async (pageImages: string[]) => {
-    if (pageImages.length === 1) return pageImages[0];
-
     const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
@@ -322,10 +320,65 @@ export default function DrillPage() {
     });
 
     const images = await Promise.all(pageImages.map(loadImage));
+    const trimImage = (img: HTMLImageElement) => {
+      const source = document.createElement('canvas');
+      source.width = img.width;
+      source.height = img.height;
+      const sourceCtx = source.getContext('2d');
+      if (!sourceCtx) return source;
+      sourceCtx.fillStyle = '#ffffff';
+      sourceCtx.fillRect(0, 0, source.width, source.height);
+      sourceCtx.drawImage(img, 0, 0);
+
+      const imageData = sourceCtx.getImageData(0, 0, source.width, source.height);
+      const data = imageData.data;
+      let minX = source.width;
+      let minY = source.height;
+      let maxX = -1;
+      let maxY = -1;
+
+      for (let y = 0; y < source.height; y += 1) {
+        for (let x = 0; x < source.width; x += 1) {
+          const index = (y * source.width + x) * 4;
+          const alpha = data[index + 3];
+          const isInk = alpha > 16 && (data[index] < 248 || data[index + 1] < 248 || data[index + 2] < 248);
+          if (!isInk) continue;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+
+      if (maxX < 0 || maxY < 0) return source;
+
+      const margin = 96;
+      const cropX = Math.max(0, minX - margin);
+      const cropY = Math.max(0, minY - margin);
+      const cropRight = Math.min(source.width, maxX + margin + 1);
+      const cropBottom = Math.min(source.height, maxY + margin + 1);
+      const cropWidth = cropRight - cropX;
+      const cropHeight = cropBottom - cropY;
+
+      if (cropWidth <= 0 || cropHeight <= 0) return source;
+
+      const trimmed = document.createElement('canvas');
+      trimmed.width = cropWidth;
+      trimmed.height = cropHeight;
+      const trimmedCtx = trimmed.getContext('2d');
+      if (!trimmedCtx) return source;
+      trimmedCtx.fillStyle = '#ffffff';
+      trimmedCtx.fillRect(0, 0, cropWidth, cropHeight);
+      trimmedCtx.drawImage(source, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+      return trimmed;
+    };
+
+    const trimmedPages = images.map(trimImage);
+    if (trimmedPages.length === 1) return trimmedPages[0].toDataURL('image/png');
+
     const gap = 36;
-    const pageLabelHeight = 34;
-    const width = Math.max(...images.map(img => img.width));
-    const height = images.reduce((sum, img) => sum + img.height + pageLabelHeight, 0) + gap * (images.length - 1);
+    const width = Math.max(...trimmedPages.map(page => page.width));
+    const height = trimmedPages.reduce((sum, page) => sum + page.height, 0) + gap * (trimmedPages.length - 1);
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -336,18 +389,12 @@ export default function DrillPage() {
     ctx.fillRect(0, 0, width, height);
 
     let y = 0;
-    images.forEach((img, index) => {
-      ctx.fillStyle = '#f3f4f6';
-      ctx.fillRect(0, y, width, pageLabelHeight);
-      ctx.fillStyle = '#374151';
-      ctx.font = '24px sans-serif';
-      ctx.fillText(`Page ${index + 1}`, 18, y + 24);
-      y += pageLabelHeight;
-      ctx.drawImage(img, (width - img.width) / 2, y);
-      y += img.height + gap;
+    trimmedPages.forEach((page) => {
+      ctx.drawImage(page, (width - page.width) / 2, y);
+      y += page.height + gap;
     });
 
-    return canvas.toDataURL('image/jpeg', 0.9);
+    return canvas.toDataURL('image/png');
   };
 
   const handleWrittenSubmit = async () => {
@@ -362,7 +409,7 @@ export default function DrillPage() {
     }
 
     const pageImages = activeRefs
-      .map(ref => ref?.toDataURL())
+      .map(ref => ref?.hasStrokes() ? ref.toDataURL() : null)
       .filter((value): value is string => Boolean(value));
     if (pageImages.length === 0) {
       alert('解答画像の作成に失敗しました。もう一度お試しください。');

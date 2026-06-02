@@ -1773,6 +1773,7 @@ async function gradeWrittenAnswerWithGemini(params: {
     "Deduct points when variables are introduced without definition, for example using r or h without stating what they represent.",
     "Deduct points for missing units, missing conclusion sentence, unclear comparison target, skipped justification, formula misuse, algebra mistakes, or ambiguous notation.",
     "If the rubric is vague, reserve 10 to 20 points for mathematical communication: variable definitions, readable steps, and answering the exact question.",
+    "Before grading, briefly transcribe the visible handwritten answer. Use the transcription only as a record of what you read from the image. If a part is unreadable, write [unclear].",
     "In feedback, improvementPoints, rubric comments, and detectedAnswer, wrap all mathematical expressions in LaTeX delimiters like \\( ... \\). Use \\times, \\div, \\frac{}, and \\pi instead of plain symbols where appropriate.",
     "",
     `Unit: ${params.unitTitle}`,
@@ -1781,7 +1782,7 @@ async function gradeWrittenAnswerWithGemini(params: {
     `Rubric: ${JSON.stringify(params.gradingRubric || [])}`,
     "",
     "JSON schema:",
-    '{"score":number,"detectedAnswer":string,"rubricScores":[{"label":string,"score":number,"maxScore":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
+    '{"score":number,"transcription":string,"detectedAnswer":string,"rubricScores":[{"label":string,"score":number,"maxScore":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
   ].join("\n");
 
   const response = await fetch(
@@ -1816,12 +1817,19 @@ async function gradeWrittenAnswerWithGemini(params: {
   const parsed = extractJsonObject(responseText);
   return {
     score: clampScore(parsed?.score),
+    transcription: clampString(parsed?.transcription, 2000),
     detectedAnswer: clampString(parsed?.detectedAnswer, 300),
     rubricScores: normalizeRubricScores(parsed?.rubricScores),
     feedback: clampString(parsed?.feedback, 1200),
     improvementPoints: Array.isArray(parsed?.improvementPoints)
       ? parsed.improvementPoints.slice(0, 5).map((point: unknown) => clampString(point, 300)).filter(Boolean)
       : [],
+    usageMetadata: {
+      model,
+      promptTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.promptTokenCount) || 0)),
+      candidatesTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.candidatesTokenCount) || 0)),
+      totalTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.totalTokenCount) || 0)),
+    },
   };
 }
 

@@ -52,6 +52,7 @@ interface XpDetails {
 
 interface WrittenGrading {
   score: number;
+  transcription?: string;
   detectedAnswer: string;
   feedback: string;
   improvementPoints: string[];
@@ -526,6 +527,15 @@ ${wrongList || 'なし'}
                 <div className="rounded-xl border bg-gray-50 p-4">
                   <p className="text-xs font-bold text-muted-foreground mb-2">読み取った答え</p>
                   <MathDisplay math={writtenGrading.detectedAnswer} />
+                </div>
+              )}
+
+              {writtenGrading.transcription && (
+                <div className="rounded-xl border bg-gray-50 p-4">
+                  <p className="text-xs font-bold text-muted-foreground mb-2">AIが読み取った答案</p>
+                  <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
+                    <FeedbackMath className="text-sm">{writtenGrading.transcription}</FeedbackMath>
+                  </div>
                 </div>
               )}
 

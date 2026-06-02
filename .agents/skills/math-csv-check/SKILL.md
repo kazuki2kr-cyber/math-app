@@ -110,6 +110,8 @@ unit_id,category,question_text,options,answer_index,explanation,image_url,questi
 `model_answer` には、正しい途中式の代表例、最終答、同値な答え方、表記ゆれ、単位の扱い、部分点条件、減点すべき典型ミスを含めます。
 `grading_rubric` は、合計100点になるように設計します。原則は **過程・記述60点、最終答・結論40点** です。
 
+採点API側では、答案画像から読み取った内容を `transcription` として返します。問題作成側の `model_answer` や `grading_rubric` には、OCR・文字起こし・読めない箇所の扱いなどの汎用指示を入れないでください。ここでは問題固有の数学的採点基準だけを記述します。読み取り精度に関する指示は Cloud Functions の共通採点プロンプトに集約します。
+
 採点上限の共通ルール:
 
 - 最終答・結論が数学的に誤っている場合、どれだけ途中が良くても原則60点を上限にする。
