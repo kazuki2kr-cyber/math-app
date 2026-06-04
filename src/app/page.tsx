@@ -49,7 +49,15 @@ interface WrittenStat {
 }
 
 const UNITS_CACHE_KEY = 'math_units_cache_v4';
-const UNITS_CACHE_EXPIRY_MS = 60 * 1000;
+const UNITS_CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const DRILL_DATA_CACHE_PREFIX = 'math_drill_data_cache_v1:';
+
+function clearDrillDataCache() {
+  if (typeof window === 'undefined') return;
+  Object.keys(localStorage)
+    .filter(key => key.startsWith(DRILL_DATA_CACHE_PREFIX))
+    .forEach(key => localStorage.removeItem(key));
+}
 
 function isBattleUnit(unit: Unit) {
   const subject = String(unit.subject || '');
@@ -514,6 +522,7 @@ export default function Home() {
                     size="sm"
                     onClick={() => {
                       localStorage.removeItem(UNITS_CACHE_KEY);
+                      clearDrillDataCache();
                       setUnitsRefreshToken(prev => prev + 1);
                     }}
                     disabled={loading}

@@ -14,6 +14,8 @@ import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, 
 import { parseOptions } from '@/lib/utils';
 
 const STANDARD_DRILL_QUESTION_COUNT = 10;
+const DRILL_DATA_CACHE_PREFIX = 'math_drill_data_cache_v1:';
+const DRILL_DATA_CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const STROKE_WIDTH_OPTIONS = [
   { id: 'standard', label: '標準', width: 4 },
   { id: 'thin', label: '細い', width: 2.5 },
@@ -36,9 +38,9 @@ type ScratchTool = 'pen' | 'eraser';
 interface RawQuestion {
   id: string;
   question_text: string;
-  options: string[];
-  answer_index: number;
-  explanation: string;
+  options: string[] | string;
+  answer_index?: number;
+  explanation?: string;
   image_url: string | null;
   questionType?: DrillType;
 }
@@ -59,6 +61,58 @@ interface Unit {
   mode: DrillMode;
   drillType?: DrillType;
   writtenAttemptLimit?: number;
+}
+
+interface CachedDrillData {
+  timestamp: number;
+  unit: {
+    title: string;
+    drillType?: DrillType;
+  };
+  questions: RawQuestion[];
+}
+
+type ParsedRawQuestion = Omit<RawQuestion, 'options'> & { options: string[] };
+
+function getDrillDataCacheKey(unitId: string) {
+  return `${DRILL_DATA_CACHE_PREFIX}${unitId}`;
+}
+
+function readCachedDrillData(unitId: string): CachedDrillData | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const cached = localStorage.getItem(getDrillDataCacheKey(unitId));
+    if (!cached) return null;
+
+    const parsed = JSON.parse(cached) as CachedDrillData;
+    if (Date.now() - parsed.timestamp >= DRILL_DATA_CACHE_EXPIRY_MS) return null;
+    if (!parsed.unit?.title || !Array.isArray(parsed.questions)) return null;
+    return parsed;
+  } catch (err) {
+    console.error('Failed to parse drill data cache', err);
+    localStorage.removeItem(getDrillDataCacheKey(unitId));
+    return null;
+  }
+}
+
+function writeCachedDrillData(unitId: string, rawUnit: any, questions: RawQuestion[]) {
+  if (typeof window === 'undefined') return;
+
+  const cacheData: CachedDrillData = {
+    timestamp: Date.now(),
+    unit: {
+      title: String(rawUnit.title || unitId),
+      drillType: rawUnit.drillType === 'written' ? 'written' : 'multiple_choice',
+    },
+    questions: questions.map(({ answer_index, explanation, ...question }) => question),
+  };
+
+  try {
+    localStorage.setItem(getDrillDataCacheKey(unitId), JSON.stringify(cacheData));
+  } catch (err) {
+    console.error('Failed to write drill data cache', err);
+  }
 }
 
 export default function DrillPage() {
@@ -131,17 +185,30 @@ export default function DrillPage() {
   useEffect(() => {
     async function fetchUnit() {
       try {
-        const snap = await getDoc(doc(db, 'units', unitId));
-        if (snap.exists()) {
-          const rawUnit = snap.data();
+        const cachedDrillData = readCachedDrillData(unitId);
+        let rawUnit: any | null = null;
+        let fetchedQuestions: RawQuestion[] = [];
 
-          let fetchedQuestions: RawQuestion[] = (rawUnit.questions as RawQuestion[]) || [];
-          if (!rawUnit.questions || rawUnit.questions.length === 0) {
-            const qSnap = await getDocs(query(collection(db, 'units', unitId, 'questions'), orderBy('order', 'asc')));
-            fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as RawQuestion));
+        if (cachedDrillData) {
+          rawUnit = cachedDrillData.unit;
+          fetchedQuestions = cachedDrillData.questions;
+        } else {
+          const snap = await getDoc(doc(db, 'units', unitId));
+          if (snap.exists()) {
+            rawUnit = snap.data();
+            fetchedQuestions = (rawUnit.questions as RawQuestion[]) || [];
+
+            if (!rawUnit.questions || rawUnit.questions.length === 0) {
+              const qSnap = await getDocs(query(collection(db, 'units', unitId, 'questions'), orderBy('order', 'asc')));
+              fetchedQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() } as RawQuestion));
+            }
+
+            writeCachedDrillData(unitId, rawUnit, fetchedQuestions);
           }
+        }
 
-          const parsedQuestions: RawQuestion[] = fetchedQuestions.map(q => ({
+        if (rawUnit) {
+          const parsedQuestions: ParsedRawQuestion[] = fetchedQuestions.map(q => ({
             ...q,
             options: parseOptions(q.options as unknown as string),
           }));
@@ -179,7 +246,7 @@ export default function DrillPage() {
             return a;
           };
 
-          let selectedQuestions: RawQuestion[];
+          let selectedQuestions: ParsedRawQuestion[];
           if (drillType === 'written') {
             selectedQuestions = filteredQuestions.slice(0, 1);
           } else if (mode === 'all') {
