@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
+import { extractJsonObject } from "./writtenGradingJson";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -1702,32 +1703,6 @@ function parseDataUrlImage(dataUrl: string): { mimeType: string; data: string } 
   return { mimeType: match[1], data: match[2] };
 }
 
-function extractJsonObject(text: string): any {
-  const escapeLikelyLatexBackslashes = (raw: string) => raw
-    .replace(/\\(?=(?:frac|sqrt|pi|times|div|cdot|left|right|le|ge|neq|theta|alpha|beta|gamma|Delta)\b)/g, "\\\\")
-    .replace(/\\(?=[()])/g, "\\\\");
-
-  const parseJson = (raw: string) => {
-    try {
-      return JSON.parse(escapeLikelyLatexBackslashes(raw));
-    } catch {
-      // Some Gemini models may emit LaTeX like \( ... \) inside JSON strings
-      // without escaping the backslash for JSON. Preserve valid JSON escapes and
-      // double only invalid ones before retrying.
-      const repaired = escapeLikelyLatexBackslashes(raw).replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
-      return JSON.parse(repaired);
-    }
-  };
-
-  try {
-    return parseJson(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON object in Gemini response.");
-    return parseJson(match[0]);
-  }
-}
-
 function normalizeRubricScores(value: unknown): WrittenRubricScore[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 8).map((item: any) => ({
@@ -1895,7 +1870,7 @@ export const submitWrittenDrillResult = functions
     }
 
     const modelAnswerText = String(question.modelAnswer || question.model_answer || question.explanation || "");
-    const limit = 1;
+    const limit = Math.max(2, Math.trunc(Number(unitData.writtenAttemptLimit) || 2));
     const limitRef = db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`);
     const attemptDocId = clampString(attemptId, 120) || db.collection(`users/${uid}/attempts`).doc().id;
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);

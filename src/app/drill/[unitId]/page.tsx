@@ -285,7 +285,7 @@ export default function DrillPage() {
             questions: finalQuestions,
             mode,
             drillType,
-            writtenAttemptLimit: 1,
+            writtenAttemptLimit: Math.max(2, Number(rawUnit.writtenAttemptLimit) || 2),
           });
           setStartTime(Date.now());
         } else {
@@ -559,7 +559,7 @@ export default function DrillPage() {
               <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
                 Written Event
                 <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-                  1問 / 最大1回
+                  1問 / 最大{unit.writtenAttemptLimit || 2}回
                 </span>
               </CardDescription>
               <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">

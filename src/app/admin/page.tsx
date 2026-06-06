@@ -859,6 +859,7 @@ export default function AdminPage() {
             } = row;
             if (!unit_id) return;
             const rowDrillType = question_type === 'written' || subjectMetadata.drillType === 'written' ? 'written' : 'multiple_choice';
+            const writtenAttemptLimit = Math.max(2, parseInt(written_attempt_limit, 10) || 2);
 
             if (!unitsMap[unit_id]) {
               unitsMap[unit_id] = {
@@ -872,7 +873,7 @@ export default function AdminPage() {
                   eventStatus: rowDrillType === 'written' ? (event_status || 'active') : null,
                   eventStartsAt: event_starts_at || null,
                   eventEndsAt: event_ends_at || null,
-                  writtenAttemptLimit: rowDrillType === 'written' ? 1 : null,
+                  writtenAttemptLimit: rowDrillType === 'written' ? writtenAttemptLimit : null,
                   writtenXpBase: rowDrillType === 'written' ? 232 : null,
                   includeInTotalScore: rowDrillType !== 'written',
                   category: category || '1.正の数と負の数',

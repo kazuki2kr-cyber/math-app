@@ -576,9 +576,12 @@ export default function Home() {
                       const totalQ = unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
                       const isWrittenUnit = unit.drillType === 'written';
                       const writtenStat = writtenStats[unit.id];
-                      const writtenLimit = 1;
+                      const writtenLimit = Math.max(2, Number(unit.writtenAttemptLimit) || 2);
                       const writtenAttemptCount = writtenStat?.attemptCount || 0;
-                      const writtenRemaining = writtenStat?.remainingAttempts ?? Math.max(0, writtenLimit - writtenAttemptCount);
+                      const writtenRemaining = Math.max(
+                        writtenStat?.remainingAttempts ?? 0,
+                        Math.max(0, writtenLimit - writtenAttemptCount)
+                      );
                       const hasPlayed = isWrittenUnit ? !!writtenStat : !!myScore;
                       const displayTitle = unit.title.replace(/^単元\s*/, '');
                       const drillCount = drillCounts[unit.id];

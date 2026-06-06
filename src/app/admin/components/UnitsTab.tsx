@@ -121,7 +121,7 @@ export default function UnitsTab({
                     <span className="font-bold text-gray-700">状態:</span> {unit.eventStatus || 'active'}
                   </div>
                   <div className="rounded border bg-white px-3 py-2">
-                    <span className="font-bold text-gray-700">提出上限:</span> 1回
+                    <span className="font-bold text-gray-700">提出上限:</span> {Math.max(2, Number(unit.writtenAttemptLimit) || 2)}回
                   </div>
                   <div className="rounded border bg-white px-3 py-2">
                     <span className="font-bold text-gray-700">満点時XP:</span> {unit.writtenXpBase || 232}
