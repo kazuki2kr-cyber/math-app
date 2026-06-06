@@ -79,7 +79,7 @@ describe('Firestore Security Rules', () => {
     await expect(getDoc(ref)).rejects.toThrow();
   });
 
-  test('ユーザーは icon / hasAgreedToTerms / lastLoginAt のみ更新できる', async () => {
+  test('ユーザーは icon / 同意情報 / lastLoginAt のみ更新できる', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'users', aliceId), {
         uid: aliceId,
@@ -88,6 +88,9 @@ describe('Firestore Security Rules', () => {
         xp: 10,
         isAdmin: false,
         hasAgreedToTerms: false,
+        termsVersion: null,
+        privacyPolicyVersion: null,
+        legalAgreedAt: null,
         lastLoginAt: new Date().toISOString(),
       });
     });
@@ -96,7 +99,13 @@ describe('Firestore Security Rules', () => {
     const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
 
     // 許可フィールドのみ → 成功
-    await expect(updateDoc(aliceRef, { icon: '🚀' })).resolves.toBeUndefined();
+    await expect(updateDoc(aliceRef, {
+      icon: '🚀',
+      hasAgreedToTerms: true,
+      termsVersion: '2026-06-06',
+      privacyPolicyVersion: '2026-06-06',
+      legalAgreedAt: new Date().toISOString(),
+    })).resolves.toBeUndefined();
   });
 
   test('ユーザーは displayName を直接更新できない（許可フィールド外）', async () => {

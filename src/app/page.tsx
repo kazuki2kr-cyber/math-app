@@ -1,6 +1,8 @@
 'use client';
 
-import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp'; import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
+import { hasAcceptedCurrentLegalDocs, LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
 import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone } from 'lucide-react';
 import Image from 'next/image';
@@ -124,7 +126,7 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    if (user && !user.hasAgreedToTerms && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') {
+    if (user && !hasAcceptedCurrentLegalDocs(user) && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') {
       setShowTermsModal(true);
     } else {
       setShowTermsModal(false);
@@ -859,16 +861,21 @@ export default function Home() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full flex flex-col gap-6 transform animate-in zoom-in-95 duration-200">
             <div className="text-center space-y-2">
-              <h3 className="text-2xl font-black text-gray-900 tracking-tight">Formix へようこそ！</h3>
-              <p className="text-sm text-muted-foreground">利用を始める前に、必ず以下の利用規約とプライバシーポリシーをお読みください。</p>
+              <h3 className="text-2xl font-black text-gray-900 tracking-tight">利用規約の確認</h3>
+              <p className="text-sm text-muted-foreground">
+                {LEGAL_EFFECTIVE_DATE_LABEL} 改正版の利用規約とプライバシーポリシーへの同意が必要です。
+              </p>
             </div>
 
             <div className="bg-gray-50 p-4 border rounded-xl text-sm text-gray-700 h-40 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
               <p className="font-bold mb-2 text-primary">■ 生徒の皆さんへのお願い</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>本サービスは芝浦工業大学附属中学高等学校の生徒向け学習アプリです。</li>
-                <li><strong>校則を遵守し</strong>、正しく利用してください。授業中の無許可使用や不正行為、バグを利用した意図的な稼ぎ等はデータ削除や生徒指導の対象となります。</li>
-                <li>学習データは、個人が特定されない形で学術研究や公表等に活用されることがあります。</li>
+                <li>Formix は数学・漢字・対戦・記述式イベントを含む学習支援サービスです。</li>
+                <li>手書き答案や解答履歴は、採点、OCR、学習分析、不正検知、教員による指導のために利用されます。</li>
+                <li>記述式答案は Gemini、漢字の手書き画像は Google Cloud Vision による処理を行うことがあります。</li>
+                <li>ランキングでは氏名、アバター、スコア、XP、順位などが他の利用者に表示される場合があります。</li>
+                <li>学習データは、個人が特定されない統計情報に加工した上で、研究発表や教育改善資料に利用されることがあります。</li>
+                <li><strong>校則を遵守し</strong>、不正行為や他者の学習を妨げる行為は行わないでください。</li>
               </ul>
               <div className="mt-5 text-center flex flex-col gap-2">
                 <a href="/terms" target="_blank" className="text-blue-600 hover:text-blue-800 hover:underline font-bold px-2">👉 利用規約 を読む</a>

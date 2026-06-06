@@ -11,6 +11,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth, db } from '@/lib/firebase';
+import { CURRENT_PRIVACY_POLICY_VERSION, CURRENT_TERMS_VERSION } from '@/lib/legal';
 import { useRouter } from 'next/navigation';
 
 interface UserData {
@@ -22,6 +23,9 @@ interface UserData {
   xp?: number;
   icon?: string;
   hasAgreedToTerms?: boolean;
+  termsVersion?: string;
+  privacyPolicyVersion?: string;
+  legalAgreedAt?: string;
   isAdmin?: boolean;
   appAccess?: boolean;
 }
@@ -112,6 +116,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               xp: 0,
               icon: '📐',
               hasAgreedToTerms: false,
+              termsVersion: null,
+              privacyPolicyVersion: null,
+              legalAgreedAt: null,
               isAdmin: false,
             };
             await setDoc(userRef, finalUserData);
@@ -242,8 +249,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (user) {
       try {
         const userRef = doc(db, 'users', user.uid);
-        await setDoc(userRef, { hasAgreedToTerms: true }, { merge: true });
-        setUser({ ...user, hasAgreedToTerms: true });
+        const legalAgreedAt = new Date().toISOString();
+        const agreement = {
+          hasAgreedToTerms: true,
+          termsVersion: CURRENT_TERMS_VERSION,
+          privacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+          legalAgreedAt,
+        };
+        await setDoc(userRef, agreement, { merge: true });
+        setUser({ ...user, ...agreement });
       } catch (err) {
         console.error("Failed to update agreement status", err);
       }

@@ -41,12 +41,19 @@ service cloud.firestore {
 
       // プロフィールの更新:
       //   管理者 → 全フィールド可
-      //   本人   → icon / hasAgreedToTerms / lastLoginAt のみ（スコア・XP 等はサーバー経由のみ）
+      //   本人   → icon / 同意情報 / lastLoginAt のみ（スコア・XP 等はサーバー経由のみ）
       allow update: if isAdmin()
         || (isOwner(userId)
             && isAppUser()
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['icon', 'hasAgreedToTerms', 'lastLoginAt']));
+                 .hasOnly([
+                   'icon',
+                   'hasAgreedToTerms',
+                   'termsVersion',
+                   'privacyPolicyVersion',
+                   'legalAgreedAt',
+                   'lastLoginAt',
+                 ]));
       
       // サブコレクション（attempts, wrong_answers）
       match /attempts/{attemptId} {
