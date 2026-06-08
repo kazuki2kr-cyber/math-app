@@ -17,6 +17,13 @@
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },
         { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
+    },
+    {
+      "collectionGroup": "writtenAttemptLimits",
+      "fieldPath": "unitId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     }
   ]
 }
