@@ -2218,6 +2218,11 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
   for (let index = 0; index < limitDocsSnap.docs.length; index += 400) {
     const batch = db.batch();
     limitDocsSnap.docs.slice(index, index + 400).forEach((limitDoc) => {
+      const pathSegments = limitDoc.ref.path.split("/");
+      const uid = clampString(limitDoc.data()?.uid || pathSegments[1], 128);
+      if (uid) {
+        touchedUids.add(uid);
+      }
       batch.delete(limitDoc.ref);
     });
     await batch.commit();
