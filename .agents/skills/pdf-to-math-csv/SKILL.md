@@ -141,3 +141,41 @@ unit_id,category,question_text,options,answer_index,explanation,image_url,questi
 ```bash
 python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py <対象CSVパス>
 ```
+ 
+---
+
+## 2026-06 update: structured written rubric CSV generation
+
+When generating Formix written-event CSV rows, use `written_attempt_limit=2` by default and write `grading_rubric` as a structured JSON array string:
+
+```json
+[
+  {
+    "label": "変数の定義",
+    "maxScore": 20,
+    "description": "文字が何を表すかを明確に定義し、問題の対象を正しく文字式で表している。"
+  }
+]
+```
+
+Requirements:
+
+- Each rubric object must include `label`, `maxScore`, and `description`.
+- `maxScore` values must total exactly `100`.
+- `label` should be short and stable because analytics groups by it together with `criterionIndex`.
+- `description` should be concrete enough to display in the admin written analytics screen.
+- Do not use a plain string array for new written-event CSVs unless preserving legacy data exactly.
+- Do not include OCR, handwriting quality, unreadable-image, or transcription instructions in `model_answer` or `grading_rubric`.
+- Keep one written question per `unit_id`.
+
+Recommended rubric patterns:
+
+- Calculation/process problem: setup or method 20, intermediate calculation 25, mathematical notation/clarity 15, final answer/conclusion 40.
+- Algebra/proof problem: variable/assumption definition 20, expression setup 20, transformation/reasoning 20, conclusion 40.
+- Explanation problem: target/condition organization 15, representation or theorem use 20, reasoning chain 25, expression clarity 10, conclusion 30.
+
+Written CSV header:
+
+```csv
+unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at
+```

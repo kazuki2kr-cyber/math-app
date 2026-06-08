@@ -132,6 +132,8 @@ export default function ResultPage() {
   const [writtenGrading, setWrittenGrading] = useState<WrittenGrading | null>(null);
   const [writtenModelAnswer, setWrittenModelAnswer] = useState('');
   const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null);
+  const [writtenAttemptOrdinal, setWrittenAttemptOrdinal] = useState<number | null>(null);
+  const [writtenAttemptLimit, setWrittenAttemptLimit] = useState<number | null>(null);
   const [writtenFeedbackOpen, setWrittenFeedbackOpen] = useState(false);
   const [writtenFeedback, setWrittenFeedback] = useState({
     rating: 'helpful',
@@ -233,6 +235,8 @@ export default function ResultPage() {
         xpGain?: number;
         grading?: WrittenGrading;
         remainingAttempts?: number;
+        attemptOrdinal?: number | null;
+        attemptLimit?: number | null;
         modelAnswer?: string;
       };
 
@@ -250,6 +254,8 @@ export default function ResultPage() {
         setWrittenGrading(data.grading || null);
         setWrittenModelAnswer(data.modelAnswer || '');
         setRemainingAttempts(data.remainingAttempts ?? null);
+        setWrittenAttemptOrdinal(data.attemptOrdinal ?? null);
+        setWrittenAttemptLimit(data.attemptLimit ?? null);
         if (parsed.type === 'written') {
           sessionStorage.removeItem('drillResult');
         }
@@ -473,6 +479,11 @@ ${wrongList || 'なし'}
               <CardTitle className="text-2xl font-bold text-gray-900">記述式フィードバック</CardTitle>
               <CardDescription>
                 このスコアは総合ランキング用の合計スコアには含まれません。XPのみ得点に応じて反映されます。
+                {writtenAttemptOrdinal !== null && (
+                  <span className="ml-2 font-bold text-primary">
+                    第{writtenAttemptOrdinal}回{writtenAttemptLimit !== null ? ` / 全${writtenAttemptLimit}回` : ''}
+                  </span>
+                )}
                 {remainingAttempts !== null && <span className="ml-2 font-bold text-primary">残り提出回数: {remainingAttempts}</span>}
               </CardDescription>
               <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">

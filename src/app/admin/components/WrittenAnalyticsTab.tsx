@@ -29,9 +29,16 @@ type WrittenAttempt = {
   time?: number;
   date?: unknown;
   xpGain?: number;
+  attemptOrdinal?: number;
+  attemptLimit?: number;
+  attemptGroupId?: string;
+  previousAttemptId?: string | null;
+  isFinalAllowedAttempt?: boolean;
   grading?: {
     rubricScores?: Array<{
+      criterionIndex?: number;
       label?: string;
+      description?: string;
       score?: number;
       maxScore?: number;
       comment?: string;
@@ -42,6 +49,7 @@ type WrittenAttempt = {
 type RubricSummary = {
   key: string;
   label: string;
+  description: string;
   maxScore: number;
   count: number;
   average: number;
@@ -55,6 +63,28 @@ type OverallSummary = {
   standardDeviation: number;
   min: number;
   max: number;
+};
+
+type AttemptOrdinalSummary = {
+  firstCount: number;
+  secondCount: number;
+  firstAverage: number;
+  secondAverage: number;
+  averageImprovement: number;
+  pairedCount: number;
+  pairedAverageImprovement: number;
+};
+
+type RubricImprovementSummary = {
+  key: string;
+  label: string;
+  description: string;
+  maxScore: number;
+  pairedCount: number;
+  firstAverage: number;
+  secondAverage: number;
+  averageImprovement: number;
+  improvementRate: number;
 };
 
 function toNumber(value: unknown): number {
@@ -102,15 +132,18 @@ function buildOverallSummary(attempts: WrittenAttempt[]): OverallSummary {
 }
 
 function buildRubricSummary(attempts: WrittenAttempt[]): RubricSummary[] {
-  const buckets = new Map<string, { label: string; maxScore: number; scores: number[] }>();
+  const buckets = new Map<string, { label: string; description: string; maxScore: number; scores: number[] }>();
 
   attempts.forEach((attempt) => {
     const rubricScores = Array.isArray(attempt.grading?.rubricScores) ? attempt.grading.rubricScores : [];
     rubricScores.forEach((item, index) => {
       const label = String(item?.label || `項目${index + 1}`);
+      const description = String(item?.description || '');
       const maxScore = Math.max(1, toNumber(item?.maxScore));
-      const key = `${index}:${label}`;
-      const existing = buckets.get(key) || { label, maxScore, scores: [] };
+      const criterionIndex = Math.max(1, Math.trunc(toNumber(item?.criterionIndex)) || index + 1);
+      const key = `${criterionIndex}:${label}`;
+      const existing = buckets.get(key) || { label, description, maxScore, scores: [] };
+      if (!existing.description && description) existing.description = description;
       existing.maxScore = Math.max(existing.maxScore, maxScore);
       existing.scores.push(toNumber(item?.score));
       buckets.set(key, existing);
@@ -122,11 +155,68 @@ function buildRubricSummary(attempts: WrittenAttempt[]): RubricSummary[] {
     return {
       key,
       label: bucket.label,
+      description: bucket.description,
       maxScore: bucket.maxScore,
       count: bucket.scores.length,
       average: avg,
       standardDeviation: sampleStandardDeviation(bucket.scores),
       averageRate: bucket.maxScore > 0 ? (avg / bucket.maxScore) * 100 : 0,
+    };
+  });
+}
+
+function buildRubricImprovementSummary(attempts: WrittenAttempt[]): RubricImprovementSummary[] {
+  const buckets = new Map<string, {
+    label: string;
+    description: string;
+    maxScore: number;
+    pairs: Map<string, { first?: number; second?: number }>;
+  }>();
+
+  attempts.forEach((attempt) => {
+    const ordinal = toNumber(attempt.attemptOrdinal);
+    if (ordinal !== 1 && ordinal !== 2) return;
+
+    const groupId = attempt.attemptGroupId || `${attempt.uid || ''}:${attempt.unitId || ''}:${attempt.questionId || ''}`;
+    if (!groupId.trim()) return;
+
+    const rubricScores = Array.isArray(attempt.grading?.rubricScores) ? attempt.grading.rubricScores : [];
+    rubricScores.forEach((item, index) => {
+      const label = String(item?.label || `項目${index + 1}`);
+      const description = String(item?.description || '');
+      const criterionIndex = Math.max(1, Math.trunc(toNumber(item?.criterionIndex)) || index + 1);
+      const key = `${criterionIndex}:${label}`;
+      const maxScore = Math.max(1, toNumber(item?.maxScore));
+      const bucket = buckets.get(key) || { label, description, maxScore, pairs: new Map<string, { first?: number; second?: number }>() };
+      const pair = bucket.pairs.get(groupId) || {};
+
+      if (!bucket.description && description) bucket.description = description;
+      bucket.maxScore = Math.max(bucket.maxScore, maxScore);
+      if (ordinal === 1) pair.first = toNumber(item?.score);
+      if (ordinal === 2) pair.second = toNumber(item?.score);
+      bucket.pairs.set(groupId, pair);
+      buckets.set(key, bucket);
+    });
+  });
+
+  return Array.from(buckets.entries()).map(([key, bucket]) => {
+    const pairs = Array.from(bucket.pairs.values())
+      .filter((pair): pair is { first: number; second: number } => pair.first !== undefined && pair.second !== undefined);
+    const firstScores = pairs.map((pair) => pair.first);
+    const secondScores = pairs.map((pair) => pair.second);
+    const improvements = pairs.map((pair) => pair.second - pair.first);
+    const averageImprovement = average(improvements);
+
+    return {
+      key,
+      label: bucket.label,
+      description: bucket.description,
+      maxScore: bucket.maxScore,
+      pairedCount: pairs.length,
+      firstAverage: average(firstScores),
+      secondAverage: average(secondScores),
+      averageImprovement,
+      improvementRate: bucket.maxScore > 0 ? (averageImprovement / bucket.maxScore) * 100 : 0,
     };
   });
 }
@@ -145,6 +235,43 @@ function buildScoreDistribution(attempts: WrittenAttempt[]) {
     if (bucket) bucket.count += 1;
   });
   return bins.map(({ range, count }) => ({ range, count }));
+}
+
+function buildAttemptOrdinalSummary(attempts: WrittenAttempt[]): AttemptOrdinalSummary {
+  const firstScores = attempts
+    .filter((attempt) => toNumber(attempt.attemptOrdinal) === 1)
+    .map((attempt) => toNumber(attempt.score));
+  const secondScores = attempts
+    .filter((attempt) => toNumber(attempt.attemptOrdinal) === 2)
+    .map((attempt) => toNumber(attempt.score));
+
+  const byGroup = new Map<string, { first?: number; second?: number }>();
+  attempts.forEach((attempt) => {
+    const ordinal = toNumber(attempt.attemptOrdinal);
+    if (ordinal !== 1 && ordinal !== 2) return;
+
+    const groupId = attempt.attemptGroupId || `${attempt.uid || ''}:${attempt.unitId || ''}:${attempt.questionId || ''}`;
+    if (!groupId.trim()) return;
+
+    const bucket = byGroup.get(groupId) || {};
+    if (ordinal === 1) bucket.first = toNumber(attempt.score);
+    if (ordinal === 2) bucket.second = toNumber(attempt.score);
+    byGroup.set(groupId, bucket);
+  });
+
+  const pairedImprovements = Array.from(byGroup.values())
+    .filter((bucket): bucket is { first: number; second: number } => bucket.first !== undefined && bucket.second !== undefined)
+    .map((bucket) => bucket.second - bucket.first);
+
+  return {
+    firstCount: firstScores.length,
+    secondCount: secondScores.length,
+    firstAverage: average(firstScores),
+    secondAverage: average(secondScores),
+    averageImprovement: average(secondScores) - average(firstScores),
+    pairedCount: pairedImprovements.length,
+    pairedAverageImprovement: average(pairedImprovements),
+  };
 }
 
 function isMathWrittenUnit(unit: any): boolean {
@@ -168,7 +295,9 @@ export default function WrittenAnalyticsTab() {
   const selectedUnit = writtenUnits.find((unit) => unit.id === selectedUnitId) || null;
   const overallSummary = useMemo(() => buildOverallSummary(attempts), [attempts]);
   const rubricSummary = useMemo(() => buildRubricSummary(attempts), [attempts]);
+  const rubricImprovementSummary = useMemo(() => buildRubricImprovementSummary(attempts), [attempts]);
   const distribution = useMemo(() => buildScoreDistribution(attempts), [attempts]);
+  const attemptOrdinalSummary = useMemo(() => buildAttemptOrdinalSummary(attempts), [attempts]);
   const sortedAttempts = useMemo(
     () => [...attempts].sort((left, right) => String(right.date || '').localeCompare(String(left.date || ''))),
     [attempts]
@@ -319,11 +448,14 @@ export default function WrittenAnalyticsTab() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
         <SummaryCard icon={<Users className="h-4 w-4" />} label="提出者数" value={`${overallSummary.count}人`} />
         <SummaryCard icon={<Sigma className="h-4 w-4" />} label="全体平均" value={`${formatNumber(overallSummary.average)}点`} />
         <SummaryCard icon={<Sigma className="h-4 w-4" />} label="全体標準偏差" value={formatNumber(overallSummary.standardDeviation)} />
         <SummaryCard label="最高 / 最低" value={`${formatNumber(overallSummary.max, 0)} / ${formatNumber(overallSummary.min, 0)}`} />
+        <SummaryCard label={`1回目平均 (${attemptOrdinalSummary.firstCount})`} value={`${formatNumber(attemptOrdinalSummary.firstAverage)}点`} />
+        <SummaryCard label={`2回目平均 (${attemptOrdinalSummary.secondCount})`} value={`${formatNumber(attemptOrdinalSummary.secondAverage)}点`} />
+        <SummaryCard label={`ペア改善 (${attemptOrdinalSummary.pairedCount})`} value={`${formatNumber(attemptOrdinalSummary.pairedAverageImprovement)}点`} />
       </div>
 
       {attempts.length > 0 ? (
@@ -378,7 +510,10 @@ export default function WrittenAnalyticsTab() {
                 <tbody className="divide-y">
                   {rubricSummary.map((item) => (
                     <tr key={item.key}>
-                      <td className="px-4 py-3 font-medium text-gray-900">{item.label}</td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{item.label}</p>
+                        {item.description && <p className="mt-1 max-w-xl text-xs leading-relaxed text-gray-500">{item.description}</p>}
+                      </td>
                       <td className="px-4 py-3 text-right">{formatNumber(item.maxScore, 0)}</td>
                       <td className="px-4 py-3 text-right font-bold text-primary">{formatNumber(item.average)}</td>
                       <td className="px-4 py-3 text-right">{formatNumber(item.averageRate)}%</td>
@@ -386,6 +521,64 @@ export default function WrittenAnalyticsTab() {
                       <td className="px-4 py-3 text-right">{item.count}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+            <div className="border-b bg-gray-50 px-4 py-3">
+              <h4 className="text-sm font-bold text-gray-900">ルーブリック別改善量</h4>
+              <p className="mt-1 text-xs text-muted-foreground">
+                同じ生徒の1回目と2回目を評価項目ごとに比較します。改善率は満点に対する改善点の割合です。
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b bg-white">
+                  <tr>
+                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">項目</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">満点</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">1回目平均</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">2回目平均</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">改善点</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">改善率</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">ペア数</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {rubricImprovementSummary.length > 0 ? rubricImprovementSummary.map((item) => {
+                    const improvementClass = item.averageImprovement > 0
+                      ? 'font-bold text-emerald-700'
+                      : item.averageImprovement < 0
+                        ? 'font-bold text-red-700'
+                        : 'text-gray-700';
+
+                    return (
+                      <tr key={item.key}>
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-gray-900">{item.label}</p>
+                          {item.description && <p className="mt-1 max-w-xl text-xs leading-relaxed text-gray-500">{item.description}</p>}
+                        </td>
+                        <td className="px-4 py-3 text-right">{formatNumber(item.maxScore, 0)}</td>
+                        <td className="px-4 py-3 text-right">{formatNumber(item.firstAverage)}</td>
+                        <td className="px-4 py-3 text-right">{formatNumber(item.secondAverage)}</td>
+                        <td className={`px-4 py-3 text-right ${improvementClass}`}>
+                          {item.averageImprovement >= 0 ? '+' : ''}{formatNumber(item.averageImprovement)}
+                        </td>
+                        <td className={`px-4 py-3 text-right ${improvementClass}`}>
+                          {item.improvementRate >= 0 ? '+' : ''}{formatNumber(item.improvementRate)}%
+                        </td>
+                        <td className="px-4 py-3 text-right">{item.pairedCount}</td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={7}>
+                        1回目と2回目がそろった回答がまだありません。
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -414,6 +607,7 @@ export default function WrittenAnalyticsTab() {
                   <thead className="border-b bg-white">
                     <tr>
                       <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">生徒</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">回数</th>
                       <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">合計</th>
                       {rubricSummary.map((item) => (
                         <th key={item.key} className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-gray-500">{item.label}</th>
@@ -430,9 +624,16 @@ export default function WrittenAnalyticsTab() {
                             <p className="font-medium text-gray-900">{attempt.userName || '名前なし'}</p>
                             <p className="text-[10px] text-gray-400">{attempt.uid || '-'}</p>
                           </td>
+                          <td className="px-4 py-3 text-right text-xs font-semibold text-gray-600">
+                            {attempt.attemptOrdinal ? `${attempt.attemptOrdinal}${attempt.attemptLimit ? ` / ${attempt.attemptLimit}` : ''}` : '-'}
+                          </td>
                           <td className="px-4 py-3 text-right font-bold text-primary">{formatNumber(toNumber(attempt.score), 0)}</td>
                           {rubricSummary.map((item) => {
-                            const score = scores.find((rubricItem, index) => `${index}:${rubricItem?.label || `項目${index + 1}`}` === item.key);
+                            const score = scores.find((rubricItem, index) => {
+                              const label = rubricItem?.label || `項目${index + 1}`;
+                              const criterionIndex = Math.max(1, Math.trunc(toNumber(rubricItem?.criterionIndex)) || index + 1);
+                              return `${criterionIndex}:${label}` === item.key;
+                            });
                             return (
                               <td key={item.key} className="px-4 py-3 text-right">
                                 {score ? `${formatNumber(toNumber(score.score), 0)} / ${formatNumber(toNumber(score.maxScore), 0)}` : '-'}

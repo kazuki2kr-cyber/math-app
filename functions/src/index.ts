@@ -29,10 +29,19 @@ const KANJI_BATTLE_LEADERBOARD_LIMIT = 40;
 
 type DrillMode = "standard" | "wrong" | "all";
 type WrittenRubricScore = {
+  criterionIndex: number;
   label: string;
+  description: string;
   score: number;
   maxScore: number;
   comment: string;
+};
+
+type WrittenRubricCriterion = {
+  criterionIndex: number;
+  label: string;
+  description: string;
+  maxScore: number;
 };
 
 function calculateMathXpForNextLevel(level: number): number {
@@ -1736,14 +1745,64 @@ function parseDataUrlImage(dataUrl: string): { mimeType: string; data: string } 
   return { mimeType: match[1], data: match[2] };
 }
 
-function normalizeRubricScores(value: unknown): WrittenRubricScore[] {
+function parseLegacyRubricText(text: string, index: number): WrittenRubricCriterion {
+  const trimmed = text.trim();
+  const [head, ...tailParts] = trimmed.split(/\s+-\s+/);
+  const headText = head || trimmed;
+  const description = clampString(tailParts.join(" - ") || trimmed, 800);
+  const scoreMatch = headText.match(/(\d+(?:\.\d+)?)\s*(?:点|pts?|points?)/i);
+  const maxScore = Math.max(1, Math.min(100, Math.round(Number(scoreMatch?.[1]) || 100)));
+  const label = clampString(
+    headText.replace(/[:：]?\s*\d+(?:\.\d+)?\s*(?:点|pts?|points?).*$/i, "").replace(/[:：]\s*$/, ""),
+    80
+  ) || `評価項目${index + 1}`;
+
+  return {
+    criterionIndex: index + 1,
+    label,
+    description,
+    maxScore,
+  };
+}
+
+function normalizeWrittenRubric(value: unknown): WrittenRubricCriterion[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 8).map((item: any) => ({
-    label: clampString(item?.label, 80) || "評価項目",
-    score: clampScore(item?.score),
-    maxScore: Math.max(1, Math.min(100, Math.round(Number(item?.maxScore) || 100))),
-    comment: clampString(item?.comment, 500),
-  }));
+  return value.slice(0, 8).map((item: any, index: number) => {
+    if (typeof item === "string") {
+      return parseLegacyRubricText(item, index);
+    }
+
+    const maxScore = Math.max(1, Math.min(100, Math.round(Number(item?.maxScore ?? item?.points ?? item?.score ?? 100) || 100)));
+    const label = clampString(item?.label ?? item?.name ?? item?.criterion, 80) || `評価項目${index + 1}`;
+    const description = clampString(item?.description ?? item?.criterionText ?? item?.detail ?? item?.details ?? "", 800);
+
+    return {
+      criterionIndex: Math.max(1, Math.trunc(Number(item?.criterionIndex)) || index + 1),
+      label,
+      description,
+      maxScore,
+    };
+  });
+}
+
+function normalizeRubricScores(value: unknown, rubricCriteria: WrittenRubricCriterion[] = []): WrittenRubricScore[] {
+  if (!Array.isArray(value)) return [];
+  const maxItems = rubricCriteria.length > 0 ? rubricCriteria.length : Math.min(value.length, 8);
+
+  return Array.from({ length: maxItems }).map((_, index) => {
+    const item = (value as any[])[index] || {};
+    const criterion = rubricCriteria[index];
+    const maxScore = criterion?.maxScore ?? Math.max(1, Math.min(100, Math.round(Number(item?.maxScore) || 100)));
+
+    return {
+      criterionIndex: criterion?.criterionIndex ?? index + 1,
+      label: criterion?.label || clampString(item?.label, 80) || "評価項目",
+      description: criterion?.description || clampString(item?.description ?? item?.criterionText, 800),
+      score: Math.max(0, Math.min(maxScore, Math.round(Number(item?.score) || 0))),
+      maxScore,
+      comment: clampString(item?.comment, 500),
+    };
+  });
 }
 
 async function gradeWrittenAnswerWithGemini(params: {
@@ -1760,11 +1819,13 @@ async function gradeWrittenAnswerWithGemini(params: {
 
   const model = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
   const image = parseDataUrlImage(params.answerImageDataUrl);
+  const rubricCriteria = normalizeWrittenRubric(params.gradingRubric);
   const prompt = [
     "You are grading a Japanese middle-school math written answer.",
     "Return only strict JSON. Do not include markdown.",
     "Score the full handwritten work, including intermediate steps, out of 100.",
     "Use the provided model answer and rubric. Grade strictly, but keep feedback concise and age-appropriate.",
+    "Return rubricScores in the exact same order as the provided rubric. Each rubric score must be between 0 and that criterion's maxScore.",
     "Default scoring policy: process/reasoning is 60 points, final answer/conclusion is 40 points. Follow a more specific rubric only if it is stricter.",
     "If the final answer or required conclusion is mathematically wrong, the total score must be at most 60, even if the process is mostly correct.",
     "If the final answer is correct but there is no meaningful reasoning, setup, proof, or calculation process, the total score must be at most 40.",
@@ -1787,10 +1848,10 @@ async function gradeWrittenAnswerWithGemini(params: {
     `Unit: ${params.unitTitle}`,
     `Question: ${params.questionText}`,
     `Model answer: ${params.modelAnswer || "Not provided"}`,
-    `Rubric: ${JSON.stringify(params.gradingRubric || [])}`,
+    `Rubric: ${JSON.stringify(rubricCriteria.length > 0 ? rubricCriteria : params.gradingRubric || [])}`,
     "",
     "JSON schema:",
-    '{"score":number,"transcription":string,"detectedAnswer":string,"rubricScores":[{"label":string,"score":number,"maxScore":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
+    '{"score":number,"transcription":string,"detectedAnswer":string,"rubricScores":[{"score":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
   ].join("\n");
 
   const response = await fetch(
@@ -1827,7 +1888,7 @@ async function gradeWrittenAnswerWithGemini(params: {
     score: clampScore(parsed?.score),
     transcription: clampString(parsed?.transcription, 2000),
     detectedAnswer: clampString(parsed?.detectedAnswer, 300),
-    rubricScores: normalizeRubricScores(parsed?.rubricScores),
+    rubricScores: normalizeRubricScores(parsed?.rubricScores, rubricCriteria),
     feedback: clampString(parsed?.feedback, 1200),
     improvementPoints: Array.isArray(parsed?.improvementPoints)
       ? parsed.improvementPoints.slice(0, 5).map((point: unknown) => clampString(point, 300)).filter(Boolean)
@@ -1918,6 +1979,11 @@ export const submitWrittenDrillResult = functions
         score: existing.score || 0,
         xpGain: 0,
         remainingAttempts: Math.max(0, limit - (limitSnap.data()?.usedAttempts || 0)),
+        attemptOrdinal: existing.attemptOrdinal || null,
+        attemptLimit: existing.attemptLimit || existing.limit || limit,
+        attemptGroupId: existing.attemptGroupId || null,
+        previousAttemptId: existing.previousAttemptId || null,
+        isFinalAllowedAttempt: existing.isFinalAllowedAttempt || false,
         grading: existing.grading || null,
         modelAnswer: modelAnswerText,
       };
@@ -1952,6 +2018,11 @@ export const submitWrittenDrillResult = functions
           isLevelUp: false,
           xpGain: 0,
           remainingAttempts: Math.max(0, limit - (limitTxnSnap.data()?.usedAttempts || 0)),
+          attemptOrdinal: attemptTxnSnap.data()?.attemptOrdinal || null,
+          attemptLimit: attemptTxnSnap.data()?.attemptLimit || attemptTxnSnap.data()?.limit || limit,
+          attemptGroupId: attemptTxnSnap.data()?.attemptGroupId || null,
+          previousAttemptId: attemptTxnSnap.data()?.previousAttemptId || null,
+          isFinalAllowedAttempt: attemptTxnSnap.data()?.isFinalAllowedAttempt || false,
           modelAnswer: modelAnswerText,
         };
       }
@@ -1971,7 +2042,11 @@ export const submitWrittenDrillResult = functions
       const oldLevelData = calculateLevelAndProgressServer(currentXp);
       const newLevelData = calculateLevelAndProgressServer(newTotalXp);
       const isLevelUp = newLevelData.level > oldLevelData.level;
+      const attemptOrdinal = usedAttempts + 1;
       const remainingAttempts = Math.max(0, limit - (usedAttempts + 1));
+      const attemptGroupId = `${uid}:${unitId}:${questionId}`;
+      const previousAttemptId = clampString(limitTxnSnap.data()?.lastAttemptId, 120) || null;
+      const isFinalAllowedAttempt = attemptOrdinal >= limit;
       const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
 
       transaction.set(userRef, {
@@ -1997,6 +2072,8 @@ export const submitWrittenDrillResult = functions
         unitId,
         usedAttempts: usedAttempts + 1,
         limit,
+        lastAttemptId: attemptDocId,
+        lastAttemptOrdinal: attemptOrdinal,
         lastAttemptAt: now,
         updatedAt: now,
       }, { merge: true });
@@ -2012,13 +2089,18 @@ export const submitWrittenDrillResult = functions
         date: dateStr,
         xpGain: finalXpGain,
         includeInTotalScore: false,
+        attemptOrdinal,
+        attemptLimit: limit,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
         remainingAttempts,
         grading,
         expireAt: Timestamp.fromDate(expireAt),
       });
       transaction.set(analyticsEventRef, {
         eventType: "WRITTEN_ATTEMPT_SUBMITTED",
-        eventVersion: 1,
+        eventVersion: 2,
         occurredAt: now,
         logicalDate: buildLogicalDate(now.toDate()),
         attemptId: attemptDocId,
@@ -2030,9 +2112,24 @@ export const submitWrittenDrillResult = functions
         score: grading.score,
         timeSec: time,
         xpGain: finalXpGain,
+        attemptOrdinal,
+        attemptLimit: limit,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
+        remainingAttempts,
         source: "submitWrittenDrillResult",
         includeInTotalScore: false,
-        questionResults: [{ questionId, questionOrder: Number(question.order || 1), score: grading.score }],
+        questionResults: [{
+          questionId,
+          questionOrder: Number(question.order || 1),
+          score: grading.score,
+          attemptOrdinal,
+          attemptLimit: limit,
+          attemptGroupId,
+          previousAttemptId,
+          isFinalAllowedAttempt,
+        }],
       });
 
       return {
@@ -2044,6 +2141,11 @@ export const submitWrittenDrillResult = functions
         xpGain: finalXpGain,
         newTotalXp,
         remainingAttempts,
+        attemptOrdinal,
+        attemptLimit: limit,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
         grading,
         modelAnswer: modelAnswerText,
         _leaderboardUpdate: isLevelUp ? { uid, userName, currentIcon, newLevel: newLevelData.level, newTotalXp } : null,
@@ -2103,10 +2205,20 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
         if (restoreXp) {
           xpByUid.set(uid, (xpByUid.get(uid) || 0) + Math.max(0, Number(attempt.xpGain) || 0));
         }
-        batch.delete(db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`));
       }
       batch.delete(attemptDoc.ref);
       batch.delete(db.collection("analytics_events").doc(`written_${attemptDoc.id}`));
+    });
+    await batch.commit();
+  }
+
+  const limitDocsSnap = await db.collectionGroup("writtenAttemptLimits")
+    .where("unitId", "==", unitId)
+    .get();
+  for (let index = 0; index < limitDocsSnap.docs.length; index += 400) {
+    const batch = db.batch();
+    limitDocsSnap.docs.slice(index, index + 400).forEach((limitDoc) => {
+      batch.delete(limitDoc.ref);
     });
     await batch.commit();
   }
@@ -2153,14 +2265,16 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
 
   await db.collection("analytics_events").doc(`reset_written_${safeAnalyticsEventIdPart(unitId)}_${Date.now()}`).set({
     eventType: "WRITTEN_EVENT_DATA_RESET",
-    eventVersion: 1,
+    eventVersion: 2,
     occurredAt: Timestamp.now(),
     logicalDate: buildLogicalDate(new Date()),
     unitId,
     restoreXp,
     deletedAttempts: attemptsSnap.size,
+    deletedAttemptLimitDocs: limitDocsSnap.size,
     touchedUsers: touchedUids.size,
     restoredXp,
+    clearsAttemptOrdinalState: true,
     source: "resetWrittenEventData",
     actor: context.auth.uid,
   });

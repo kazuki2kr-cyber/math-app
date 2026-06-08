@@ -179,3 +179,41 @@ python .agents/skills/pdf-to-math-csv/scripts/validate_csv.py <対象CSVパス>
 ```
 
 `question_type=written` の行では、4択の「選択肢4つ」ルールを外し、`model_answer` と `grading_rubric` の存在・形式を確認します。
+ 
+---
+
+## 2026-06 update: structured written rubric format
+
+For Formix written math events, prefer this structured `grading_rubric` JSON array instead of a plain string array:
+
+```json
+[
+  {
+    "label": "変数の定義",
+    "maxScore": 20,
+    "description": "文字が何を表すかを明確に定義し、問題の対象を正しく文字式で表している。"
+  }
+]
+```
+
+Rules:
+
+- `grading_rubric` must be a JSON array string in CSV.
+- Each item should include `label`, `maxScore`, and `description`.
+- `maxScore` values should total exactly `100`.
+- `description` is displayed in the admin written analytics screen and must be specific enough for teachers to understand what improved.
+- Do not let the grading AI invent stable rubric labels. The problem data is the source of truth for `label`, `maxScore`, and `description`; AI should only provide scores and comments.
+- Use `written_attempt_limit=2` by default for written events so first/second attempt improvement can be analyzed.
+- Keep OCR/image-quality instructions out of `model_answer` and `grading_rubric`; those remain in the shared Cloud Functions grading prompt.
+
+Recommended rubric patterns:
+
+- Calculation/process problem: setup or method 20, intermediate calculation 25, mathematical notation/clarity 15, final answer/conclusion 40.
+- Algebra/proof problem: variable/assumption definition 20, expression setup 20, transformation/reasoning 20, conclusion 40.
+- Explanation problem: target/condition organization 15, representation or theorem use 20, reasoning chain 25, expression clarity 10, conclusion 30.
+
+Written CSV header remains:
+
+```csv
+unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at
+```

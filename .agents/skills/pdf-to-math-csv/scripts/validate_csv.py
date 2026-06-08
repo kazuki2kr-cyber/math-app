@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import json
 import re
 import sys
@@ -108,18 +108,45 @@ def validate_and_fix(csv_path):
                         if not isinstance(parsed_rubric, list) or len(parsed_rubric) == 0:
                             print(f"[Warning] Line {i}: grading_rubric should be a non-empty JSON array.")
                         else:
+                            total_max_score = 0
+                            structured_count = 0
+                            missing_description_count = 0
+                            for item in parsed_rubric:
+                                if isinstance(item, dict):
+                                    structured_count += 1
+                                    label = str(item.get('label') or item.get('name') or item.get('criterion') or '').strip()
+                                    description = str(item.get('description') or item.get('criterionText') or item.get('detail') or item.get('details') or '').strip()
+                                    try:
+                                        max_score = int(item.get('maxScore') or item.get('points') or item.get('score') or 0)
+                                    except (TypeError, ValueError):
+                                        max_score = 0
+                                    total_max_score += max_score
+                                    if not label:
+                                        print(f"[Warning] Line {i}: each structured rubric item should include label.")
+                                    if not description:
+                                        missing_description_count += 1
+                                    if max_score <= 0:
+                                        print(f"[Warning] Line {i}: each structured rubric item should include positive maxScore.")
+                            if structured_count > 0:
+                                if structured_count != len(parsed_rubric):
+                                    print(f"[Warning] Line {i}: grading_rubric should not mix object and string rubric items.")
+                                if total_max_score != 100:
+                                    print(f"[Warning] Line {i}: structured grading_rubric maxScore total should be 100. Found: {total_max_score}")
+                                if missing_description_count > 0:
+                                    print(f"[Warning] Line {i}: structured rubric items should include description for analytics display.")
                             rubric_text = ' '.join(str(item) for item in parsed_rubric)
-                            strict_keywords = [
-                                ('variable definition', ['文字', '変数', '設定', '定義', '置く', 'おく']),
-                                ('conclusion', ['結論', '最終答', '答え']),
-                                ('reasoning steps', ['途中', '計算', '立式', '式']),
-                            ]
-                            for label, keywords in strict_keywords:
-                                if not any(keyword in rubric_text for keyword in keywords):
-                                    print(f"[Warning] Line {i}: grading_rubric should include a strict {label} criterion.")
-                            if not any(keyword in rubric_text for keyword in ['60点', '60']):
+                            if structured_count == 0:
+                                strict_keywords = [
+                                    ('variable definition', ['文字', '変数', '定義', '置く']),
+                                    ('conclusion', ['結論', '最終答', '答え']),
+                                    ('reasoning steps', ['途中', '計算', '立式', '式']),
+                                ]
+                                for label, keywords in strict_keywords:
+                                    if not any(keyword in rubric_text for keyword in keywords):
+                                        print(f"[Warning] Line {i}: grading_rubric should include a strict {label} criterion.")
+                            if structured_count == 0 and not any(keyword in rubric_text for keyword in ['60轤ｹ', '60']):
                                 print(f"[Warning] Line {i}: grading_rubric should clearly allocate about 60 points to process/reasoning.")
-                            if not any(keyword in rubric_text for keyword in ['40点', '40']):
+                            if structured_count == 0 and not any(keyword in rubric_text for keyword in ['40轤ｹ', '40']):
                                 print(f"[Warning] Line {i}: grading_rubric should clearly allocate about 40 points to final answer/conclusion.")
                     except json.JSONDecodeError:
                         print(f"[Error] Line {i}: grading_rubric is not valid JSON. Found: {rubric}")
@@ -128,8 +155,8 @@ def validate_and_fix(csv_path):
                 if limit_value:
                     try:
                         attempt_limit = int(limit_value)
-                        if attempt_limit != 1:
-                            print(f"[Warning] Line {i}: written_attempt_limit should normally be 1. Found: {attempt_limit}")
+                        if attempt_limit != 2:
+                            print(f"[Warning] Line {i}: written_attempt_limit should normally be 2. Found: {attempt_limit}")
                     except ValueError:
                         print(f"[Error] Line {i}: written_attempt_limit is not an integer. Found: {limit_value}")
 
@@ -158,3 +185,4 @@ if __name__ == "__main__":
         print("Usage: python validate_csv.py <path_to_csv>")
     else:
         validate_and_fix(sys.argv[1])
+
