@@ -896,7 +896,14 @@ export default function AdminPage() {
               image_url: image_url || null,
               questionType: rowDrillType,
               modelAnswer: model_answer || '',
-              gradingRubric: grading_rubric ? parseOptions(grading_rubric) : [],
+              gradingRubric: grading_rubric ? (function(r) {
+                try {
+                  const parsed = JSON.parse(r);
+                  return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                  return parseOptions(r); // 互換性のためフォールバック
+                }
+              })(grading_rubric) : [],
             });
             unitsMap[unit_id].unitDoc.totalQuestions = unitsMap[unit_id].questions.length;
           });
