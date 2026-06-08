@@ -14,7 +14,7 @@ import {
   serverTimestamp,
   set,
 } from 'firebase/database';
-import { ArrowLeft, Lock, Shuffle, Swords, Users } from 'lucide-react';
+import { ArrowLeft, Lock, Medal, Shuffle, Swords, Trophy, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,15 @@ interface BattleProfile {
   xp: number;
 }
 
+interface BattleRankingEntry {
+  uid: string;
+  name?: string;
+  icon?: string;
+  xp?: number;
+  wins?: number;
+  totalBattles?: number;
+}
+
 interface WaitingRoomCandidate {
   code: string;
   createdAtMs: number;
@@ -73,6 +82,9 @@ export default function KanjiBattlePage() {
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
+  const [battleRanking, setBattleRanking] = useState<BattleRankingEntry[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [showRanking, setShowRanking] = useState(false);
   const [units, setUnits] = useState<BattleUnit[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -376,6 +388,133 @@ export default function KanjiBattlePage() {
     }
   };
 
+  const loadBattleRanking = async () => {
+    setRankingLoading(true);
+    try {
+      const lbDoc = await getDoc(doc(db, 'leaderboards', 'kanjiBattle'));
+      if (lbDoc.exists() && Array.isArray(lbDoc.data().rankings)) {
+        setBattleRanking(lbDoc.data().rankings.slice(0, 10));
+      } else {
+        setBattleRanking([]);
+      }
+      setShowRanking(true);
+    } catch (err) {
+      console.error('Failed to load kanji battle ranking:', err);
+      setBattleRanking([]);
+      setShowRanking(true);
+    } finally {
+      setRankingLoading(false);
+    }
+  };
+
+  const myRankInfo = useMemo(() => {
+    if (!user || battleRanking.length === 0) return null;
+    const index = battleRanking.findIndex(entry => entry.uid === user.uid);
+    if (index === -1) return { rank: 11, data: { xp: battleProfile.xp, wins: battleProfile.wins } };
+    return { rank: index + 1, data: battleRanking[index] };
+  }, [battleProfile, battleRanking, user]);
+
+  const battleRankingPanel = !showRanking ? (
+    <Card className="overflow-hidden border border-orange-900/10 border-t-4 border-t-amber-400 bg-white/95 shadow-sm">
+      <CardContent className="flex flex-col items-center gap-4 p-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-50">
+          <Trophy className="h-8 w-8 text-amber-500" />
+        </div>
+        <div className="text-center">
+          <h2 className="text-base font-black text-gray-900">対戦スコアランキング</h2>
+          <p className="mt-1 text-xs font-semibold text-muted-foreground">対戦XPの上位10名を表示します。</p>
+        </div>
+        <Button
+          onClick={loadBattleRanking}
+          disabled={rankingLoading}
+          className="w-full bg-amber-500 font-bold text-white shadow-sm hover:bg-amber-600"
+        >
+          {rankingLoading ? (
+            <><div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> 読み込み中...</>
+          ) : (
+            <><Medal className="mr-2 h-4 w-4" /> 対戦ランキングを表示 (Top 10)</>
+          )}
+        </Button>
+      </CardContent>
+    </Card>
+  ) : (
+    <Card className="overflow-hidden border border-orange-900/10 border-t-4 border-t-amber-400 bg-white/95 shadow-lg">
+      <CardContent className="flex flex-col p-0">
+        {myRankInfo && (
+          <div className="flex items-center justify-between border-b border-amber-100 bg-amber-50 p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500 text-sm font-black text-white shadow-sm">
+                {myRankInfo.rank > 10 ? '圏外' : myRankInfo.rank}
+              </div>
+              <div>
+                <p className="text-xs font-bold tracking-wider text-amber-800">
+                  {myRankInfo.rank > 10 ? 'Top 10圏外' : 'あなたの現在の順位'}
+                </p>
+                <p className="mt-1 text-xl font-black leading-none text-amber-900">
+                  {Number(myRankInfo.data.xp || 0).toLocaleString()}
+                  <span className="ml-1 text-xs font-bold opacity-70">XP</span>
+                </p>
+                <p className="mt-1 text-[10px] font-black text-amber-900/60">
+                  {getBattleRank(Number(myRankInfo.data.xp || 0)).icon} {getBattleRank(Number(myRankInfo.data.xp || 0)).title}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {battleRanking.length === 0 ? (
+          <div className="p-8 text-center text-sm font-semibold text-muted-foreground">
+            まだ対戦スコアがありません。
+          </div>
+        ) : (
+          <div className="divide-y divide-orange-900/5">
+            {battleRanking.map((rankUser, index) => {
+              const rank = index + 1;
+              const isCurrentUser = rankUser.uid === user?.uid;
+              const battleXp = Number(rankUser.xp || 0);
+              const battleRank = getBattleRank(battleXp);
+
+              return (
+                <div
+                  key={rankUser.uid}
+                  className={`relative flex items-center px-5 py-4 transition-colors ${isCurrentUser ? 'bg-amber-50/60' : 'hover:bg-gray-50'}`}
+                >
+                  {isCurrentUser && <div className="absolute bottom-0 left-0 top-0 w-1 bg-amber-400" />}
+                  <div className="mr-3 w-8 flex-shrink-0 text-center font-black">
+                    {rank === 1 ? <Medal className="mx-auto h-6 w-6 text-yellow-500" /> :
+                      rank === 2 ? <Medal className="mx-auto h-5 w-5 text-gray-400" /> :
+                        rank === 3 ? <Medal className="mx-auto h-5 w-5 text-amber-700" /> :
+                          <span className="text-gray-400">{rank}</span>}
+                  </div>
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 text-lg font-black text-amber-800">
+                      {battleRank.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-gray-800">
+                        {rankUser.name || 'Player'}
+                        {isCurrentUser && <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] uppercase text-amber-800">You</span>}
+                      </p>
+                      <p className="font-mono text-[10px] font-semibold text-amber-900/60">
+                        {battleRank.title}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 text-right">
+                    <p className="text-lg font-black leading-none text-amber-950">
+                      {battleXp.toLocaleString()}
+                    </p>
+                    <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   if (!hasBattleAccess) {
     return (
       <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
@@ -418,7 +557,7 @@ export default function KanjiBattlePage() {
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <div className="flex flex-col gap-4 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
@@ -486,7 +625,8 @@ export default function KanjiBattlePage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+          <div className="min-w-0 space-y-6">
           <div className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Button
@@ -527,6 +667,7 @@ export default function KanjiBattlePage() {
             </div>
           </div>
 
+          {false && (
           <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row">
               <select
@@ -554,7 +695,7 @@ export default function KanjiBattlePage() {
               </select>
             </div>
           </div>
-        </div>
+          )}
 
         {error && (
           <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-bold text-red-700">
@@ -640,6 +781,12 @@ export default function KanjiBattlePage() {
             )}
           </div>
         )}
+          </div>
+
+          <aside className="lg:sticky lg:top-6">
+            {battleRankingPanel}
+          </aside>
+        </div>
       </main>
     </div>
   );

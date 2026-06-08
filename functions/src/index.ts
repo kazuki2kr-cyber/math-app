@@ -25,6 +25,8 @@ const BATTLE_XP_TABLE: Record<number, number[]> = {
   4: [150, 75, -20, -40],
 };
 
+const KANJI_BATTLE_LEADERBOARD_LIMIT = 40;
+
 type DrillMode = "standard" | "wrong" | "all";
 type WrittenRubricScore = {
   label: string;
@@ -1224,6 +1226,9 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
     }
 
     const now = Timestamp.now();
+    const leaderboardRef = db.doc("leaderboards/kanjiBattle");
+    const leaderboardSnap = await transaction.get(leaderboardRef);
+    let battleRankings: any[] = leaderboardSnap.exists ? (leaderboardSnap.data()?.rankings || []) : [];
     const userSnapshots = await Promise.all(
       resultEntries.map((entry) => transaction.get(db.doc(`users/${entry.uid}`)))
     );
@@ -1233,15 +1238,43 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       const userRef = db.doc(`users/${entry.uid}`);
       const userData = userSnapshots[index].exists ? userSnapshots[index].data() || {} : {};
       const currentStats = userData.kanjiBattleStats || {};
+      const nextXp = applyNonNegativeBattleXp(currentStats.xp, xpDelta);
+      const nextWins = Number(currentStats.wins || currentStats.totalWins || userData.kanjiBattleWins || 0)
+        + (index === 0 && !entry.abandoned ? 1 : 0);
+      const nextTotalBattles = Number(currentStats.totalBattles || 0) + 1;
       transaction.set(userRef, {
         kanjiBattleStats: {
-          xp: applyNonNegativeBattleXp(currentStats.xp, xpDelta),
+          xp: nextXp,
           wins: FieldValue.increment(index === 0 && !entry.abandoned ? 1 : 0),
           totalBattles: FieldValue.increment(1),
           lastBattleAt: now,
         },
       }, { merge: true });
+
+      const leaderboardEntry = {
+        uid: entry.uid,
+        name: entry.name || userData.displayName || userData.email || "Player",
+        xp: nextXp,
+        wins: nextWins,
+        totalBattles: nextTotalBattles,
+        icon: userData.icon || userData.kanjiIcon || "",
+        lastBattleAt: now.toDate().toISOString(),
+      };
+      battleRankings = [
+        ...battleRankings.filter((ranking: any) => ranking.uid !== entry.uid),
+        leaderboardEntry,
+      ];
     });
+    battleRankings.sort((a: any, b: any) => {
+      if (Number(b.xp || 0) !== Number(a.xp || 0)) return Number(b.xp || 0) - Number(a.xp || 0);
+      if (Number(b.wins || 0) !== Number(a.wins || 0)) return Number(b.wins || 0) - Number(a.wins || 0);
+      return String(a.name || "").localeCompare(String(b.name || ""), "ja");
+    });
+    battleRankings = battleRankings.slice(0, KANJI_BATTLE_LEADERBOARD_LIMIT);
+    transaction.set(leaderboardRef, {
+      rankings: battleRankings,
+      updatedAt: now.toDate().toISOString(),
+    }, { merge: true });
     transaction.set(markerRef, {
       roomId,
       unitId,

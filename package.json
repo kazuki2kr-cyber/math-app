@@ -12,6 +12,7 @@
     "test:security": "jest tests/firestore.rules.spec.ts",
     "test:e2e": "playwright test",
     "test:e2e:emu": "node scripts/run-e2e-emu.js",
+    "backfill:kanji-battle-leaderboard": "node scripts/backfill-kanji-battle-leaderboard.js",
     "prepare": "husky"
   },
   "dependencies": {
