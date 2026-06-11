@@ -207,8 +207,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
         await updateDoc(lbRef, { rankings: newRankings });
       }
 
+      await refreshUsers();
       setMessage(`✅ ${name} の漢字データを初期化しました。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);
@@ -278,8 +278,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
         delete next[uid];
         return next;
       });
+      await refreshUsers();
       setMessage(`✅ ${name} の漢字XP・スコアを更新しました。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);
@@ -301,8 +301,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
         kanjiAccessLastFailedAt: deleteField(),
       });
 
+      await refreshUsers();
       setMessage(`✅ ${name} を漢字モードからブロックしました。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);
@@ -318,8 +318,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
       const userRef = doc(db, 'users', uid);
       await updateDoc(userRef, KANJI_ACCESS_FIELDS);
 
+      await refreshUsers();
       setMessage(`✅ ${name} の漢字モード認証状態をリセットしました。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);
@@ -345,8 +345,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
         await updateDoc(doc(db, 'users', user.docId), getSeasonBadgeFields(user, archivedAt));
       }
 
+      await refreshUsers();
       setMessage(`✅ Season ${CURRENT_KANJI_SEASON.number}を保存しました。通常・対戦Top 10と認証バッジ対象${certifiedUsers.length}名を記録しました。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);
@@ -382,8 +382,8 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
       await setDoc(lbRef, { rankings: [], updatedAt: archivedAt }, { merge: true });
       await setDoc(doc(db, 'leaderboards', 'kanjiBattle'), { rankings: [], updatedAt: archivedAt }, { merge: true });
 
+      await refreshUsers();
       setMessage(`✅ Season ${CURRENT_KANJI_SEASON.number}を保存し、全員（${batchedUids.length}名）の漢字・対戦データを初期化しました。認証バッジ対象: ${archive.certifiedCount}名。`);
-      refreshUsers();
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);

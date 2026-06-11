@@ -828,19 +828,26 @@ export default function KanjiBattlePage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y divide-amber-100/80">
-                    {season2Archive!.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => (
-                      <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
-                        <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-bold text-gray-800">{rankUser.name || 'Player'}</p>
-                          <p className="text-[10px] font-semibold text-amber-900/60">優勝 {Number(rankUser.wins || 0).toLocaleString()}回</p>
+                    {season2Archive!.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
+                      const finalRank = getBattleRank(Number(rankUser.xp || 0));
+                      return (
+                        <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
+                          <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
+                          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 text-lg" title={finalRank.title}>
+                            {finalRank.icon}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-gray-800">{rankUser.name || 'Player'}</p>
+                            <p className="truncate text-[10px] font-black text-amber-800">{finalRank.title}</p>
+                            <p className="text-[9px] font-semibold text-amber-900/50">優勝 {Number(rankUser.wins || 0).toLocaleString()}回</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-base font-black leading-none text-amber-950">{Number(rankUser.xp || 0).toLocaleString()}</p>
+                            <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-base font-black leading-none text-amber-950">{Number(rankUser.xp || 0).toLocaleString()}</p>
-                          <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
