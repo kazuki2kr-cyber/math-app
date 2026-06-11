@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import {
   equalTo,
@@ -28,6 +29,7 @@ import {
   getBattleRank,
   getNextBattleRank,
 } from '@/lib/battle';
+import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 
@@ -52,6 +54,7 @@ interface BattleRankingEntry {
   xp?: number;
   wins?: number;
   totalBattles?: number;
+  badges?: any[];
 }
 
 interface WaitingRoomCandidate {
@@ -82,6 +85,8 @@ export default function KanjiBattlePage() {
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
+  const [userData, setUserData] = useState<any>(null);
+  const [season2Archive, setSeason2Archive] = useState<KanjiSeasonArchive | null>(null);
   const [battleRanking, setBattleRanking] = useState<BattleRankingEntry[]>([]);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
@@ -141,6 +146,7 @@ export default function KanjiBattlePage() {
       try {
         const userSnap = await getDoc(doc(db, 'users', user!.uid));
         const data = userSnap.exists() ? userSnap.data() : {};
+        setUserData(data);
         const stats = data.kanjiBattleStats || {};
         const wins = Number(stats.wins || stats.totalWins || data.kanjiBattleWins || 0);
         const xp = Number(stats.xp || data.kanjiBattleXp || wins * 100 || 0);
@@ -153,6 +159,21 @@ export default function KanjiBattlePage() {
 
     fetchBattleProfile();
   }, [hasBattleAccess, user]);
+
+  useEffect(() => {
+    if (!hasBattleAccess) return;
+    async function fetchSeasonArchive() {
+      const season = KANJI_SEASONS.find((item) => item.id === 'season2');
+      if (!season) return;
+      try {
+        const archiveSnap = await getDoc(doc(db, 'leaderboards', season.archiveDocumentId));
+        setSeason2Archive(archiveSnap.exists() ? archiveSnap.data() as KanjiSeasonArchive : null);
+      } catch (err) {
+        console.error('Failed to load kanji battle season archive:', err);
+      }
+    }
+    fetchSeasonArchive();
+  }, [hasBattleAccess]);
 
   const subjects = useMemo(() => {
     return Array.from(new Set(units.map(unit => unit.baseSubject || unit.subject || '漢字'))).sort();
@@ -493,6 +514,11 @@ export default function KanjiBattlePage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-gray-800">
                         {rankUser.name || 'Player'}
+                        {getKanjiSeasonBadges(rankUser).map((badge) => (
+                          <span key={badge.seasonId} className="relative ml-1 inline-block h-5 w-5 align-middle" title={badge.label}>
+                            <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="20px" className="object-contain" />
+                          </span>
+                        ))}
                         {isCurrentUser && <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] uppercase text-amber-800">You</span>}
                       </p>
                       <p className="font-mono text-[10px] font-semibold text-amber-900/60">
@@ -592,6 +618,14 @@ export default function KanjiBattlePage() {
                   <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-700">
                     {currentRank.title}
                   </span>
+                  {getKanjiSeasonBadges(userData).map((badge) => (
+                    <span key={badge.seasonId} className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-black text-amber-800">
+                      <span className="relative h-6 w-6">
+                        <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="24px" className="object-contain" />
+                      </span>
+                      Season {badge.seasonNumber} 認証
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -783,8 +817,34 @@ export default function KanjiBattlePage() {
         )}
           </div>
 
-          <aside className="lg:sticky lg:top-6">
+          <aside className="space-y-6 lg:sticky lg:top-6">
             {battleRankingPanel}
+            {(season2Archive?.topBattleRankings?.length ?? 0) > 0 && (
+              <Card className="overflow-hidden border border-amber-200 bg-white/95 shadow-sm">
+                <CardHeader className="border-b border-amber-100 bg-amber-50/70 pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base font-black text-amber-950">
+                    <Trophy className="h-5 w-5 text-amber-600" /> Season 2 対戦XP上位
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y divide-amber-100/80">
+                    {season2Archive!.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => (
+                      <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-gray-800">{rankUser.name || 'Player'}</p>
+                          <p className="text-[10px] font-semibold text-amber-900/60">優勝 {Number(rankUser.wins || 0).toLocaleString()}回</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-base font-black leading-none text-amber-950">{Number(rankUser.xp || 0).toLocaleString()}</p>
+                          <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </aside>
         </div>
       </main>

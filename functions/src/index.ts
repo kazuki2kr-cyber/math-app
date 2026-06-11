@@ -1251,6 +1251,19 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       const nextWins = Number(currentStats.wins || currentStats.totalWins || userData.kanjiBattleWins || 0)
         + (index === 0 && !entry.abandoned ? 1 : 0);
       const nextTotalBattles = Number(currentStats.totalBattles || 0) + 1;
+      const storedBadges = userData.kanjiSeasonBadges && typeof userData.kanjiSeasonBadges === "object"
+        ? Object.values(userData.kanjiSeasonBadges) as any[]
+        : [];
+      const badges = [...storedBadges];
+      if (!badges.some((badge: any) => badge?.seasonId === "season1") && (userData.kanjiSeason1Badge || userData.kanjiSeason1Certified === true)) {
+        badges.push(userData.kanjiSeason1Badge || {
+          seasonId: "season1",
+          seasonNumber: 1,
+          label: "Season 1 認証",
+          badgeImageUrl: "/images/kanji-season1-badge.png",
+        });
+      }
+      badges.sort((a: any, b: any) => Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0));
       transaction.set(userRef, {
         kanjiBattleStats: {
           xp: nextXp,
@@ -1267,6 +1280,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
         wins: nextWins,
         totalBattles: nextTotalBattles,
         icon: userData.icon || userData.kanjiIcon || "",
+        badges,
         lastBattleAt: now.toDate().toISOString(),
       };
       battleRankings = [

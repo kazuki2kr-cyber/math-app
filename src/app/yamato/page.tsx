@@ -9,6 +9,7 @@ import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
+import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
 
 interface Unit {
   id: string;
@@ -19,19 +20,14 @@ interface Unit {
   subject?: string;
 }
 
-const SEASON1_BADGE_URL = '/images/kanji-season1-badge.png';
-
-function hasSeason1Badge(data: any) {
-  return Boolean(data?.kanjiSeasonBadges?.season1 || data?.kanjiSeason1Certified === true || data?.certified === true);
-}
-
 export default function KanjiDashboard() {
   const { user, logout } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState<any>(null);
   const [overallRanking, setOverallRanking] = useState<any[]>([]);
-  const [season1Archive, setSeason1Archive] = useState<any>(null);
+  const [seasonArchives, setSeasonArchives] = useState<KanjiSeasonArchive[]>([]);
+  const [selectedArchiveId, setSelectedArchiveId] = useState('season2');
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
   const router = useRouter();
@@ -46,9 +42,26 @@ export default function KanjiDashboard() {
           setUserData(uDoc.data());
         }
 
-        const season1Doc = await getDoc(doc(db, 'leaderboards', 'kanjiSeason1'));
-        if (season1Doc.exists()) {
-          setSeason1Archive(season1Doc.data());
+        const archiveSnapshots = await Promise.all(
+          KANJI_SEASONS.map((season) => getDoc(doc(db, 'leaderboards', season.archiveDocumentId)))
+        );
+        const archives = archiveSnapshots
+          .map((snapshot, index) => {
+            if (!snapshot.exists()) return null;
+            const season = KANJI_SEASONS[index];
+            return {
+              ...snapshot.data(),
+              seasonId: snapshot.data().seasonId || season.id,
+              seasonNumber: snapshot.data().seasonNumber || season.number,
+              badgeImageUrl: snapshot.data().badgeImageUrl || season.badgeImageUrl,
+              certificationLevel: snapshot.data().certificationLevel || season.certificationLevel,
+              topBattleRankings: snapshot.data().topBattleRankings || [],
+            } as KanjiSeasonArchive;
+          })
+          .filter((archive): archive is KanjiSeasonArchive => archive !== null);
+        setSeasonArchives(archives);
+        if (archives.length > 0 && !archives.some((archive) => archive.seasonId === selectedArchiveId)) {
+          setSelectedArchiveId(archives[0].seasonId);
         }
 
         const unitsSnap = await getDocs(collection(db, 'units'));
@@ -95,6 +108,7 @@ export default function KanjiDashboard() {
     if (index === -1) return { rank: 11, data: { totalScore: userData?.kanjiTotalScore || 0 } };
     return { rank: index + 1, data: overallRanking[index] };
   }, [user, overallRanking, userData]);
+  const selectedArchive = seasonArchives.find((archive) => archive.seasonId === selectedArchiveId) || seasonArchives[0];
 
   return (
     <div className="min-h-screen bg-[#FDF6E3] flex flex-col font-serif">
@@ -234,14 +248,21 @@ export default function KanjiDashboard() {
                 
                 {userData ? (
                   <div className="flex flex-col gap-3">
-                    {hasSeason1Badge(userData) && (
-                      <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
-                        <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-full bg-amber-100">
-                          <Image src={SEASON1_BADGE_URL} alt="Season 1 認証バッジ" fill sizes="56px" className="object-contain" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Season 1 Certified</p>
-                          <p className="text-sm font-black text-orange-950">Lv.100 到達認証</p>
+                    {getKanjiSeasonBadges(userData).length > 0 && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-amber-700">Season Certifications</p>
+                        <div className="flex flex-wrap gap-3">
+                          {getKanjiSeasonBadges(userData).map((badge) => (
+                            <div key={badge.seasonId} className="flex items-center gap-2">
+                              <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-full bg-amber-100">
+                                <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="48px" className="object-contain" />
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-orange-950">{badge.label}</p>
+                                <p className="text-[10px] font-bold text-amber-800">Lv.{badge.level} 到達</p>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -337,11 +358,11 @@ export default function KanjiDashboard() {
                                 <div>
                                   <p className="font-bold text-gray-800 truncate text-sm flex items-center">
                                     {rankUser.name}
-                                    {hasSeason1Badge(rankUser) && (
-                                      <span className="relative ml-1.5 inline-block h-5 w-5 flex-shrink-0 overflow-hidden rounded-full align-middle bg-amber-50" title="Season 1 認証">
-                                        <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="20px" className="object-contain" />
+                                    {getKanjiSeasonBadges(rankUser).map((badge) => (
+                                      <span key={badge.seasonId} className="relative ml-1 inline-block h-5 w-5 flex-shrink-0 overflow-hidden rounded-full align-middle bg-amber-50" title={badge.label}>
+                                        <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="20px" className="object-contain" />
                                       </span>
-                                    )}
+                                    ))}
                                     {isCurrentUser && <span className="ml-2 text-[10px] bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded-full uppercase">You</span>}
                                   </p>
                                   <p className="text-[10px] text-orange-900/60 font-mono font-semibold">Lv.{rankUser.level || 1} / {rankUser.xp || 0} XP</p>
@@ -362,24 +383,33 @@ export default function KanjiDashboard() {
                 </Card>
               )}
 
-              {season1Archive?.topXpRankings?.length > 0 && (
+              {selectedArchive?.topXpRankings?.length > 0 && (
                 <Card className="shadow-sm overflow-hidden bg-white/95 border border-amber-200">
                   <CardHeader className="pb-3 bg-amber-50/70 border-b border-amber-100">
                     <CardTitle className="text-base font-black text-orange-950 flex items-center gap-2">
-                      <Trophy className="w-5 h-5 text-amber-600" /> Season 1 獲得XP上位
+                      <Trophy className="w-5 h-5 text-amber-600" /> Season {selectedArchive.seasonNumber} 獲得XP上位
                     </CardTitle>
+                    {seasonArchives.length > 1 && (
+                      <div className="flex gap-2 pt-2">
+                        {seasonArchives.map((archive) => (
+                          <Button key={archive.seasonId} size="sm" variant={archive.seasonId === selectedArchive.seasonId ? 'default' : 'outline'} onClick={() => setSelectedArchiveId(archive.seasonId)} className="h-7 text-xs">
+                            Season {archive.seasonNumber}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                   </CardHeader>
                   <CardContent className="p-0">
                     <div className="divide-y divide-amber-100/80">
-                      {season1Archive.topXpRankings.slice(0, 10).map((rankUser: any, index: number) => {
-                        const certified = hasSeason1Badge(rankUser);
+                      {selectedArchive.topXpRankings.slice(0, 10).map((rankUser: any, index: number) => {
+                        const certified = rankUser.certified === true;
 
                         return (
                           <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
                             <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
                             {certified ? (
                               <div className="relative h-8 w-8 flex-shrink-0 overflow-hidden rounded-full bg-amber-50">
-                                <Image src={rankUser.badgeImageUrl || SEASON1_BADGE_URL} alt="Season 1 認証" fill sizes="32px" className="object-contain" />
+                                <Image src={rankUser.badgeImageUrl || selectedArchive.badgeImageUrl} alt={`Season ${selectedArchive.seasonNumber} 認証`} fill sizes="32px" className="object-contain" />
                               </div>
                             ) : (
                               <div className="h-8 w-8 flex-shrink-0 rounded-full bg-orange-50 flex items-center justify-center">

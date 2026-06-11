@@ -431,7 +431,20 @@ async function updateKanjiLeaderboard(uid: string, userName: string, icon: strin
   if (!userData) return;
 
   const totalScore = userData.kanjiTotalScore || 0;
-  const season1Badge = userData.kanjiSeasonBadges?.season1 || userData.kanjiSeason1Badge || null;
+  const storedBadges = userData.kanjiSeasonBadges && typeof userData.kanjiSeasonBadges === "object"
+    ? Object.values(userData.kanjiSeasonBadges) as any[]
+    : [];
+  const badges = [...storedBadges];
+  if (!badges.some((badge: any) => badge?.seasonId === "season1") && (userData.kanjiSeason1Badge || userData.kanjiSeason1Certified === true)) {
+    badges.push(userData.kanjiSeason1Badge || {
+      seasonId: "season1",
+      seasonNumber: 1,
+      label: "Season 1 認証",
+      badgeImageUrl: "/images/kanji-season1-badge.png",
+    });
+  }
+  badges.sort((a: any, b: any) => Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0));
+  const latestBadge = badges[0] || null;
 
   const leaderboardSnap = await leaderboardRef.get();
   let rankings: any[] = [];
@@ -447,8 +460,9 @@ async function updateKanjiLeaderboard(uid: string, userName: string, icon: strin
     xp,
     icon,
     level,
-    certified: Boolean(season1Badge || userData.kanjiSeason1Certified === true),
-    badgeImageUrl: season1Badge?.badgeImageUrl || (userData.kanjiSeason1Certified === true ? "/images/kanji-season1-badge.png" : null),
+    badges,
+    certified: badges.length > 0,
+    badgeImageUrl: latestBadge?.badgeImageUrl || null,
   };
 
   if (existingIdx >= 0) {
