@@ -492,11 +492,13 @@ export default function Home() {
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年6月4日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年6月17日</span>
               </div>
               <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
-                <li>・ <span className="font-semibold text-primary">数式の表示</span>が崩れにくくなるよう調整しました。</li>
-                <li>・ <span className="font-semibold text-primary">記述式問題の採点基準</span>をより適切に判定できるよう調整しました。</li>
+                <li>・ <span className="font-semibold text-primary">試験対策演習</span>を追加しました。表示されない場合は、下の「更新」を押してください。</li>
+                <li>・ 試験に向けて、苦手な単元を後回しにせず、毎日少しずつしっかり取り組みましょう。</li>
+                <li>・ アプリの演習だけで終わらせず、<span className="font-semibold text-primary">完成ノート</span>も併用して解き方を整理しましょう。</li>
+                <li>・ 4択問題では練習しきれない<span className="font-semibold text-primary">記述式問題</span>の対策も、途中式や説明を書く練習として必ず行いましょう。</li>
               </ul>
             </div>
 
