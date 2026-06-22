@@ -241,6 +241,7 @@ export default function Home() {
         // Extract available categories
         const categories = Array.from(new Set(soloUnitsData.map(u => u.category || 'その他'))).sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
         setAvailableCategories(categories);
+        setSelectedCategory(categories.at(-1) || 'all');
 
         setScores(newScores);
       } catch (err) {
