@@ -7,6 +7,7 @@ import { db, functions as firebaseFunctions } from '@/lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import MaintenancePage from './MaintenancePage';
+import { hasAcceptedCurrentLegalDocs, LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 
 type KanjiAccessStatus = {
   granted: boolean;
@@ -15,11 +16,18 @@ type KanjiAccessStatus = {
 };
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, agreeToTerms, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const isKanjiMode = pathname.startsWith('/yamato') || pathname.startsWith('/kanji');
   const targetConfig = isKanjiMode ? 'maintenance_kanji' : 'maintenance';
+  const isLegalPublicPage = pathname === '/login' || pathname === '/terms' || pathname === '/privacy';
+  const needsLegalAgreement = Boolean(
+    user &&
+    !isLegalPublicPage &&
+    !hasAcceptedCurrentLegalDocs(user) &&
+    process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true'
+  );
   const [maintenance, setMaintenance] = useState<{ enabled: boolean; message?: string; scheduledEnd?: string } | null>(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(true);
   const [kanjiAccess, setKanjiAccess] = useState<KanjiAccessStatus | null>(null);
@@ -27,6 +35,8 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const [kanjiPassword, setKanjiPassword] = useState('');
   const [kanjiPasswordSubmitting, setKanjiPasswordSubmitting] = useState(false);
   const [kanjiPasswordError, setKanjiPasswordError] = useState('');
+  const [termsChecked, setTermsChecked] = useState(false);
+  const [savingTerms, setSavingTerms] = useState(false);
 
   useEffect(() => {
     setMaintenanceLoading(true);
@@ -47,7 +57,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }, [targetConfig]);
 
   useEffect(() => {
-    if (!isKanjiMode || !user) {
+    if (!isKanjiMode || !user || needsLegalAgreement) {
       setKanjiAccess(null);
       setKanjiAccessLoading(false);
       return;
@@ -69,13 +79,23 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     });
 
     return () => unsubscribe();
-  }, [isKanjiMode, user]);
+  }, [isKanjiMode, needsLegalAgreement, user]);
 
   useEffect(() => {
-    if (!loading && !maintenanceLoading && !maintenance?.enabled && !user && pathname !== '/login') {
+    if (!loading && !maintenanceLoading && !maintenance?.enabled && !user && !isLegalPublicPage) {
       router.push('/login');
     }
-  }, [user, loading, maintenanceLoading, maintenance, router, pathname]);
+  }, [user, loading, maintenanceLoading, maintenance, router, isLegalPublicPage]);
+
+  const handleAgreeToTerms = async () => {
+    if (!termsChecked || savingTerms) return;
+    setSavingTerms(true);
+    try {
+      await agreeToTerms();
+    } finally {
+      setSavingTerms(false);
+    }
+  };
 
   const submitKanjiPassword = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -107,7 +127,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     }
   };
 
-  if (loading || maintenanceLoading || (isKanjiMode && user && kanjiAccessLoading)) {
+  if (loading || maintenanceLoading || (isKanjiMode && user && !needsLegalAgreement && kanjiAccessLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full font-bold"></div>
@@ -119,8 +139,69 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     return <MaintenancePage message={maintenance.message} scheduledEnd={maintenance.scheduledEnd} />;
   }
 
-  if (!user && pathname !== '/login') {
+  if (!user && !isLegalPublicPage) {
     return null;
+  }
+
+  if (needsLegalAgreement) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F8FAEB] px-4 py-8">
+        <div className="w-full max-w-lg rounded-2xl border border-primary/10 bg-white p-8 shadow-xl">
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-black text-gray-900">利用規約の確認</h1>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {LEGAL_EFFECTIVE_DATE_LABEL} 改正版の利用規約とプライバシーポリシーへの同意が必要です。
+            </p>
+          </div>
+
+          <div className="mb-5 rounded-xl border bg-gray-50 p-4 text-sm leading-relaxed text-gray-700">
+            <p>
+              Formix を利用する前に、利用規約とプライバシーポリシーを確認してください。
+              同意後、直前に開こうとしていたページをそのまま利用できます。
+            </p>
+            <div className="mt-4 flex flex-col gap-2 text-center font-bold sm:flex-row sm:justify-center">
+              <a href="/terms" target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline">
+                利用規約を読む
+              </a>
+              <a href="/privacy" target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline">
+                プライバシーポリシーを読む
+              </a>
+            </div>
+          </div>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-transparent p-3 transition-colors hover:border-gray-200 hover:bg-gray-50">
+            <input
+              type="checkbox"
+              checked={termsChecked}
+              onChange={(event) => setTermsChecked(event.target.checked)}
+              className="mt-1 h-5 w-5 flex-shrink-0 rounded border-gray-300 text-primary focus:ring-primary"
+            />
+            <span className="text-sm font-medium leading-relaxed text-gray-800">
+              利用規約およびプライバシーポリシーの内容を確認し、すべての条項に同意します。
+            </span>
+          </label>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={logout}
+              disabled={savingTerms}
+              className="h-12 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-40"
+            >
+              ログアウト
+            </button>
+            <button
+              type="button"
+              onClick={handleAgreeToTerms}
+              disabled={!termsChecked || savingTerms}
+              className="h-12 flex-1 rounded-xl bg-primary px-4 text-base font-bold text-primary-foreground shadow-md transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-primary/40"
+            >
+              {savingTerms ? '処理中...' : '同意して続ける'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isKanjiMode && user && kanjiAccess?.blocked) {
