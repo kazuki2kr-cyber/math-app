@@ -6,6 +6,20 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
   },
+  async redirects() {
+    return [
+      {
+        source: "/kanji",
+        destination: "/yamato",
+        permanent: true,
+      },
+      {
+        source: "/kanji/:path*",
+        destination: "/yamato/:path*",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

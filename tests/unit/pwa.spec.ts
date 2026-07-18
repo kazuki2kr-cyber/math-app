@@ -1,5 +1,7 @@
 import manifest from '@/app/manifest';
 import { GET as getMessagingServiceWorker } from '@/app/firebase-messaging-sw.js/route';
+import { GET as getLegacyPwaIcon } from '@/app/pwa-icon/route';
+import nextConfig from '../../next.config';
 import { normalizePushNotificationPayload } from '../../functions/src/pushNotificationPayload';
 
 describe('PWA configuration', () => {
@@ -29,6 +31,43 @@ describe('PWA configuration', () => {
     expect(source).not.toMatch(/addEventListener\(["']fetch["']/);
     expect(source).not.toContain('caches.open');
     expect(source).not.toContain('respondWith');
+  });
+
+  it('recovers legacy PWA icon requests without leaving users on a 404 page', () => {
+    const documentResponse = getLegacyPwaIcon(new Request('https://formix.test/pwa-icon', {
+      headers: {
+        accept: 'text/html',
+        'sec-fetch-dest': 'document',
+      },
+    }));
+    const imageResponse = getLegacyPwaIcon(new Request('https://formix.test/pwa-icon', {
+      headers: {
+        accept: 'image/avif,image/webp,*/*',
+        'sec-fetch-dest': 'image',
+      },
+    }));
+
+    expect(documentResponse.status).toBe(307);
+    expect(documentResponse.headers.get('location')).toBe('https://formix.test/');
+    expect(imageResponse.status).toBe(307);
+    expect(imageResponse.headers.get('location')).toBe('https://formix.test/images/pwa-icon.png');
+  });
+
+  it('redirects legacy kanji links to the current yamato routes', async () => {
+    const redirects = await nextConfig.redirects?.();
+
+    expect(redirects).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: '/kanji',
+        destination: '/yamato',
+        permanent: true,
+      }),
+      expect.objectContaining({
+        source: '/kanji/:path*',
+        destination: '/yamato/:path*',
+        permanent: true,
+      }),
+    ]));
   });
 });
 
