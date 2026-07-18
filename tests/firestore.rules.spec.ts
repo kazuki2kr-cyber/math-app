@@ -103,7 +103,7 @@ describe('Firestore Security Rules', () => {
       icon: '🚀',
       hasAgreedToTerms: true,
       termsVersion: '2026-06-06',
-      privacyPolicyVersion: '2026-06-06',
+      privacyPolicyVersion: '2026-07-18',
       legalAgreedAt: new Date().toISOString(),
     })).resolves.toBeUndefined();
   });
@@ -502,5 +502,30 @@ describe('Firestore Security Rules', () => {
     const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
     const adminRef = doc(adminContext.firestore(), 'users', aliceId);
     await expect(updateDoc(adminRef, { kanjiXp: 9999, kanjiTotalScore: 500 })).resolves.toBeUndefined();
+  });
+
+  test('通知トークンと配信履歴はクライアントから直接読み書きできない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'push_subscriptions', 'subscription-1'), {
+        uid: aliceId,
+        token: 'server-only-token',
+      });
+      await setDoc(doc(context.firestore(), 'notification_campaigns', 'campaign-1'), {
+        title: 'お知らせ',
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+
+    for (const context of [aliceContext, adminContext]) {
+      const subscriptionRef = doc(context.firestore(), 'push_subscriptions', 'subscription-1');
+      const campaignRef = doc(context.firestore(), 'notification_campaigns', 'campaign-1');
+
+      await expect(getDoc(subscriptionRef)).rejects.toThrow();
+      await expect(setDoc(subscriptionRef, { uid: aliceId, token: 'client-token' })).rejects.toThrow();
+      await expect(getDoc(campaignRef)).rejects.toThrow();
+      await expect(setDoc(campaignRef, { title: 'client-title' })).rejects.toThrow();
+    }
   });
 });

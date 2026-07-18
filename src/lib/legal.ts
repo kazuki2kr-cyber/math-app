@@ -1,6 +1,7 @@
-export const LEGAL_EFFECTIVE_DATE_LABEL = '2026年6月6日';
+export const TERMS_EFFECTIVE_DATE_LABEL = '2026年6月6日';
+export const PRIVACY_POLICY_EFFECTIVE_DATE_LABEL = '2026年7月18日';
 export const CURRENT_TERMS_VERSION = '2026-06-06';
-export const CURRENT_PRIVACY_POLICY_VERSION = '2026-06-06';
+export const CURRENT_PRIVACY_POLICY_VERSION = '2026-07-18';
 
 export function hasAcceptedCurrentLegalDocs(user?: {
   hasAgreedToTerms?: boolean;

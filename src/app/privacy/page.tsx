@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, UserCheck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
+import { PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 
 export default function PrivacyPage() {
   const router = useRouter();
@@ -26,7 +26,7 @@ export default function PrivacyPage() {
               </div>
               <div>
                 <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">プライバシーポリシー</h1>
-                <p className="text-sm text-gray-500 mt-2">最終改正日: {LEGAL_EFFECTIVE_DATE_LABEL}</p>
+                <p className="text-sm text-gray-500 mt-2">最終改正日: {PRIVACY_POLICY_EFFECTIVE_DATE_LABEL}</p>
               </div>
             </div>
 
@@ -46,6 +46,7 @@ export default function PrivacyPage() {
                   <li>記述式・手書き機能に関するデータ（答案画像、OCR 結果、AI による文字起こし、採点結果、ルーブリック別評価、フィードバック、モデル解答、提出制限の利用状況）</li>
                   <li>管理者分析に必要なデータ（問題別・単元別・カテゴリ別・ユーザー別の集計、誤答傾向、相関、リスク指標、不正検知ログ）</li>
                   <li>アプリ内フィードバック（本文、送信ページ、User-Agent、送信者の氏名・メールアドレス、対応状況）</li>
+                  <li>プッシュ通知に関する情報（通知用端末トークン、User-Agent、通知許可状態、端末登録日時・最終更新日時）</li>
                   <li>アクセス端末環境、通信ログ、エラー情報、セキュリティログ、利用日時、同意バージョン、同意日時</li>
                   <li>ブラウザのローカルストレージ等に保存される表示・キャッシュ用データ（単元一覧、演習データの一時キャッシュ等）</li>
                 </ul>
@@ -64,6 +65,7 @@ export default function PrivacyPage() {
                   <li>教員による学習状況の把握、個別指導、教材改善、授業改善、学習支援のため</li>
                   <li>不正アクセス、不自然なスコア獲得、規約違反、システムへの過負荷、データ改ざんの調査・対応のため</li>
                   <li>本サービスの品質改善、障害調査、セキュリティ確保、利用状況分析のため</li>
+                  <li>ユーザーが許可した端末へ、課題、機能更新、メンテナンスその他の運用上必要なお知らせを配信するため</li>
                   <li>教育工学研究、学校内外への報告、教育改善資料、統計化データ、公開レポート作成のため</li>
                   <li>規約・プライバシーポリシーへの同意状況を管理し、重要改定時に再同意を求めるため</li>
                 </ul>
@@ -79,6 +81,7 @@ export default function PrivacyPage() {
                   <li>Cloud Firestore: ユーザープロフィール、学習履歴、分析イベント、フィードバック等の保存</li>
                   <li>Firebase Realtime Database: 対戦ルーム、対戦中の状態、対戦結果の処理</li>
                   <li>Cloud Functions: スコア・XP・ランキング・採点・不正検知等のサーバー処理</li>
+                  <li>Firebase Cloud Messaging: ユーザーが許可した端末へのプッシュ通知配信</li>
                   <li>BigQuery: 学習データの集計、管理者分析、レポート用集計</li>
                   <li>Google Cloud Vision API: 漢字等の手書き画像の OCR 処理</li>
                   <li>Google Gemini API: 記述式答案の文字起こし、採点補助、フィードバック生成</li>
@@ -109,7 +112,8 @@ export default function PrivacyPage() {
                 <p>
                   1. 詳細な提出履歴や答案データの一部には、一定期間後に削除される設定が適用される場合があります。ただし、ユーザーの累計スコア、XP、ランキング、単元別集計、分析イベント、統計化データ、不正検知ログ、フィードバック等は、教育上・運用上・セキュリティ上必要な期間保存されることがあります。<br />
                   2. 管理者は、教育上または運用上必要な場合、特定の提出履歴、スコア、XP、ランキング、フィードバック、分析データ等を修正または削除することがあります。<br />
-                  3. ユーザーが情報の確認、訂正、削除等を希望する場合は、運営責任者または担当教員に相談してください。対応範囲は、学校運営、教育記録、システム保全、法令上の必要性を踏まえて判断します。
+                  3. 通知用端末トークンは、ユーザーが当該端末の通知を停止した場合、または配信時に無効であることが確認された場合に削除します。<br />
+                  4. ユーザーが情報の確認、訂正、削除等を希望する場合は、運営責任者または担当教員に相談してください。対応範囲は、学校運営、教育記録、システム保全、法令上の必要性を踏まえて判断します。
                 </p>
               </section>
 
@@ -123,7 +127,7 @@ export default function PrivacyPage() {
               <section>
                 <h3 className="text-xl font-bold border-b pb-2 mb-3 mt-8">第8条（ポリシーの改定と再同意）</h3>
                 <p>
-                  本校は、法令、学校運用、サービス内容、外部サービス、データの取扱いの変更に応じて、本ポリシーを改定することがあります。重要な改定を行う場合、本サービス上で通知し、必要に応じてユーザーに再同意を求めます。{LEGAL_EFFECTIVE_DATE_LABEL} 改正版への同意は、本サービスの継続利用に必要です。
+                  本校は、法令、学校運用、サービス内容、外部サービス、データの取扱いの変更に応じて、本ポリシーを改定することがあります。重要な改定を行う場合、本サービス上で通知し、必要に応じてユーザーに再同意を求めます。{PRIVACY_POLICY_EFFECTIVE_DATE_LABEL} 改正版への同意は、本サービスの継続利用に必要です。
                 </p>
               </section>
 

@@ -232,6 +232,7 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
 export * from "./kanji";
 export * from "./analyticsAggregation";
 export * from "./cleanup";
+export * from "./pushNotifications";
 
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
   // 呼び出し元が管理者であることを確認

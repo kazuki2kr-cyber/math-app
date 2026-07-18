@@ -7,7 +7,7 @@ import { db, functions as firebaseFunctions } from '@/lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import MaintenancePage from './MaintenancePage';
-import { hasAcceptedCurrentLegalDocs, LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
+import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 
 type KanjiAccessStatus = {
   granted: boolean;
@@ -150,7 +150,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
           <div className="mb-6 text-center">
             <h1 className="text-2xl font-black text-gray-900">利用規約の確認</h1>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              {LEGAL_EFFECTIVE_DATE_LABEL} 改正版の利用規約とプライバシーポリシーへの同意が必要です。
+              現在の利用規約と{PRIVACY_POLICY_EFFECTIVE_DATE_LABEL}改正版のプライバシーポリシーへの同意が必要です。
             </p>
           </div>
 

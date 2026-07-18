@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
-import { hasAcceptedCurrentLegalDocs, LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
+import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
 import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone } from 'lucide-react';
 import Image from 'next/image';
@@ -13,6 +13,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { setDoc } from 'firebase/firestore';
+import { PwaHeaderActions } from '@/components/PwaProvider';
 
 interface Unit {
   id: string;
@@ -350,34 +351,35 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#F8FAEB] flex flex-col">
-      <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
-        <div className="flex items-center gap-4">
+      <header className="bg-white/95 backdrop-blur-md border-b border-primary/10 px-3 py-3 md:px-6 md:py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
+        <div className="flex min-w-0 items-center gap-2 md:gap-4">
           <div className="w-10 h-10 md:w-12 md:h-12 overflow-hidden rounded-[1rem] shadow-md flex items-center justify-center flex-shrink-0">
             <Image src="/images/icon.webp" alt="Formix Icon" width={64} height={64} className="object-cover w-full h-full" />
           </div>
           <div className="flex flex-col justify-center">
-            <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-none mb-[2px]">Formix</h1>
-            <p className="text-[10px] text-muted-foreground/80 uppercase tracking-widest font-semibold leading-none">Forming the Essence of Knowledge.</p>
+            <h1 className="text-xl md:text-3xl font-black text-gray-900 tracking-tight leading-none mb-[2px]">Formix</h1>
+            <p className="hidden sm:block text-[10px] text-muted-foreground/80 uppercase tracking-widest font-semibold leading-none">Forming the Essence of Knowledge.</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-1 md:gap-4">
+          <PwaHeaderActions />
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsFeedbackModalOpen(true)}
             className="inline-flex border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 font-bold"
+            title="意見を送る"
           >
-            <MessageSquare className="w-4 h-4 mr-2" />
+            <MessageSquare className="w-4 h-4 md:mr-2" />
             <span className="hidden md:inline">意見を送る</span>
-            <span className="md:hidden">意見</span>
           </Button>
           <span className="text-sm font-medium text-gray-700 hidden sm:inline-block bg-gray-100 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-muted-foreground font-normal ml-1">さん</span>
           </span>
-          <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground hover:text-primary">
-            <LogOut className="w-4 h-4 mr-2" />
-            ログアウト
+          <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground hover:text-primary" title="ログアウト">
+            <LogOut className="w-4 h-4 md:mr-2" />
+            <span className="hidden md:inline">ログアウト</span>
           </Button>
         </div>
       </header>
@@ -866,7 +868,7 @@ export default function Home() {
             <div className="text-center space-y-2">
               <h3 className="text-2xl font-black text-gray-900 tracking-tight">利用規約の確認</h3>
               <p className="text-sm text-muted-foreground">
-                {LEGAL_EFFECTIVE_DATE_LABEL} 改正版の利用規約とプライバシーポリシーへの同意が必要です。
+                現在の利用規約と{PRIVACY_POLICY_EFFECTIVE_DATE_LABEL}改正版のプライバシーポリシーへの同意が必要です。
               </p>
             </div>
 

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { LEGAL_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
+import { TERMS_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 
 export default function TermsPage() {
   const router = useRouter();
@@ -26,7 +26,7 @@ export default function TermsPage() {
               </div>
               <div>
                 <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">利用規約</h1>
-                <p className="text-sm text-gray-500 mt-2">最終改正日: {LEGAL_EFFECTIVE_DATE_LABEL}</p>
+                <p className="text-sm text-gray-500 mt-2">最終改正日: {TERMS_EFFECTIVE_DATE_LABEL}</p>
               </div>
             </div>
 
@@ -121,7 +121,7 @@ export default function TermsPage() {
                 <p>
                   1. 本校は、法令、学校運用、サービス内容、利用する外部サービス、データの取扱いの変更に応じて、本規約およびプライバシーポリシーを改定することがあります。<br />
                   2. 重要な改定を行う場合、本校は本サービス上で通知し、必要に応じてユーザーに再同意を求めます。<br />
-                  3. {LEGAL_EFFECTIVE_DATE_LABEL} 改正版への同意は、本サービスの継続利用に必要です。
+                  3. {TERMS_EFFECTIVE_DATE_LABEL} 改正版への同意は、本サービスの継続利用に必要です。
                 </p>
               </section>
 

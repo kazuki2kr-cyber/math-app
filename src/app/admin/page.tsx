@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare } from 'lucide-react';
+import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare, Bell } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
@@ -17,6 +17,7 @@ import SuspiciousTab from './components/SuspiciousTab';
 import RolesTab from './components/RolesTab';
 import FeedbackTab from './components/FeedbackTab';
 import WrittenAnalyticsTab from './components/WrittenAnalyticsTab';
+import NotificationsTab from './components/NotificationsTab';
 import 'katex/dist/katex.min.css';
 
 const ANALYTICS_EVENT_BATCH_SIZE = 200;
@@ -93,7 +94,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'writtenAnalytics' | 'feedback' | 'writtenFeedback' | 'roles'>('roles');
+  const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'writtenAnalytics' | 'feedback' | 'writtenFeedback' | 'notifications' | 'roles'>('roles');
   const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
@@ -974,7 +975,7 @@ export default function AdminPage() {
         <h2 className="text-2xl font-bold text-gray-800">管理者ダッシュボード</h2>
       </div>
 
-      <div className="flex space-x-2 border-b">
+      <div className="flex space-x-2 overflow-x-auto border-b">
         <button 
           onClick={() => setActiveTab('import')} 
           className={`px-4 py-2 font-medium ${activeTab === 'import' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
@@ -1010,7 +1011,7 @@ export default function AdminPage() {
           <Shield className="inline w-4 h-4 mr-2" />
           不正疑惑
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('analytics')} 
           className={`px-4 py-2 font-medium ${activeTab === 'analytics' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
         >
@@ -1038,9 +1039,16 @@ export default function AdminPage() {
           <MessageSquare className="inline w-4 h-4 mr-2" />
           記述採点FB
         </button>
-        <button 
+        <button
+          onClick={() => setActiveTab('notifications')}
+          className={`shrink-0 px-4 py-2 font-medium ${activeTab === 'notifications' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <Bell className="inline w-4 h-4 mr-2" />
+          通知
+        </button>
+        <button
           onClick={() => setActiveTab('roles')} 
-          className={`px-4 py-2 font-medium ${activeTab === 'roles' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
+          className={`shrink-0 px-4 py-2 font-medium ${activeTab === 'roles' ? 'border-b-2 border-primary text-primary' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <Users className="inline w-4 h-4 mr-2" />
           管理者ロール
@@ -1166,6 +1174,10 @@ export default function AdminPage() {
           onRefresh={fetchWrittenFeedback}
           onDeleteFeedback={handleDeleteWrittenFeedback}
         />
+      )}
+
+      {activeTab === 'notifications' && (
+        <NotificationsTab />
       )}
 
       {/* ========== TAB: ROLES & MAINTENANCE ========== */}
