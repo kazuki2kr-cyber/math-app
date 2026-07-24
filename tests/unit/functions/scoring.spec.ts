@@ -96,6 +96,19 @@ function updateWrongAnswers(
   return current;
 }
 
+function shouldSyncLeaderboard(params: {
+  currentXp: number;
+  newTotalXp: number;
+  isHighScore?: boolean;
+  isLevelUp?: boolean;
+}): boolean {
+  return Boolean(
+    params.isHighScore
+    || params.isLevelUp
+    || Math.floor(params.currentXp / 100) < Math.floor(params.newTotalXp / 100),
+  );
+}
+
 // ─────────────────────────────────────────────────────────
 // テスト
 // ─────────────────────────────────────────────────────────
@@ -112,6 +125,21 @@ describe('スコア計算 (calculateScore)', () => {
   test('全問演習: 29/30 正解は四捨五入される', () => expect(calculateScore(29, 30, 'all')).toBe(97));
   test('全問演習: 50問全問正解でも100点で上限', () => expect(calculateScore(50, 50, 'all')).toBe(100));
   test('totalAnswered=0 の場合は 0点', () => expect(calculateScore(0, 0, 'all')).toBe(0));
+});
+
+describe('ランキングXP同期', () => {
+  test('100 XP境界を越えない場合は同期しない', () => {
+    expect(shouldSyncLeaderboard({ currentXp: 120, newTotalXp: 199 })).toBe(false);
+  });
+
+  test('100 XP境界を越えた場合は同期する', () => {
+    expect(shouldSyncLeaderboard({ currentXp: 199, newTotalXp: 200 })).toBe(true);
+  });
+
+  test('ハイスコアまたはレベルアップ時はXP境界に関係なく同期する', () => {
+    expect(shouldSyncLeaderboard({ currentXp: 120, newTotalXp: 121, isHighScore: true })).toBe(true);
+    expect(shouldSyncLeaderboard({ currentXp: 120, newTotalXp: 121, isLevelUp: true })).toBe(true);
+  });
 });
 
 describe('XP 逓減レート (getXpRateMultiplier)', () => {

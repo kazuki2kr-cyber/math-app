@@ -83,19 +83,19 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  --background: oklch(0.16 0.018 160);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.215 0.018 160);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: oklch(0.215 0.018 160);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
+  --primary: oklch(0.72 0.12 160);
+  --primary-foreground: oklch(0.16 0.018 160);
+  --secondary: oklch(0.28 0.03 160);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --muted: oklch(0.27 0.018 160);
+  --muted-foreground: oklch(0.75 0.01 160);
+  --accent: oklch(0.31 0.045 160);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
@@ -122,10 +122,107 @@
   }
   body {
     @apply bg-background text-foreground;
+    transition: background-color 160ms ease, color 160ms ease;
   }
   html {
     @apply font-sans;
   }
+}
+
+/*
+ * 既存画面に残るTailwindのライト固定色を、ダーク時だけセマンティック色へ寄せる。
+ * 新規UIは bg-card / text-foreground 等を優先し、この互換層への依存を増やさない。
+ */
+.dark :where(
+  [class~="bg-white"],
+  [class~="bg-white/20"],
+  [class~="bg-white/40"],
+  [class~="bg-white/50"],
+  [class~="bg-white/60"],
+  [class~="bg-white/70"],
+  [class~="bg-white/80"],
+  [class~="bg-white/90"],
+  [class~="bg-white/95"],
+  [class~="bg-gray-50"],
+  [class~="bg-gray-50/50"],
+  [class~="bg-gray-50/70"],
+  [class~="bg-gray-50/80"],
+  [class~="bg-[#F8FAEB]"],
+  [class~="bg-[#fbfbf7]"]
+) {
+  background-color: var(--card) !important;
+}
+
+.dark :where(
+  [class~="text-gray-950"],
+  [class~="text-gray-900"],
+  [class~="text-gray-800"],
+  [class~="text-gray-700"],
+  [class~="text-slate-950"],
+  [class~="text-slate-900"],
+  [class~="text-slate-800"],
+  [class~="text-slate-700"]
+) {
+  color: var(--foreground) !important;
+}
+
+.dark :where(
+  [class~="text-gray-600"],
+  [class~="text-gray-500"],
+  [class~="text-gray-400"],
+  [class~="text-slate-600"],
+  [class~="text-slate-500"],
+  [class~="text-slate-400"]
+) {
+  color: var(--muted-foreground) !important;
+}
+
+.dark :where(
+  [class~="border-gray-100"],
+  [class~="border-gray-200"],
+  [class~="border-gray-300"],
+  [class~="divide-gray-100"],
+  [class~="border-slate-100"],
+  [class~="border-slate-200"]
+) {
+  border-color: var(--border) !important;
+}
+
+.dark :where(
+  [class~="bg-red-50"],
+  [class~="bg-red-50/30"],
+  [class~="bg-red-50/50"],
+  [class~="bg-red-50/60"],
+  [class~="bg-green-50"],
+  [class~="bg-green-50/30"],
+  [class~="bg-green-50/50"],
+  [class~="bg-green-50/70"],
+  [class~="bg-blue-50"],
+  [class~="bg-blue-50/10"],
+  [class~="bg-blue-50/60"],
+  [class~="bg-blue-50/80"],
+  [class~="bg-sky-50"],
+  [class~="bg-sky-50/60"],
+  [class~="bg-amber-50"],
+  [class~="bg-amber-50/10"],
+  [class~="bg-amber-50/40"],
+  [class~="bg-amber-50/50"],
+  [class~="bg-amber-50/60"],
+  [class~="bg-amber-50/70"],
+  [class~="bg-amber-50/80"],
+  [class~="bg-orange-50"],
+  [class~="bg-orange-50/30"],
+  [class~="bg-orange-50/50"],
+  [class~="bg-orange-50/60"],
+  [class~="bg-orange-50/80"]
+) {
+  background-color: color-mix(in oklab, var(--card) 82%, var(--primary) 18%) !important;
+}
+
+.dark img.mix-blend-multiply {
+  border-radius: 0.5rem;
+  background: white;
+  mix-blend-mode: normal;
 }
 
 @media print {

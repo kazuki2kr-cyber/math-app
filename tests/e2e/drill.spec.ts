@@ -79,7 +79,7 @@ test.describe('ドリル演習', () => {
     await expect(page.getByText(/Question 2/)).toBeVisible({ timeout: 5000 });
   });
 
-  test('計算用紙は次の問題で破棄され、結果送信データに含まれない', async ({ page }) => {
+  test('計算用紙は問題ごとに保持され、結果送信データには含まれない', async ({ page }) => {
     const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
     await unitCard.waitFor({ timeout: 10000 });
     await unitCard.locator('button', { hasText: '演習開始' }).click();
@@ -126,6 +126,15 @@ test.describe('ドリル演習', () => {
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await page.getByRole('button', { name: 'ページ追加' }).click();
+    await expect(page.getByText('2 / 2ページ')).toBeVisible();
+    const secondPageCanvas = page.locator('section[aria-hidden="false"] canvas');
+    const secondPageBox = await secondPageCanvas.boundingBox();
+    if (!secondPageBox) throw new Error('Second scratch paper page was not visible');
+    await page.mouse.move(secondPageBox.x + 32, secondPageBox.y + 32);
+    await page.mouse.down();
+    await page.mouse.move(secondPageBox.x + 140, secondPageBox.y + 100);
+    await page.mouse.up();
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
 
     await page.locator('button.w-full.text-left').first().click();
@@ -137,6 +146,16 @@ test.describe('ドリル演習', () => {
     await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
 
+    await page.locator('button.w-full.text-left').first().click();
+    await page.getByRole('button', { name: '前の問題へ' }).click();
+    await page.getByRole('button', { name: '計算用紙を開く' }).click();
+    await expect(page.getByText('1 / 2ページ')).toBeVisible();
+    await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await page.getByRole('button', { name: '次の計算用紙ページ' }).click();
+    await expect(page.getByText('2 / 2ページ')).toBeVisible();
+    await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
+    await page.locator('button', { hasText: '次の問題へ' }).click();
     await page.locator('button.w-full.text-left').first().click();
     await page.locator('button', { hasText: '次の問題へ' }).click();
     await page.getByText(/Question 3/).waitFor({ timeout: 5000 });
@@ -158,6 +177,52 @@ test.describe('ドリル演習', () => {
     expect(storedResult).not.toHaveProperty('strokeWidth');
     expect(JSON.stringify(storedResult)).not.toContain('data:image');
     expect(JSON.stringify(storedResult)).not.toContain('extraThin');
+  });
+
+  test('「わからない」を選ぶと不正解として解説が表示される', async ({ page }) => {
+    const unitCard = page.locator('.group', { hasText: 'テスト単元' }).first();
+    await unitCard.waitFor({ timeout: 10000 });
+    await unitCard.locator('button', { hasText: '演習開始' }).click();
+    await page.waitForURL(/\/drill\/test_unit$/, { timeout: 15000 });
+
+    await page.getByRole('button', { name: /わからない/ }).click();
+    await expect(page.getByRole('button', { name: /わからない/ })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: '演習を完了する' }).click();
+
+    await page.waitForURL(/\/result\/test_unit$/, { timeout: 15000 });
+    await expect(page.getByText('間違えた問題')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('わからない', { exact: true })).toBeVisible();
+    await expect(page.getByText('1+1=2', { exact: true }).first()).toBeVisible();
+  });
+
+  test('間違えた問題では、その問題の計算用紙を結果画面で確認できる', async ({ page }) => {
+    const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
+    await unitCard.waitFor({ timeout: 10000 });
+    await unitCard.locator('button', { hasText: '演習開始' }).click();
+    await page.waitForURL(/\/drill\/test_unit_multi$/, { timeout: 15000 });
+
+    await page.getByRole('button', { name: '計算用紙を開く' }).click();
+    const canvas = page.locator('section[aria-hidden="false"] canvas');
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Scratch paper canvas was not visible');
+    await page.mouse.move(box.x + 30, box.y + 30);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 150, box.y + 110);
+    await page.mouse.up();
+    await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
+
+    await page.getByRole('button', { name: /わからない/ }).click();
+    await page.getByRole('button', { name: '次の問題へ' }).click();
+    await page.getByRole('button', { name: /わからない/ }).click();
+    await page.getByRole('button', { name: '次の問題へ' }).click();
+    await page.getByRole('button', { name: /わからない/ }).click();
+    await page.getByRole('button', { name: '演習を完了する' }).click();
+
+    await page.waitForURL(/\/result\/test_unit_multi$/, { timeout: 15000 });
+    await expect(page.getByText('間違えた問題')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('この問題で書いた計算用紙')).toBeVisible();
+    await page.getByText('この問題で書いた計算用紙').click();
+    await expect(page.getByLabel('保存された計算用紙')).toBeVisible();
   });
 
   test('「前の問題へ」ボタンで前の問題に戻れる', async ({ page }) => {
@@ -220,6 +285,7 @@ test.describe('ドリル演習', () => {
 
     await page.waitForURL(/\/result\/test_unit/, { timeout: 15000 });
     await page.getByText('Result').waitFor({ timeout: 20000 });
+    await dismissLevelUpModal(page);
 
     await page.locator('button', { hasText: 'ダッシュボードに戻る' }).click();
     await page.waitForURL('/', { timeout: 15000 });
@@ -259,6 +325,7 @@ test.describe('ドリル演習', () => {
     await page.locator('button', { hasText: '演習を完了する' }).click();
     await page.waitForURL(/\/result\/test_unit/, { timeout: 15000 });
     await page.getByText('Result').waitFor({ timeout: 20000 });
+    await dismissLevelUpModal(page);
 
     await page.locator('button', { hasText: 'ダッシュボードに戻る' }).click();
     await page.waitForURL('/', { timeout: 15000 });

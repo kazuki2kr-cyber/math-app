@@ -266,6 +266,18 @@ export default function Home() {
           icon: r.icon || '📐',
           level: r.level || 1,
         }));
+        const ownEntryIndex = rankings.findIndex((ranking) => ranking.uid === user.uid);
+        if (ownEntryIndex >= 0 && userData) {
+          rankings[ownEntryIndex] = {
+            ...rankings[ownEntryIndex],
+            xp: userData.xp,
+            icon: userData.icon,
+            level: userData.level,
+          };
+          rankings.sort((left, right) => (
+            right.totalScore - left.totalScore || right.xp - left.xp
+          ));
+        }
         setOverallRanking(rankings);
         setTotalParticipants(data.totalParticipants || 0);
 

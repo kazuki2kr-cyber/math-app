@@ -10,6 +10,8 @@ const notoSansJP = Noto_Sans_JP({
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { PwaProvider } from "@/components/PwaProvider";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
   title: "Formix | Forming the Essence of Knowledge.",
@@ -30,8 +32,23 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#123f3a',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#123f3a' },
+    { media: '(prefers-color-scheme: dark)', color: '#111c1a' },
+  ],
 };
+
+const themeInitializationScript = `
+  (() => {
+    try {
+      const saved = localStorage.getItem('formix:theme');
+      const preference = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+      const dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    } catch {}
+  })();
+`;
 
 export default function RootLayout({
   children,
@@ -39,17 +56,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja">
+    <html lang="ja" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitializationScript }} />
+      </head>
       <body
         className={`${notoSansJP.variable} font-sans antialiased relative`}
       >
-        <AuthProvider>
-          <PwaProvider>
-            <ProtectedRoute>
-              {children}
-            </ProtectedRoute>
-          </PwaProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <PwaProvider>
+              <ProtectedRoute>
+                {children}
+              </ProtectedRoute>
+            </PwaProvider>
+          </AuthProvider>
+          <ThemeToggle />
+        </ThemeProvider>
         <div className="fixed bottom-2 right-2 text-xs text-slate-400 opacity-50 pointer-events-none z-50">
           v{process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0"}
         </div>

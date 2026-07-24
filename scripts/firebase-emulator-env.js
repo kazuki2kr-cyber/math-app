@@ -72,6 +72,7 @@ function buildFirebaseEnv(projectRoot) {
     PATH: path.join(javaHome, 'bin') + path.delimiter + process.env.PATH,
     XDG_CONFIG_HOME: configHome,
     FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
+    FUNCTIONS_DISCOVERY_TIMEOUT: '30000',
   };
 }
 

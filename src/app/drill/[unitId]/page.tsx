@@ -10,8 +10,14 @@ import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/Handwritin
 import { ScratchPaperOverlay } from '@/components/ScratchPaperOverlay';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
-import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, RotateCcw, Trash2 } from 'lucide-react';
+import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, RotateCcw, Trash2, CircleHelp } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
+import {
+  cleanupScratchAttempts,
+  deleteScratchAttempt,
+  saveScratchAttempt,
+  type ScratchPagesByQuestion,
+} from '@/lib/scratchPaperStorage';
 
 const STANDARD_DRILL_QUESTION_COUNT = 10;
 const DRILL_DATA_CACHE_PREFIX = 'math_drill_data_cache_v1:';
@@ -32,6 +38,13 @@ type DrillType = 'multiple_choice' | 'written';
 type StrokeWidthId = (typeof STROKE_WIDTH_OPTIONS)[number]['id'];
 type EraserSizeId = (typeof ERASER_SIZE_OPTIONS)[number]['id'];
 type ScratchTool = 'pen' | 'eraser';
+type AnswerSelection = number | 'unknown';
+
+interface SubmittedAnswer {
+  questionId: string;
+  answerType: 'selected' | 'unknown';
+  selectedOptionText?: string;
+}
 
 // Firestore から取得する生データ（answer_index を含む）
 // answer_index は選択肢シャッフル処理のみに使用し、状態には保持しない
@@ -127,11 +140,11 @@ export default function DrillPage() {
 
   // Drill State
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [selectedOption, setSelectedOption] = useState<AnswerSelection | null>(null);
   // 各問題インデックスに対して選択した選択肢インデックスを保持（「戻る」時の復元用）
-  const [questionSelections, setQuestionSelections] = useState<Record<number, number>>({});
+  const [questionSelections, setQuestionSelections] = useState<Record<number, AnswerSelection>>({});
   // 選択した選択肢テキストのみ記録（正誤はサーバーが判定）
-  const [submittedAnswers, setSubmittedAnswers] = useState<{ questionId: string; selectedOptionText: string }[]>([]);
+  const [submittedAnswers, setSubmittedAnswers] = useState<SubmittedAnswer[]>([]);
   const [isCompleting, setIsCompleting] = useState(false);
   const isCompletingRef = useRef(false);
   // attemptId は演習開始時に一度だけ生成（連打時も同一IDでサーバー冪等性チェックが機能する）
@@ -146,8 +159,9 @@ export default function DrillPage() {
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [isScratchPaperOpen, setIsScratchPaperOpen] = useState(false);
-  const [hasScratchStrokes, setHasScratchStrokes] = useState(false);
   const scratchPaperRef = useRef<HandwritingCanvasRef>(null);
+  const [scratchPagesByQuestion, setScratchPagesByQuestion] = useState<ScratchPagesByQuestion>({});
+  const [scratchStorageFallback, setScratchStorageFallback] = useState(false);
   const writtenPageRefs = useRef<Array<HandwritingCanvasRef | null>>([]);
   const [writtenPageCount, setWrittenPageCount] = useState(1);
   const [activeWrittenPage, setActiveWrittenPage] = useState(0);
@@ -158,6 +172,10 @@ export default function DrillPage() {
   const selectedWrittenStrokeWidth = STROKE_WIDTH_OPTIONS.find((option) => option.id === writtenStrokeWidthId)?.width ?? 4;
   const selectedWrittenEraserWidth = ERASER_SIZE_OPTIONS.find((option) => option.id === writtenEraserSizeId)?.width ?? 28;
   const currentQuestionId = unit?.questions?.[currentIndex]?.id ?? null;
+  const currentScratchPages = currentQuestionId
+    ? (scratchPagesByQuestion[currentQuestionId] ?? [[]])
+    : [[]];
+  const hasScratchStrokes = currentScratchPages.some((page) => page.length > 0);
 
   const refreshWrittenHasStrokes = () => {
     setWrittenHasStrokes(writtenPageRefs.current.slice(0, writtenPageCount).some(ref => ref?.hasStrokes()));
@@ -318,9 +336,32 @@ export default function DrillPage() {
     if (!currentQuestionId) return;
 
     setIsScratchPaperOpen(false);
-    scratchPaperRef.current?.clear();
-    setHasScratchStrokes(false);
   }, [currentQuestionId]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    void cleanupScratchAttempts(user.uid);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const hasAnyScratchWork = Object.values(scratchPagesByQuestion)
+      .some((pages) => pages.some((page) => page.length > 0));
+    if (!hasAnyScratchWork) {
+      void deleteScratchAttempt(user.uid, attemptIdRef.current);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveScratchAttempt({
+        uid: user.uid,
+        attemptId: attemptIdRef.current,
+        unitId,
+        pagesByQuestion: scratchPagesByQuestion,
+      }).then((storageMode) => setScratchStorageFallback(storageMode === 'memory'));
+    }, 400);
+    return () => window.clearTimeout(timeoutId);
+  }, [scratchPagesByQuestion, unitId, user?.uid]);
 
   const handleSelectOption = (index: number) => {
     setSelectedOption(index);
@@ -337,15 +378,20 @@ export default function DrillPage() {
     setCurrentIndex(prevIndex);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (selectedOption === null || !unit) return;
 
     const questions = unit.questions || [];
     const currentQ = questions[currentIndex];
-    const selectedText = currentQ.options[selectedOption];
 
     // 選択した選択肢テキストを記録（正誤判定はしない）
-    const currentAnswer = { questionId: currentQ.id, selectedOptionText: selectedText };
+    const currentAnswer: SubmittedAnswer = selectedOption === 'unknown'
+      ? { questionId: currentQ.id, answerType: 'unknown' }
+      : {
+          questionId: currentQ.id,
+          answerType: 'selected',
+          selectedOptionText: currentQ.options[selectedOption],
+        };
     const allAnswers = [...submittedAnswers, currentAnswer];
     setSubmittedAnswers(allAnswers);
 
@@ -373,6 +419,19 @@ export default function DrillPage() {
       };
 
       recordSeenQuestionIds(allAnswers.map(answer => answer.questionId));
+      if (user?.uid) {
+        if (Object.values(scratchPagesByQuestion).some((pages) => pages.some((page) => page.length > 0))) {
+          const storageMode = await saveScratchAttempt({
+            uid: user.uid,
+            attemptId: attemptIdRef.current,
+            unitId,
+            pagesByQuestion: scratchPagesByQuestion,
+          });
+          setScratchStorageFallback(storageMode === 'memory');
+        } else {
+          await deleteScratchAttempt(user.uid, attemptIdRef.current);
+        }
+      }
       sessionStorage.setItem('drillResult', JSON.stringify(drillResult));
       router.push(`/result/${unitId}`);
     }
@@ -822,6 +881,23 @@ export default function DrillPage() {
                 );
               })}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedOption('unknown');
+                setQuestionSelections((previous) => ({ ...previous, [currentIndex]: 'unknown' }));
+              }}
+              aria-pressed={selectedOption === 'unknown'}
+              className={`flex w-full items-center justify-center gap-3 rounded-xl border-2 p-4 text-left font-bold transition-all duration-200 ${
+                selectedOption === 'unknown'
+                  ? 'border-amber-500 bg-amber-50 text-amber-900 shadow-md ring-2 ring-amber-200'
+                  : 'border-dashed border-amber-300 bg-amber-50/50 text-amber-800 hover:border-amber-500 hover:bg-amber-50'
+              }`}
+            >
+              <CircleHelp className="h-5 w-5" />
+              わからない
+              <span className="text-xs font-medium opacity-70">選ぶと結果画面で解説を確認できます</span>
+            </button>
           </CardContent>
           <CardFooter className="bg-gray-50/80 border-t p-6 flex justify-between items-center">
             <Button
@@ -848,13 +924,22 @@ export default function DrillPage() {
 
       </div>
       <ScratchPaperOverlay
+        key={currentQuestionId}
         ref={scratchPaperRef}
         open={isScratchPaperOpen}
         questionText={currentQ.question_text}
         questionNumber={currentIndex + 1}
         totalQuestions={unit.questions?.length || 0}
+        pages={currentScratchPages}
+        storageWarning={
+          scratchStorageFallback
+          && Object.values(scratchPagesByQuestion).some((pages) => pages.some((page) => page.length > 0))
+        }
+        onPagesChange={(pages) => {
+          if (!currentQuestionId) return;
+          setScratchPagesByQuestion((previous) => ({ ...previous, [currentQuestionId]: pages }));
+        }}
         onClose={() => setIsScratchPaperOpen(false)}
-        onChange={setHasScratchStrokes}
       />
     </div>
   );

@@ -12,6 +12,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth, db } from '@/lib/firebase';
 import { CURRENT_PRIVACY_POLICY_VERSION, CURRENT_TERMS_VERSION } from '@/lib/legal';
+import { clearScratchAttemptsForUser } from '@/lib/scratchPaperStorage';
 import { useRouter } from 'next/navigation';
 
 interface UserData {
@@ -240,6 +241,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const logout = async () => {
     setLoading(true);
+    if (user?.uid) await clearScratchAttemptsForUser(user.uid);
     await firebaseSignOut(auth);
     router.push('/login');
     setLoading(false);

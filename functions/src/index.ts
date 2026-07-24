@@ -1352,7 +1352,27 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
   console.log(`[processDrillResult] Data summary: time=${time}, answers=${answers?.length}`);
 
-  const safeAnswers: Array<{ questionId: string; selectedOptionText: string }> = answers;
+  const safeAnswers: Array<{
+    questionId: string;
+    answerType: "selected" | "unknown";
+    selectedOptionText?: string;
+  }> = answers.map((answer: any) => {
+    const rawAnswerType = answer?.answerType;
+    if (rawAnswerType !== undefined && rawAnswerType !== "selected" && rawAnswerType !== "unknown") {
+      throw new functions.https.HttpsError("invalid-argument", "回答形式が不正です。");
+    }
+    const answerType = rawAnswerType === "unknown" ? "unknown" : "selected";
+    return {
+      questionId: String(answer?.questionId || ""),
+      answerType,
+      ...(answerType === "selected"
+        ? { selectedOptionText: String(answer?.selectedOptionText ?? "") }
+        : {}),
+    };
+  });
+  if (safeAnswers.length === 0) {
+    throw new functions.https.HttpsError("invalid-argument", "回答が1件もありません。");
+  }
 
   const uid = context.auth.uid;
   const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
@@ -1380,6 +1400,9 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const qSnap = await db.collection(`units/${unitId}/questions`).get();
     unitQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   }
+  if (safeAnswers.length > unitQuestions.length) {
+    throw new functions.https.HttpsError("invalid-argument", "回答数が問題数を超えています。");
+  }
 
   // 問題ID → 問題データ（parsedOptions 付き）のマップ
   const unitQuestionMap = new Map<string, any>();
@@ -1402,6 +1425,22 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
   }
 
+  const uniqueQuestionIds = new Set(safeAnswers.map((answer) => answer.questionId));
+  if (uniqueQuestionIds.size !== safeAnswers.length) {
+    throw new functions.https.HttpsError("invalid-argument", "同じ問題に複数回答することはできません。");
+  }
+
+  const hasInvalidSelectedOption = safeAnswers.some((answer) => {
+    if (answer.answerType === "unknown") return false;
+    const question = unitQuestionMap.get(answer.questionId);
+    return !question?.parsedOptions.some(
+      (option: unknown) => String(option) === String(answer.selectedOptionText),
+    );
+  });
+  if (hasInvalidSelectedOption) {
+    throw new functions.https.HttpsError("invalid-argument", "選択肢にない回答が含まれています。");
+  }
+
   // 1-3. サーバー側で正誤判定・スコア計算・XP計算を実施
   const safeCorrectQuestions: any[] = [];
   const safeWrongQuestions: any[] = [];
@@ -1412,7 +1451,11 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const q = unitQuestionMap.get(String(answer.questionId))!;
     const answerIndex = Number(q.answer_index);
     const correctOptionText = q.parsedOptions[answerIndex - 1] ?? ""; // answer_index は 1-based
-    const isCorrect = String(answer.selectedOptionText) === String(correctOptionText);
+    const selectedOptionText = answer.answerType === "unknown"
+      ? "わからない"
+      : String(answer.selectedOptionText);
+    const isCorrect = answer.answerType === "selected"
+      && selectedOptionText === String(correctOptionText);
 
     answerOrderForCombo.push(isCorrect);
     questionResultsForAnalytics.push({
@@ -1427,7 +1470,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       safeWrongQuestions.push({
         id: q.id,
         question_text: q.question_text,
-        selectedOptionText: answer.selectedOptionText,
+        selectedOptionText,
+        answerType: answer.answerType,
         correctOptionText,
         explanation: q.explanation || "",
         options: q.parsedOptions,
@@ -1517,17 +1561,16 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     let currentXp = 0;
     let currentIcon = "📐";
-    let currentTotalScore = 0;
     if (userSnap.exists) {
       const uData = userSnap.data();
       currentXp = uData?.xp || 0;
       currentIcon = uData?.icon || "📐";
-      currentTotalScore = uData?.totalScore || 0;
     }
 
     // 2-1. スコア更新判定 (High Score) と unitStats マージ
     // unitStats マップ全体を取得してマージ（ドット記法ではなくリテラルキーで保存するため）
     const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
+    const isFirstParticipation = Object.keys(existingUnitStats).length === 0;
     const existingLastAttemptTimes = userSnap.exists ? (userSnap.data()?.lastAttemptTimes || {}) : {};
     const existingUnitData = existingUnitStats[unitId] || {};
     const existingMaxScore = existingUnitData.maxScore || 0;
@@ -1674,7 +1717,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     // Keep only the lightweight participant counter here. Drill/correct totals
     // are derived from analytics_events by the BigQuery aggregation pipeline.
-    if (isHighScore && currentTotalScore === 0) {
+    if (isFirstParticipation) {
       transaction.set(db.doc("stats/global"), {
         totalParticipants: FieldValue.increment(1),
         updatedAt: dateStr,
@@ -1707,11 +1750,22 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       newTotalXp,
       xpDetails: xpDetailsResult,
       ...questionResults,
-      // リーダーボード更新に必要な情報を返す
-      // isHighScore（スコア更新）またはレベルアップ時のみ更新する。
-      // XP増加のみで順位・レベルに変化がない場合は書き込みを節約するためスキップ。
-      _leaderboardUpdate: (isHighScore || isLevelUp)
-        ? { uid, userName, currentIcon, newLevel, newTotalXp }
+      // XPは100単位で同期し、レベル間隔が広い帯でもランキング表示の遅延を抑える。
+      // ハイスコア・レベルアップ時の既存同期も維持する。
+      _leaderboardUpdate: (
+        isHighScore
+        || isLevelUp
+        || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)
+      )
+        ? {
+            uid,
+            userName,
+            icon: currentIcon,
+            level: newLevel,
+            xp: newTotalXp,
+            totalScore: recalculatedTotalScore,
+            incrementParticipantCount: isFirstParticipation,
+          }
         : null,
       _rapidSubmission: _rapidSubmissionSec,
     };
@@ -1734,7 +1788,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     }
   }
 
-  // リーダーボード更新（isHighScore またはレベルアップ時のみ）
+  // リーダーボード更新（ハイスコア・レベルアップ・100XP境界到達時）
   if (resultAny._leaderboardUpdate) {
     try {
       await updateLeaderboard(resultAny._leaderboardUpdate);
@@ -2006,7 +2060,7 @@ export const submitWrittenDrillResult = functions
 
       if (decision.kind === "already_processed") {
         return {
-          alreadyProcessed: true,
+          kind: "already_processed" as const,
           existing: decision.existing,
           ...decision.metadata,
         };
@@ -2019,7 +2073,7 @@ export const submitWrittenDrillResult = functions
           updatedAt: now,
         });
         return {
-          retryReservedAttempt: true,
+          kind: "reserved" as const,
           ...decision.metadata,
         };
       }
@@ -2084,6 +2138,7 @@ export const submitWrittenDrillResult = functions
       });
 
       return {
+        kind: "reserved" as const,
         attemptOrdinal,
         attemptLimit: limit,
         attemptGroupId,
@@ -2093,7 +2148,7 @@ export const submitWrittenDrillResult = functions
       };
     });
 
-    if (reservation.alreadyProcessed) {
+    if (reservation.kind === "already_processed") {
       const existing = reservation.existing || {};
       return {
         success: true,
@@ -2298,7 +2353,20 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         grading,
         modelAnswer: modelAnswerText,
-        _leaderboardUpdate: isLevelUp ? { uid, userName, currentIcon, newLevel: newLevelData.level, newTotalXp } : null,
+        _leaderboardUpdate: (
+          isLevelUp
+          || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)
+        )
+          ? {
+              uid,
+              userName,
+              icon: currentIcon,
+              level: newLevelData.level,
+              xp: newTotalXp,
+              totalScore: Number(userData.totalScore) || 0,
+              incrementParticipantCount: false,
+            }
+          : null,
       };
     });
 
@@ -2449,68 +2517,65 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
 async function updateLeaderboard(info: {
   uid: string;
   userName: string;
-  currentIcon: string;
-  newLevel: number;
-  newTotalXp: number;
+  icon: string;
+  level: number;
+  xp: number;
+  totalScore: number;
+  incrementParticipantCount: boolean;
 }) {
   const leaderboardRef = db.doc("leaderboards/overall");
+  const result = await db.runTransaction(async (transaction) => {
+    const leaderboardSnap = await transaction.get(leaderboardRef);
+    const leaderboardData = leaderboardSnap.exists ? leaderboardSnap.data() || {} : {};
+    let rankings: any[] = Array.isArray(leaderboardData.rankings)
+      ? [...leaderboardData.rankings]
+      : [];
+    const previousRankingCount = rankings.length;
 
-  // ユーザードキュメントから最新のtotalScoreを取得
-  const userSnap = await db.doc(`users/${info.uid}`).get();
-  const userData = userSnap.data();
-  if (!userData) return;
+    const existingIndex = rankings.findIndex((ranking: any) => ranking.uid === info.uid);
+    const entry = {
+      uid: info.uid,
+      name: info.userName,
+      totalScore: Math.max(0, Number(info.totalScore) || 0),
+      xp: Math.max(0, Number(info.xp) || 0),
+      icon: info.icon || "📐",
+      level: Math.max(1, Number(info.level) || 1),
+    };
 
-  const totalScore = userData.totalScore || 0;
-  const xp = userData.xp || 0;
-  // icon と level もユーザードキュメントから最新値を取得（アイコン変更の反映遅延を防ぐ）
-  const icon = userData.icon || info.currentIcon;
-  const level = userData.level || info.newLevel;
+    if (existingIndex >= 0) {
+      rankings[existingIndex] = entry;
+    } else {
+      rankings.push(entry);
+    }
 
-  const leaderboardSnap = await leaderboardRef.get();
-  let rankings: any[] = [];
+    rankings.sort((left: any, right: any) => {
+      if (Number(right.totalScore || 0) !== Number(left.totalScore || 0)) {
+        return Number(right.totalScore || 0) - Number(left.totalScore || 0);
+      }
+      return Number(right.xp || 0) - Number(left.xp || 0);
+    });
+    rankings = rankings.slice(0, 40);
 
-  if (leaderboardSnap.exists) {
-    rankings = leaderboardSnap.data()?.rankings || [];
-  }
+    const previousParticipantCount = Math.max(
+      Number(leaderboardData.totalParticipants) || 0,
+      previousRankingCount,
+    );
+    const nextParticipantCount = info.incrementParticipantCount && existingIndex < 0
+      ? previousParticipantCount + 1
+      : previousParticipantCount;
+    const totalParticipants = Math.max(nextParticipantCount, rankings.length);
 
-  // 既存エントリを更新 or 新規追加
-  const existingIdx = rankings.findIndex((r: any) => r.uid === info.uid);
-  const entry = {
-    uid: info.uid,
-    name: info.userName,
-    totalScore,
-    xp,
-    icon,
-    level,
-  };
-
-  if (existingIdx >= 0) {
-    rankings[existingIdx] = entry;
-  } else {
-    rankings.push(entry);
-  }
-
-  // ソート: totalScore 降順 → xp 降順
-  rankings.sort((a: any, b: any) => {
-    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-    return b.xp - a.xp;
+    transaction.set(leaderboardRef, {
+      rankings,
+      totalParticipants,
+      updatedAt: new Date().toISOString(),
+    });
+    return { rankingCount: rankings.length, totalParticipants };
   });
 
-  // 上位40名のみ保持
-  rankings = rankings.slice(0, 40);
-
-
-  // 参加者数を stats/global カウンターから取得（全ユーザー走査を回避）
-  const globalStatsSnap = await db.doc("stats/global").get();
-  const totalParticipants = globalStatsSnap.exists ? (globalStatsSnap.data()?.totalParticipants || rankings.length) : rankings.length;
-
-  await leaderboardRef.set({
-    rankings,
-    totalParticipants,
-    updatedAt: new Date().toISOString(),
-  });
-
-  console.log(`[updateLeaderboard] Updated: ${rankings.length} entries, ${totalParticipants} total participants`);
+  console.log(
+    `[updateLeaderboard] Updated: ${result.rankingCount} entries, ${result.totalParticipants} total participants`,
+  );
 }
 
 // ==========================================

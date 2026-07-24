@@ -23,7 +23,6 @@ test.describe('管理画面', () => {
   test('管理者画面にタブが表示される', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
 
     // 管理画面には複数のタブが存在する
     const tabs = page.getByRole('button').filter({ hasText: /インポート|単元|スコア|XP|不審|分析|ロール|更新履歴/ });
@@ -33,7 +32,6 @@ test.describe('管理画面', () => {
   test('管理者画面でロール管理タブが表示される', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
 
     // ロール管理タブボタンをクリック
     const rolesTab = page.getByRole('button').filter({ hasText: 'ロール' }).first();

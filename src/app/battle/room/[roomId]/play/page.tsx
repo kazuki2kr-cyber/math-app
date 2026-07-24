@@ -545,6 +545,7 @@ export default function BattlePlayPage() {
       </main>
       {currentQuestion && (
         <ScratchPaperOverlay
+          key={currentQuestion.id}
           ref={scratchPaperRef}
           open={isScratchPaperOpen}
           questionText={currentQuestion.question_text}

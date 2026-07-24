@@ -24,6 +24,7 @@ test.describe('ダッシュボード', () => {
   });
 
   test('全体ランキングにシードユーザーが表示される', async ({ page }) => {
+    await page.getByRole('button', { name: '総合ランキングを表示' }).click();
     await expect(
       page.getByText('テストちゃんB (Seed)').first()
     ).toBeVisible({ timeout: 15000 });
@@ -53,6 +54,7 @@ test.describe('ダッシュボード', () => {
     await page.reload();
     await page.waitForURL('/', { timeout: 10000 });
     await page.locator('.group').first().waitFor({ timeout: 15000 });
+    await page.getByRole('button', { name: '総合ランキングを表示' }).click();
 
     await expect(page.getByText('You').first()).toBeVisible({ timeout: 30000 });
   });
@@ -73,20 +75,15 @@ test.describe('ダッシュボード', () => {
     await expect(page).toHaveURL(/\/drill\//);
   });
 
-  test('単元別ランキングボタンでランキングページに遷移する', async ({ page }) => {
-    // まずドリルを1回完了してトロフィーボタンを表示させる
+  test('ドリル完了後も総合ランキングが表示される', async ({ page }) => {
     await completeDrill(page, 'テスト単元2', ['4']);
     await dismissLevelUpModal(page);
 
     await page.locator('button', { hasText: 'ダッシュボードに戻る' }).click();
     await page.waitForURL('/', { timeout: 15000 });
 
-    const trophyBtn = page
-      .locator('.group', { hasText: 'テスト単元2' })
-      .locator('button[aria-label*="ランキングを見る"]');
-    await expect(trophyBtn).toBeVisible({ timeout: 10000 });
-    await trophyBtn.click();
-    await page.waitForURL(/\/ranking\//, { timeout: 15000 });
-    await expect(page.locator('h2', { hasText: 'ランキング:' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: '総合ランキング' })).toBeVisible({
+      timeout: 15000,
+    });
   });
 });

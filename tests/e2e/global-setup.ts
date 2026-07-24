@@ -1,5 +1,7 @@
 // tests/e2e/global-setup.ts
 import { FullConfig } from '@playwright/test';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 
 async function patchDoc(projectId: string, collection: string, docId: string, fields: any) {
   const url = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/${collection}/${docId}?allow_missing=true`;
@@ -83,25 +85,10 @@ async function createAuthUser(
  * Firebase Auth エミュレータの管理 API でカスタムクレームを設定する。
  */
 async function setCustomClaims(projectId: string, localId: string, claims: Record<string, unknown>) {
-  // Firebase Auth エミュレータ専用エンドポイント
-  const url = `http://127.0.0.1:9099/emulator/v1/projects/${projectId}/accounts/${localId}`;
-  const maxRetries = 5;
-
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const res = await fetch(url, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customClaims: JSON.stringify(claims) }),
-      });
-      if (res.ok) return;
-      const text = await res.text();
-      console.warn(`setCustomClaims attempt ${i + 1} failed:`, text);
-    } catch (e: any) {
-      console.warn(`setCustomClaims attempt ${i + 1} error:`, e.message);
-    }
-    await new Promise(r => setTimeout(r, 1000));
-  }
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
+  const app = getApps().find(candidate => candidate.name === 'e2e-global-setup')
+    ?? initializeApp({ projectId }, 'e2e-global-setup');
+  await getAuth(app).setCustomUserClaims(localId, claims);
 }
 
 async function globalSetup(config: FullConfig) {

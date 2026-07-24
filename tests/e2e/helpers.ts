@@ -8,9 +8,9 @@ import { Page } from '@playwright/test';
 export async function loginAsTestUser(page: Page): Promise<void> {
   await page.goto('/login');
   const emuBtn = page.getByTestId('emulator-login-button');
-  await emuBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await emuBtn.waitFor({ state: 'visible', timeout: 30000 });
   await emuBtn.click();
-  await page.waitForURL('/', { timeout: 15000 });
+  await page.waitForURL('/', { timeout: 30000 });
   await dismissTermsModal(page);
 }
 
@@ -22,9 +22,9 @@ export async function loginAsTestUser(page: Page): Promise<void> {
 export async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/login');
   const adminBtn = page.getByTestId('emulator-admin-login-button');
-  await adminBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await adminBtn.waitFor({ state: 'visible', timeout: 30000 });
   await adminBtn.click();
-  await page.waitForURL('/', { timeout: 15000 });
+  await page.waitForURL('/', { timeout: 30000 });
   await dismissTermsModal(page);
 }
 

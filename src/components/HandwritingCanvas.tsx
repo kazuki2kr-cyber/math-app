@@ -1,24 +1,38 @@
 'use client';
 
-import React, { useRef, useState, useImperativeHandle, forwardRef, useEffect } from 'react';
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
+
+export interface HandwritingPoint {
+  /** Canvas幅・高さに対する0〜1の正規化座標。 */
+  x: number;
+  y: number;
+}
+
+export interface HandwritingStroke {
+  points: HandwritingPoint[];
+  color: string;
+  width: number;
+  tool?: 'pen' | 'eraser';
+}
+
+interface PreviewPoint {
+  x: number;
+  y: number;
+}
 
 export interface HandwritingCanvasRef {
   undo: () => void;
   clear: () => void;
   toDataURL: () => string | null;
   hasStrokes: () => boolean;
-}
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-interface Stroke {
-  points: Point[];
-  color: string;
-  width: number;
-  tool?: 'pen' | 'eraser';
+  getStrokes: () => HandwritingStroke[];
+  setStrokes: (strokes: HandwritingStroke[]) => void;
 }
 
 interface HandwritingCanvasProps {
@@ -30,6 +44,9 @@ interface HandwritingCanvasProps {
   eraserWidth?: number;
   className?: string;
   onChange?: (hasStrokes: boolean) => void;
+  initialStrokes?: HandwritingStroke[];
+  onStrokesChange?: (strokes: HandwritingStroke[]) => void;
+  readOnly?: boolean;
 }
 
 export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCanvasProps>(
@@ -41,201 +58,217 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     tool = 'pen',
     eraserWidth = 24,
     className = '',
-    onChange
+    onChange,
+    initialStrokes = [],
+    onStrokesChange,
+    readOnly = false,
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
-    const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
-    const [eraserPreviewPoint, setEraserPreviewPoint] = useState<Point | null>(null);
-
-    // 描画系の状態を最新に保つためにコールバックで通知
-    useEffect(() => {
-      if (onChange) {
-        onChange(strokes.length > 0 || currentStroke !== null);
-      }
-    }, [strokes, currentStroke, onChange]);
-
-    // リサイズ対応と初期化
-    useEffect(() => {
-      const resizeCanvas = () => {
-        const canvas = canvasRef.current;
-        const container = containerRef.current;
-        if (!canvas || !container) return;
-
-        // Containerの実際のサイズに合わせてCanvasの内部解像度を設定
-        // Retinaディスプレイ等に対応するためdevicePixelRatioを考慮
-        const rect = container.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.scale(dpr, dpr);
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-        }
-        
-        redrawCanvas();
-      };
-
-      window.addEventListener('resize', resizeCanvas);
-      resizeCanvas(); // マウント時に一度実行
-
-      return () => {
-        window.removeEventListener('resize', resizeCanvas);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [strokes, currentStroke]); // strokesが変わるたびに再描画の必要があるため依存配列に含める
+    const [strokes, setStrokes] = useState<HandwritingStroke[]>(() => initialStrokes);
+    const [currentStroke, setCurrentStroke] = useState<HandwritingStroke | null>(null);
+    const [eraserPreviewPoint, setEraserPreviewPoint] = useState<PreviewPoint | null>(null);
+    const strokesRef = useRef(strokes);
+    const currentStrokeRef = useRef(currentStroke);
+    const onChangeRef = useRef(onChange);
+    const onStrokesChangeRef = useRef(onStrokesChange);
 
     const redrawCanvas = () => {
       const canvas = canvasRef.current;
+      const container = containerRef.current;
       const ctx = canvas?.getContext('2d');
-      if (!canvas || !ctx) return;
+      if (!canvas || !container || !ctx) return;
 
-      // 画面のクリアパラメータはdevicePixelRatioに依存しない表示上のサイズ
-      const rect = canvas.getBoundingClientRect();
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const pixelWidth = Math.max(1, Math.round(rect.width * dpr));
+      const pixelHeight = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, rect.width, rect.height);
-      
-      // 背景を白く塗りつぶす（これがないと透過書き出しになる場合がある）
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-      const allStrokes = currentStroke ? [...strokes, currentStroke] : strokes;
+      const activeStroke = currentStrokeRef.current;
+      const allStrokes = activeStroke
+        ? [...strokesRef.current, activeStroke]
+        : strokesRef.current;
 
-      allStrokes.forEach(stroke => {
+      allStrokes.forEach((stroke) => {
         if (stroke.points.length === 0) return;
-        
+
         ctx.beginPath();
         ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
         ctx.strokeStyle = stroke.color;
         ctx.lineWidth = stroke.width;
-        
-        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (let i = 1; i < stroke.points.length; i++) {
-          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        ctx.moveTo(stroke.points[0].x * rect.width, stroke.points[0].y * rect.height);
+        for (let index = 1; index < stroke.points.length; index += 1) {
+          ctx.lineTo(stroke.points[index].x * rect.width, stroke.points[index].y * rect.height);
         }
         ctx.stroke();
       });
       ctx.globalCompositeOperation = 'source-over';
     };
 
-    const getMousePos = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
+    useEffect(() => {
+      onChangeRef.current = onChange;
+      onStrokesChangeRef.current = onStrokesChange;
+    }, [onChange, onStrokesChange]);
+
+    useEffect(() => {
+      onChangeRef.current?.(strokes.length > 0 || currentStroke !== null);
+    }, [currentStroke, strokes.length]);
+
+    useEffect(() => {
+      onStrokesChangeRef.current?.(strokes);
+    }, [strokes]);
+
+    useEffect(() => {
+      strokesRef.current = strokes;
+      currentStrokeRef.current = currentStroke;
+      redrawCanvas();
+    }, [strokes, currentStroke]);
+
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const resizeObserver = new ResizeObserver(() => redrawCanvas());
+      resizeObserver.observe(container);
+      redrawCanvas();
+      return () => resizeObserver.disconnect();
+      // redrawCanvasは常にrefの最新値を読むため、購読はマウント時だけでよい。
+    }, []);
+
+    const getPointerPosition = (
+      event: React.PointerEvent<HTMLCanvasElement>,
+    ): HandwritingPoint => {
       const canvas = canvasRef.current;
       if (!canvas) return { x: 0, y: 0 };
       const rect = canvas.getBoundingClientRect();
       return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+        x: Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width))),
+        y: Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height))),
       };
     };
 
-    const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      // 左クリック、またはタッチ/ペンのみ反応
-      if (e.button !== 0 && e.pointerType === 'mouse') return;
-      
-      const pos = getMousePos(e);
+    const getPreviewPosition = (
+      event: React.PointerEvent<HTMLCanvasElement>,
+    ): PreviewPoint => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+    };
+
+    const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (readOnly || (event.button !== 0 && event.pointerType === 'mouse')) return;
+
       setIsDrawing(true);
       setCurrentStroke({
-        points: [pos],
+        points: [getPointerPosition(event)],
         color: tool === 'eraser' ? '#000000' : strokeColor,
         width: tool === 'eraser' ? eraserWidth : strokeWidth,
         tool,
       });
-      
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.setPointerCapture(e.pointerId);
-      }
+      canvasRef.current?.setPointerCapture(event.pointerId);
     };
 
-    const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!isDrawing || !currentStroke) return;
-      
-      const pos = getMousePos(e);
-      if (tool === 'eraser') setEraserPreviewPoint(pos);
-      setCurrentStroke(prev => {
-        if (!prev) return prev;
-        return { ...prev, points: [...prev.points, pos] };
-      });
+    const draw = (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (readOnly || !isDrawing || !currentStroke) return;
+
+      const position = getPointerPosition(event);
+      if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
+      setCurrentStroke((previous) => (
+        previous ? { ...previous, points: [...previous.points, position] } : previous
+      ));
     };
 
-    const stopDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!isDrawing || !currentStroke) return;
-      
-      setStrokes(prev => [...prev, currentStroke]);
+    const stopDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (readOnly || !isDrawing || !currentStroke) return;
+
+      setStrokes((previous) => [...previous, currentStroke]);
       setCurrentStroke(null);
       setIsDrawing(false);
-      
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.releasePointerCapture(e.pointerId);
+      if (canvasRef.current?.hasPointerCapture(event.pointerId)) {
+        canvasRef.current.releasePointerCapture(event.pointerId);
       }
     };
 
-    // 親コンポーネントから叩けるAPIを定義
     useImperativeHandle(ref, () => ({
-      undo: () => {
-        setStrokes(prev => prev.slice(0, -1));
-      },
+      undo: () => setStrokes((previous) => previous.slice(0, -1)),
       clear: () => {
         setStrokes([]);
         setCurrentStroke(null);
       },
       hasStrokes: () => strokes.length > 0 || currentStroke !== null,
-      toDataURL: () => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
-        // image/jpeg で出力してデータサイズを抑える
-        return canvas.toDataURL('image/png');
-      }
-    }));
+      toDataURL: () => canvasRef.current?.toDataURL('image/png') ?? null,
+      getStrokes: () => strokes,
+      setStrokes: (nextStrokes) => {
+        setCurrentStroke(null);
+        setStrokes(nextStrokes);
+      },
+    }), [currentStroke, strokes]);
+
+    const previewStyle = eraserPreviewPoint
+      ? {
+          left: eraserPreviewPoint.x - eraserWidth / 2,
+          top: eraserPreviewPoint.y - eraserWidth / 2,
+        }
+      : null;
 
     return (
-      <div 
-        ref={containerRef} 
-        style={{ width, height, position: 'relative' }} 
-        className={`bg-white border rounded-xl overflow-hidden shadow-sm touch-none ${className}`}
+      <div
+        ref={containerRef}
+        style={{ width, height, position: 'relative' }}
+        className={`bg-white border rounded-xl overflow-hidden shadow-sm ${readOnly ? '' : 'touch-none'} ${className}`}
       >
         <canvas
           ref={canvasRef}
+          aria-label={readOnly ? '保存された計算用紙' : '手書き入力欄'}
           style={{
             width: '100%',
             height: '100%',
             display: 'block',
-            touchAction: 'none',
-            cursor: tool === 'eraser' ? 'cell' : 'crosshair',
+            touchAction: readOnly ? 'auto' : 'none',
+            cursor: readOnly ? 'default' : tool === 'eraser' ? 'cell' : 'crosshair',
           }}
-          onPointerDown={startDrawing}
-          onPointerMove={(event) => {
-            if (tool === 'eraser') setEraserPreviewPoint(getMousePos(event));
+          onPointerDown={readOnly ? undefined : startDrawing}
+          onPointerMove={readOnly ? undefined : (event) => {
+            if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
             draw(event);
           }}
-          onPointerUp={stopDrawing}
-          onPointerCancel={stopDrawing}
-          onPointerEnter={(event) => {
-            if (tool === 'eraser') setEraserPreviewPoint(getMousePos(event));
+          onPointerUp={readOnly ? undefined : stopDrawing}
+          onPointerCancel={readOnly ? undefined : stopDrawing}
+          onPointerEnter={readOnly ? undefined : (event) => {
+            if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
           }}
-          onPointerLeave={() => setEraserPreviewPoint(null)}
+          onPointerLeave={readOnly ? undefined : () => setEraserPreviewPoint(null)}
         />
-        {tool === 'eraser' && eraserPreviewPoint && (
+        {!readOnly && tool === 'eraser' && previewStyle && (
           <div
             aria-hidden="true"
             className="pointer-events-none absolute rounded-full border-2 border-primary/80 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
             style={{
               width: eraserWidth,
               height: eraserWidth,
-              left: eraserPreviewPoint.x - eraserWidth / 2,
-              top: eraserPreviewPoint.y - eraserWidth / 2,
+              ...previewStyle,
             }}
           />
         )}
       </div>
     );
-  }
+  },
 );
 
 HandwritingCanvas.displayName = 'HandwritingCanvas';

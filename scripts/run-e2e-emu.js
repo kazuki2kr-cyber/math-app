@@ -53,10 +53,30 @@ console.log('🔥 Firebase Emulators + Playwright テストを起動中...');
 
 const projectRoot = path.join(__dirname, '..');
 const firebaseBin = path.join(projectRoot, 'node_modules', '.bin', 'firebase.cmd');
+const testTargets = process.argv.slice(2);
+const playwrightCommand = ['npx playwright test', ...testTargets].join(' ');
+const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+console.log('🔨 Cloud Functions をビルド中...');
+const functionsBuild = spawnSync(
+  npmBin,
+  ['--prefix', 'functions', 'run', 'build'],
+  {
+    cwd: projectRoot,
+    env: env,
+    stdio: 'inherit',
+    shell: true,
+  }
+);
+
+if (functionsBuild.status !== 0) {
+  console.error('❌ Cloud Functions のビルドに失敗しました');
+  process.exit(functionsBuild.status || 1);
+}
 
 const result = spawnSync(
   `"${firebaseBin}"`,
-  ['emulators:exec', '"npx playwright test"'],
+  ['emulators:exec', `"${playwrightCommand}"`, '--project', 'math-app-26c77'],
   {
     cwd: projectRoot,
     env: env,

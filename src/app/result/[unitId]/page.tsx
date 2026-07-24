@@ -7,6 +7,11 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
+import { ScratchPaperReview } from '@/components/ScratchPaperReview';
+import {
+  loadScratchAttempt,
+  type ScratchPagesByQuestion,
+} from '@/lib/scratchPaperStorage';
 const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
 import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
@@ -20,7 +25,11 @@ interface StoredDrillData {
   totalQuestions: number;
   mode?: 'standard' | 'wrong' | 'all';
   time: number;
-  answers?: Array<{ questionId: string; selectedOptionText: string }>;
+  answers?: Array<{
+    questionId: string;
+    answerType?: 'selected' | 'unknown';
+    selectedOptionText?: string;
+  }>;
   questionId?: string;
   questionText?: string;
   answerImageDataUrl?: string;
@@ -37,6 +46,7 @@ interface WrongQuestion {
   id: string;
   question_text: string;
   selectedOptionText: string;
+  answerType?: 'selected' | 'unknown';
   correctOptionText: string;
   explanation: string;
   options: string[];
@@ -129,6 +139,7 @@ export default function ResultPage() {
   const [xpDetails, setXpDetails] = useState<XpDetails | null>(null);
   const [correctQuestions, setCorrectQuestions] = useState<CorrectQuestion[]>([]);
   const [wrongQuestions, setWrongQuestions] = useState<WrongQuestion[]>([]);
+  const [scratchPagesByQuestion, setScratchPagesByQuestion] = useState<ScratchPagesByQuestion>({});
   const [writtenGrading, setWrittenGrading] = useState<WrittenGrading | null>(null);
   const [writtenModelAnswer, setWrittenModelAnswer] = useState('');
   const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null);
@@ -160,6 +171,18 @@ export default function ResultPage() {
       writtenFeedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 80);
   };
+
+  useEffect(() => {
+    if (!user?.uid || !storedData?.attemptId || storedData.type === 'written') return;
+
+    let cancelled = false;
+    void loadScratchAttempt(user.uid, storedData.attemptId).then((record) => {
+      if (!cancelled && record) setScratchPagesByQuestion(record.pagesByQuestion);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [storedData?.attemptId, storedData?.type, user?.uid]);
 
   const processResult = useCallback(async () => {
     if (!user) return;
@@ -750,7 +773,7 @@ ${wrongList || 'なし'}
                         <div className="flex items-start bg-white p-3 rounded-lg border border-red-100 shadow-sm">
                           <span className="inline-block px-2 py-1 text-xs font-bold rounded bg-red-100 text-red-700 mr-3 mt-0.5 whitespace-nowrap">あなたの回答</span>
                           <div className="text-gray-700 overflow-x-auto">
-                            <MathDisplay math={q.selectedOptionText} />
+                            <MathDisplay math={q.answerType === 'unknown' ? 'わからない' : q.selectedOptionText} />
                           </div>
                         </div>
                         <div className="flex items-start bg-white p-3 rounded-lg border border-green-100 shadow-sm">
@@ -766,6 +789,7 @@ ${wrongList || 'なし'}
                       <div className="text-gray-800 leading-relaxed">
                         <MathDisplay math={q.explanation || '解説がありません。'} />
                       </div>
+                      <ScratchPaperReview pages={scratchPagesByQuestion[q.id] ?? []} />
                     </CardContent>
                   </Card>
                 ))}

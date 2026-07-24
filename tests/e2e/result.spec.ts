@@ -27,7 +27,7 @@ test.describe('結果ページ', () => {
     await expect(page.getByText('/ 100')).toBeVisible({ timeout: 5000 });
   });
 
-  test('全問正解（1問）でスコアが 100 になる', async ({ page }) => {
+  test('全問正解（1問）でスコアが 10 になる', async ({ page }) => {
     const unitCard = page.locator('.group', { hasText: 'テスト単元2' }).first();
     await unitCard.waitFor({ timeout: 10000 });
     await unitCard.locator('button', { hasText: '演習開始' }).click();
@@ -40,8 +40,8 @@ test.describe('結果ページ', () => {
     await page.waitForURL(/\/result\/test_unit_2/, { timeout: 15000 });
     await page.getByText('Result').waitFor({ timeout: 20000 });
 
-    // スコア "100" が表示される
-    await expect(page.getByText(/100\s*\/\s*100|^100$/)).toBeVisible({ timeout: 5000 });
+    const scoreSummary = page.getByText('/ 100', { exact: true }).locator('..');
+    await expect(scoreSummary).toContainText(/10\s*\/\s*100/, { timeout: 5000 });
   });
 
   test('全問不正解でスコアが 0 になる', async ({ page }) => {
@@ -79,7 +79,9 @@ test.describe('結果ページ', () => {
     await page.getByText('Result').waitFor({ timeout: 20000 });
 
     // 正解問題リストに問題テキストが表示される
-    await expect(page.getByText('2+2')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.katex').filter({ hasText: '2+2' }).first()).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test('不正解問題には解説と正解が表示される', async ({ page }) => {
@@ -96,7 +98,9 @@ test.describe('結果ページ', () => {
     await page.getByText('Result').waitFor({ timeout: 20000 });
 
     // 解説テキストが表示される
-    await expect(page.getByText('2+2=4')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.katex').filter({ hasText: '2+2=4' }).first()).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test('XP の内訳が表示される', async ({ page }) => {
