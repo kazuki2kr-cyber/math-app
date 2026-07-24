@@ -2,6 +2,10 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { extractJsonObject } from "./writtenGradingJson";
+import {
+  decideWrittenAttemptFinalization,
+  decideWrittenAttemptReservation,
+} from "./writtenAttemptState";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -1983,9 +1987,114 @@ export const submitWrittenDrillResult = functions
     const limitRef = db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`);
     const attemptDocId = clampString(attemptId, 120) || db.collection(`users/${uid}/attempts`).doc().id;
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
-    const [attemptSnap, limitSnap] = await Promise.all([attemptRef.get(), limitRef.get()]);
-    if (attemptSnap.exists) {
-      const existing = attemptSnap.data() || {};
+    const reservation = await db.runTransaction(async (transaction) => {
+      const userRef = db.doc(`users/${uid}`);
+      const [userSnap, attemptTxnSnap, limitTxnSnap] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(attemptRef),
+        transaction.get(limitRef),
+      ]);
+      const limitData = limitTxnSnap.data() || {};
+      const attemptGroupId = `${uid}:${unitId}:${questionId}`;
+      const decision = decideWrittenAttemptReservation({
+        existingAttempt: attemptTxnSnap.exists ? attemptTxnSnap.data() || {} : null,
+        usedAttempts: limitData.usedAttempts,
+        limit,
+        fallbackGroupId: attemptGroupId,
+        previousAttemptId: clampString(limitData.lastAttemptId, 120) || null,
+      });
+
+      if (decision.kind === "already_processed") {
+        return {
+          alreadyProcessed: true,
+          existing: decision.existing,
+          ...decision.metadata,
+        };
+      }
+      if (decision.kind === "retry") {
+        transaction.update(attemptRef, {
+          status: "grading",
+          gradingErrorCode: FieldValue.delete(),
+          retryStartedAt: now,
+          updatedAt: now,
+        });
+        return {
+          retryReservedAttempt: true,
+          ...decision.metadata,
+        };
+      }
+      if (decision.kind === "in_progress") {
+        throw new functions.https.HttpsError("aborted", "この答案は現在採点中です。しばらく待ってから結果画面を更新してください。");
+      }
+      if (decision.kind === "exhausted") {
+        throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
+      }
+
+      const userData = userSnap.exists ? userSnap.data() || {} : {};
+      const existingWrittenStats = userData.writtenStats?.[unitId] || {};
+      const {
+        attemptOrdinal,
+        remainingAttempts,
+        previousAttemptId,
+        isFinalAllowedAttempt,
+      } = decision.metadata;
+      const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
+
+      transaction.set(userRef, { updatedAt: dateStr }, { merge: true });
+      transaction.update(userRef, new FieldPath("writtenStats", unitId), {
+        maxScore: Number(existingWrittenStats.maxScore) || 0,
+        bestAttemptId: existingWrittenStats.bestAttemptId || null,
+        attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
+        totalXpEarned: Number(existingWrittenStats.totalXpEarned) || 0,
+        remainingAttempts,
+        limit,
+        updatedAt: dateStr,
+      });
+      transaction.set(limitRef, {
+        unitId,
+        usedAttempts: attemptOrdinal,
+        limit,
+        lastAttemptId: attemptDocId,
+        lastAttemptOrdinal: attemptOrdinal,
+        lastAttemptAt: now,
+        updatedAt: now,
+      }, { merge: true });
+      transaction.set(attemptRef, {
+        uid,
+        userName,
+        type: "written",
+        status: "grading",
+        unitId,
+        unitTitle: String(unitData.title || unitId),
+        questionId,
+        score: null,
+        time,
+        date: dateStr,
+        xpGain: 0,
+        includeInTotalScore: false,
+        attemptOrdinal,
+        attemptLimit: limit,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
+        remainingAttempts,
+        reservedAt: now,
+        updatedAt: now,
+        expireAt: Timestamp.fromDate(expireAt),
+      });
+
+      return {
+        attemptOrdinal,
+        attemptLimit: limit,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
+        remainingAttempts,
+      };
+    });
+
+    if (reservation.alreadyProcessed) {
+      const existing = reservation.existing || {};
       return {
         success: true,
         alreadyProcessed: true,
@@ -1993,7 +2102,7 @@ export const submitWrittenDrillResult = functions
         isLevelUp: false,
         score: existing.score || 0,
         xpGain: 0,
-        remainingAttempts: Math.max(0, limit - (limitSnap.data()?.usedAttempts || 0)),
+        remainingAttempts: reservation.remainingAttempts ?? 0,
         attemptOrdinal: existing.attemptOrdinal || null,
         attemptLimit: existing.attemptLimit || existing.limit || limit,
         attemptGroupId: existing.attemptGroupId || null,
@@ -2003,49 +2112,80 @@ export const submitWrittenDrillResult = functions
         modelAnswer: modelAnswerText,
       };
     }
-    if ((limitSnap.data()?.usedAttempts || 0) >= limit) {
-      throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
+    let grading: Awaited<ReturnType<typeof gradeWrittenAnswerWithGemini>>;
+    try {
+      grading = await gradeWrittenAnswerWithGemini({
+        unitTitle: String(unitData.title || unitId),
+        questionText: String(question.question_text || ""),
+        modelAnswer: modelAnswerText,
+        gradingRubric: question.gradingRubric || question.grading_rubric || unitData.gradingRubric || [],
+        answerImageDataUrl: imageDataUrl,
+      });
+    } catch (gradingErr: unknown) {
+      const gradingErrorCode =
+        typeof gradingErr === "object" &&
+        gradingErr !== null &&
+        "code" in gradingErr &&
+        typeof gradingErr.code === "string"
+          ? gradingErr.code
+          : "internal";
+      await attemptRef.set({
+        status: "grading_failed",
+        gradingErrorCode: clampString(gradingErrorCode, 80),
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+      throw gradingErr;
     }
-
-    const grading = await gradeWrittenAnswerWithGemini({
-      unitTitle: String(unitData.title || unitId),
-      questionText: String(question.question_text || ""),
-      modelAnswer: modelAnswerText,
-      gradingRubric: question.gradingRubric || question.grading_rubric || unitData.gradingRubric || [],
-      answerImageDataUrl: imageDataUrl,
-    });
     const finalXpGain = calculateWrittenXp(grading.score, Number(unitData.writtenXpBase) || 232);
 
     const result = await db.runTransaction(async (transaction) => {
       const userRef = db.doc(`users/${uid}`);
       const analyticsEventRef = db.collection("analytics_events").doc(`written_${attemptDocId}`);
-      const [userSnap, attemptTxnSnap, limitTxnSnap] = await Promise.all([
+      const [userSnap, attemptTxnSnap] = await Promise.all([
         transaction.get(userRef),
         transaction.get(attemptRef),
-        transaction.get(limitRef),
       ]);
 
-      if (attemptTxnSnap.exists) {
+      if (!attemptTxnSnap.exists) {
+        throw new functions.https.HttpsError("internal", "予約済み答案が見つかりません。");
+      }
+      const attemptTxnData = attemptTxnSnap.data() || {};
+      const finalization = decideWrittenAttemptFinalization({
+        attempt: attemptTxnData,
+        reservation,
+        limit,
+      });
+      if (finalization.kind === "already_processed") {
         return {
           success: true,
           alreadyProcessed: true,
           isHighScore: false,
           isLevelUp: false,
           xpGain: 0,
-          remainingAttempts: Math.max(0, limit - (limitTxnSnap.data()?.usedAttempts || 0)),
-          attemptOrdinal: attemptTxnSnap.data()?.attemptOrdinal || null,
-          attemptLimit: attemptTxnSnap.data()?.attemptLimit || attemptTxnSnap.data()?.limit || limit,
-          attemptGroupId: attemptTxnSnap.data()?.attemptGroupId || null,
-          previousAttemptId: attemptTxnSnap.data()?.previousAttemptId || null,
-          isFinalAllowedAttempt: attemptTxnSnap.data()?.isFinalAllowedAttempt || false,
+          score: attemptTxnData.score || 0,
+          remainingAttempts: attemptTxnData.remainingAttempts ?? reservation.remainingAttempts,
+          attemptOrdinal: attemptTxnData.attemptOrdinal || null,
+          attemptLimit: attemptTxnData.attemptLimit || attemptTxnData.limit || limit,
+          attemptGroupId: attemptTxnData.attemptGroupId || null,
+          previousAttemptId: attemptTxnData.previousAttemptId || null,
+          isFinalAllowedAttempt: attemptTxnData.isFinalAllowedAttempt || false,
+          grading: attemptTxnData.grading || null,
           modelAnswer: modelAnswerText,
         };
       }
-
-      const usedAttempts = limitTxnSnap.data()?.usedAttempts || 0;
-      if (usedAttempts >= limit) {
+      if (finalization.kind === "invalid_status") {
+        throw new functions.https.HttpsError("failed-precondition", "この答案は採点できない状態です。");
+      }
+      if (finalization.kind === "exhausted") {
         throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
       }
+      const {
+        attemptOrdinal,
+        remainingAttempts,
+        attemptGroupId,
+        previousAttemptId,
+        isFinalAllowedAttempt,
+      } = finalization.metadata;
 
       const userData = userSnap.exists ? userSnap.data() || {} : {};
       const currentXp = Number(userData.xp) || 0;
@@ -2057,12 +2197,6 @@ export const submitWrittenDrillResult = functions
       const oldLevelData = calculateLevelAndProgressServer(currentXp);
       const newLevelData = calculateLevelAndProgressServer(newTotalXp);
       const isLevelUp = newLevelData.level > oldLevelData.level;
-      const attemptOrdinal = usedAttempts + 1;
-      const remainingAttempts = Math.max(0, limit - (usedAttempts + 1));
-      const attemptGroupId = `${uid}:${unitId}:${questionId}`;
-      const previousAttemptId = clampString(limitTxnSnap.data()?.lastAttemptId, 120) || null;
-      const isFinalAllowedAttempt = attemptOrdinal >= limit;
-      const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
 
       transaction.set(userRef, {
         xp: newTotalXp,
@@ -2077,7 +2211,6 @@ export const submitWrittenDrillResult = functions
       transaction.update(userRef, new FieldPath("writtenStats", unitId), {
         maxScore: isHighScore ? grading.score : previousMaxScore,
         bestAttemptId: isHighScore ? attemptDocId : (existingWrittenStats.bestAttemptId || null),
-        attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
         totalXpEarned: (existingWrittenStats.totalXpEarned || 0) + finalXpGain,
         remainingAttempts,
         limit,
@@ -2085,14 +2218,15 @@ export const submitWrittenDrillResult = functions
       });
       transaction.set(limitRef, {
         unitId,
-        usedAttempts: usedAttempts + 1,
+        usedAttempts: attemptOrdinal,
         limit,
         lastAttemptId: attemptDocId,
         lastAttemptOrdinal: attemptOrdinal,
         lastAttemptAt: now,
         updatedAt: now,
       }, { merge: true });
-      transaction.set(attemptRef, {
+      transaction.update(attemptRef, {
+        status: "graded",
         uid,
         userName,
         type: "written",
@@ -2111,7 +2245,8 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         remainingAttempts,
         grading,
-        expireAt: Timestamp.fromDate(expireAt),
+        gradedAt: now,
+        updatedAt: now,
       });
       transaction.set(analyticsEventRef, {
         eventType: "WRITTEN_ATTEMPT_SUBMITTED",
