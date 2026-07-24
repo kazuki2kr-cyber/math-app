@@ -478,6 +478,11 @@ export default function Home() {
                 <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年7月24日</span>
               </div>
               <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
+                <li>・ 画面下部の表示テーマから、<span className="font-semibold text-primary">ライト・ダーク・端末設定</span>を切り替えられるようになりました。</li>
+                <li>・ 計算用紙を問題ごとに最大10ページまで追加でき、前のページや問題へ戻って見返せるようになりました。</li>
+                <li>・ 演習後、間違えた問題と一緒にその問題で書いた計算用紙を確認できるようになりました。</li>
+                <li>・ 答えが思いつかないときに<span className="font-semibold text-primary">「わからない」</span>を選び、正解と解説を確認できるようになりました。</li>
+                <li>・ 獲得した経験値が、これまでより細かい間隔でランキングへ反映されるようになりました。</li>
                 <li>・ Formixが<span className="font-semibold text-primary">デスクトップアプリ（PWA）</span>に対応しました。画面上部の「アプリ」から追加して使ってみてください。</li>
                 <li>・ ブラウザのタブを探さずに、デスクトップやスタートメニューからすぐ起動でき、専用ウィンドウで学習できます。</li>
                 <li>・ 通知を有効にすると、アプリを閉じているときも新しい課題や大切なお知らせを受け取れます。</li>
