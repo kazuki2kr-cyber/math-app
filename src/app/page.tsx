@@ -14,19 +14,20 @@ import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { setDoc } from 'firebase/firestore';
 import { PwaHeaderActions } from '@/components/PwaProvider';
+import {
+  getMathDashboardUnits,
+  isMathSubjectValue,
+  type DashboardUnit,
+} from '@/lib/dashboardUnits';
 
-interface Unit {
+interface Unit extends DashboardUnit {
   id: string;
   title: string;
   questions?: any[]; 
   totalQuestions?: number;
   category?: string;
-  subject?: string;
   baseSubject?: string;
-  mode?: string;
-  drillType?: 'multiple_choice' | 'written';
   writtenAttemptLimit?: number;
-  eventStatus?: string;
 }
 
 interface Score {
@@ -60,39 +61,6 @@ function clearDrillDataCache() {
   Object.keys(localStorage)
     .filter(key => key.startsWith(DRILL_DATA_CACHE_PREFIX))
     .forEach(key => localStorage.removeItem(key));
-}
-
-function isBattleUnit(unit: Unit) {
-  const subject = String(unit.subject || '');
-  // mojibake-ok: legacy imported battle subject values are kept for compatibility.
-  return unit.mode === 'battle' || subject.endsWith('対戦') || subject.endsWith('蟇ｾ謌ｦ');
-}
-
-function isMathSubjectValue(value?: string) {
-  // mojibake-ok: legacy imported math subject values are kept for compatibility.
-  return !value || value === 'math' || value === '数学' || value === '謨ｰ蟄ｦ';
-}
-
-function parseEventDate(value: any): number | null {
-  if (!value) return null;
-  if (typeof value === 'string') {
-    const timestamp = Date.parse(value);
-    return Number.isNaN(timestamp) ? null : timestamp;
-  }
-  if (value?.toDate) return value.toDate().getTime();
-  return null;
-}
-
-function isVisibleUnit(unit: Unit) {
-  if (unit.drillType !== 'written') return true;
-  if ((unit.eventStatus || 'active') !== 'active') return false;
-
-  const now = Date.now();
-  const startsAt = parseEventDate((unit as any).eventStartsAt);
-  const endsAt = parseEventDate((unit as any).eventEndsAt);
-  if (startsAt && startsAt > now) return false;
-  if (endsAt && endsAt < now) return false;
-  return true;
 }
 
 export default function Home() {
@@ -162,7 +130,7 @@ export default function Home() {
           localStorage.setItem(UNITS_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
         }
 
-        const soloUnitsData = unitsData.filter(unit => !isBattleUnit(unit) && isVisibleUnit(unit));
+        const soloUnitsData = getMathDashboardUnits(unitsData);
 
         // 2 & 3. Fetch user's stats and extract scores / wrong answers
         const newScores: Record<string, Score> = {};
