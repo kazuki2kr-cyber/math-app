@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
+import { ThemeSettingsButton } from '@/components/ThemeSettingsButton';
 
 interface Unit {
   id: string;
@@ -112,18 +113,18 @@ export default function KanjiDashboard() {
 
   return (
     <div className="min-h-screen bg-[#FDF6E3] flex flex-col font-serif">
-      <header className="bg-white/95 backdrop-blur-md border-b border-orange-900/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
-        <div className="flex items-center gap-4">
+      <header className="bg-white/95 backdrop-blur-md border-b border-orange-900/10 px-3 py-3 sm:px-6 sm:py-4 flex items-center justify-between sticky top-0 z-50 transition-all shadow-sm">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <div className="w-10 h-10 md:w-12 md:h-12 overflow-hidden rounded-[1rem] shadow-md flex items-center justify-center flex-shrink-0 bg-orange-50">
             <PenTool className="text-orange-900 w-6 h-6" />
           </div>
-          <div className="flex flex-col justify-center">
-            <h1 className="text-2xl md:text-3xl font-black text-orange-950 tracking-tight leading-none mb-[2px]">Formix 漢字</h1>
-            <p className="text-[10px] text-orange-900/60 uppercase tracking-widest font-semibold leading-none">The Art of Characters.</p>
+          <div className="min-w-0 flex flex-col justify-center">
+            <h1 className="whitespace-nowrap text-lg sm:text-2xl md:text-3xl font-black text-orange-950 tracking-tight leading-none mb-[2px]">Formix 漢字</h1>
+            <p className="hidden md:block text-[10px] text-orange-900/60 uppercase tracking-widest font-semibold leading-none">The Art of Characters.</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           <Button
             variant="outline"
             size="sm"
@@ -132,14 +133,18 @@ export default function KanjiDashboard() {
           >
             <Swords className="w-4 h-4 mr-2" />
             <span className="hidden sm:inline">対戦モード（β版）</span>
-            <span className="sm:hidden">対戦β</span>
+            <span className="sm:hidden">対戦</span>
           </Button>
+          <ThemeSettingsButton
+            className="text-orange-900/70 hover:bg-orange-100 hover:text-orange-900"
+            labelClassName="hidden lg:inline"
+          />
           <span className="text-sm font-medium text-orange-900 hidden sm:inline-block bg-orange-50 px-3 py-1.5 rounded-full">
             {user?.displayName} <span className="text-xs text-orange-900/60 font-normal ml-1">さん</span>
           </span>
           <Button variant="ghost" size="sm" onClick={logout} className="text-orange-900/70 hover:text-orange-900 hover:bg-orange-100">
-            <LogOut className="w-4 h-4 mr-2" />
-            ログアウト
+            <LogOut className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">ログアウト</span>
           </Button>
         </div>
       </header>

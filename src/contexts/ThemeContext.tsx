@@ -33,7 +33,7 @@ function subscribeToTheme(callback: () => void) {
 
 function getThemeSnapshot(): ThemePreference {
   const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return isThemePreference(savedTheme) ? savedTheme : 'system';
+  return isThemePreference(savedTheme) ? savedTheme : 'light';
 }
 
 function subscribeToSystemTheme(callback: () => void) {
@@ -54,7 +54,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = useSyncExternalStore<ThemePreference>(
     subscribeToTheme,
     getThemeSnapshot,
-    () => 'system',
+    () => 'light',
   );
   const systemTheme = useSyncExternalStore<'light' | 'dark'>(
     subscribeToSystemTheme,
