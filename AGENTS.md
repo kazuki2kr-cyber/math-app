@@ -5,6 +5,10 @@ Codex は作業開始時に、まず本ファイルと `.agents/GUIDELINES.md` �
 
 👉 **[GUIDELINES.md](file:///.agents/GUIDELINES.md)**
 
+PC 交換・新環境セットアップ時は、まず **[PC Migration Guide](docs/pc-migration-guide.md)** を参照し、環境・認証・秘密情報・検証コマンドの不足を確認してください。
+
+ユーザーが「新PCへ移行した」「移行したから対応して」「開発環境を再セットアップして」などと依頼した場合は、単なる案内で終えず、同ガイドの「新PCでの Codex 実行手順」に従って診断、依存関係の再導入、再認証、検証まで進めてください。秘密値は表示・転記・再生成せず、移行済みファイルを保持します。ユーザー本人のブラウザ操作やログイン承認が必要な箇所だけ確認を求めてください。
+
 ---
 
 ## 1. このファイルの役割
@@ -12,6 +16,7 @@ Codex は作業開始時に、まず本ファイルと `.agents/GUIDELINES.md` �
 - `AGENTS.md`: Codex 向けの入口。優先順位、参照先、Codex での運用を定義する
 - `.agents/GUIDELINES.md`: すべての AI エージェント共通の開発ルール・技術スタック・セキュリティ原則
 - `.codex/commands/`: Codex が参照するためのコマンド定義集。既存の Claude 用運用と同じ内容を Codex からも辿れるようにしたもの
+- `docs/pc-migration-guide.md`: PC 交換・新環境セットアップ時の移行チェックリスト
 - `.agents/skills/`: 自動発動・明示利用するスキル群
 
 Codex は、個別指示がない限り次の優先順位で判断してください。
@@ -20,6 +25,7 @@ Codex は、個別指示がない限り次の優先順位で判断してくだ�
 2. この `AGENTS.md`
 3. `.agents/GUIDELINES.md`
 4. 関連する `.codex/commands/*` と `.agents/skills/*`
+5. 移行・セットアップ作業では `docs/pc-migration-guide.md`
 
 ---
 

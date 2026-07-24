@@ -16,10 +16,10 @@ beforeAll(async () => {
       port: 8080,
     },
   });
-});
+}, 30000);
 
 afterAll(async () => {
-  await testEnv.cleanup();
+  await testEnv?.cleanup();
 });
 
 beforeEach(async () => {

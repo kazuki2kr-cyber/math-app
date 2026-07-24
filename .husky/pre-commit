@@ -1,1 +1,1 @@
-# hook removed
+node scripts/check-staged-files.mjs

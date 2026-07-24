@@ -14,11 +14,18 @@ try {
 }
 
 console.log(`JAVA_HOME: ${env.JAVA_HOME}`);
-console.log('Running Security Rules tests with Firebase Emulator...');
+console.log('Running Jest with Firebase Emulator...');
 
 const result = spawnSync(
   `"${firebaseBin}"`,
-  ['emulators:exec', '--project', 'math-app-26c77', '--only', 'firestore', '"npm run test:security:jest"'],
+  [
+    'emulators:exec',
+    '--project',
+    'math-app-26c77',
+    '--only',
+    'auth,functions,firestore,database,hosting',
+    '"npm run test:jest"',
+  ],
   {
     cwd: projectRoot,
     env,
