@@ -15,7 +15,7 @@ export function normalizePushNotificationPayload(data: unknown): PushNotificatio
   const input = (data || {}) as Record<string, unknown>;
   const title = clampString(input.title, 60);
   const body = clampString(input.body, 240);
-  const rawLink = clampString(input.link, 200) || '/';
+  const rawLink = clampString(input.link, 200) || '/notifications';
   const target: NotificationTarget = input.target === 'self' ? 'self' : input.target === 'all' ? 'all' : 'self';
 
   if (!title || !body) {

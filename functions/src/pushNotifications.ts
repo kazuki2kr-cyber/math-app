@@ -10,6 +10,8 @@ const PUSH_SUBSCRIPTIONS_COLLECTION = 'push_subscriptions';
 const NOTIFICATION_CAMPAIGNS_COLLECTION = 'notification_campaigns';
 const MAX_MULTICAST_TOKENS = 500;
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
+const MAX_INBOX_ITEMS = 50;
+const MAX_INBOX_CANDIDATES = 200;
 const INVALID_TOKEN_CODES = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
@@ -47,6 +49,19 @@ function isValidFcmToken(token: string) {
 
 function subscriptionIdForToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+export function canReadNotificationCampaign(
+  campaign: Record<string, unknown>,
+  uid: string,
+) {
+  return campaign.target === 'all'
+    || (campaign.target === 'self' && campaign.sentByUid === uid);
+}
+
+export function normalizeNotificationLink(value: unknown) {
+  const link = clampString(value, 200);
+  return link.startsWith('/') && !link.startsWith('//') ? link : '/notifications';
 }
 
 function normalizeCallablePushPayload(data: unknown): PushNotificationPayload {
@@ -144,6 +159,32 @@ export const getPushNotificationOverview = functions.region('us-central1').https
       };
     }),
   };
+});
+
+export const getUserNotificationInbox = functions.region('us-central1').https.onCall(async (_data, context) => {
+  assertAppAccess(context);
+
+  const campaigns = await admin.firestore()
+    .collection(NOTIFICATION_CAMPAIGNS_COLLECTION)
+    .orderBy('sentAt', 'desc')
+    .limit(MAX_INBOX_CANDIDATES)
+    .get();
+
+  const notifications = campaigns.docs
+    .filter((doc) => canReadNotificationCampaign(doc.data(), context.auth!.uid))
+    .slice(0, MAX_INBOX_ITEMS)
+    .map((doc) => {
+      const campaign = doc.data();
+      return {
+        id: doc.id,
+        title: clampString(campaign.title, 60) || 'Formixからのお知らせ',
+        body: clampString(campaign.body, 240),
+        link: normalizeNotificationLink(campaign.link),
+        sentAt: campaign.sentAt?.toDate?.()?.toISOString?.() || '',
+      };
+    });
+
+  return { notifications };
 });
 
 export const sendPushNotification = functions

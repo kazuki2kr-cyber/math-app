@@ -35,7 +35,7 @@ messaging.onBackgroundMessage((payload) => {
     icon: "/images/icon.webp",
     badge: "/images/icon.webp",
     tag: data.campaignId || "formix-notification",
-    data: { link: data.link || "/" },
+    data: { link: data.link || "/notifications" },
   });
 });`
     : 'console.warn("Formix push messaging is not configured.");';
@@ -47,7 +47,7 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const requestedLink = event.notification.data && event.notification.data.link
     ? event.notification.data.link
-    : "/";
+    : "/notifications";
   const requestedUrl = new URL(requestedLink, self.location.origin);
   const targetUrl = requestedUrl.origin === self.location.origin
     ? requestedUrl.href

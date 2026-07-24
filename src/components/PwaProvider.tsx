@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Bell, BellOff, BellRing, Download, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ type PwaContextValue = {
   installApp: () => Promise<void>;
   enableNotifications: () => Promise<void>;
   disableNotifications: () => Promise<void>;
+  refreshNotifications: () => Promise<void>;
 };
 
 const DISMISSED_UNTIL_KEY = 'formix_pwa_prompt_dismissed_until';
@@ -80,6 +81,19 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     setNotificationState('default');
   }, []);
 
+  const refreshNotifications = useCallback(async () => {
+    if (
+      typeof window !== 'undefined'
+      && 'Notification' in window
+      && Notification.permission === 'granted'
+    ) {
+      await syncPushSubscriptionIfNeeded().catch((syncError) => {
+        console.warn('Push subscription refresh failed:', syncError);
+      });
+    }
+    await refreshNotificationState();
+  }, [refreshNotificationState]);
+
   useEffect(() => {
     setIsInstalled(detectStandalone());
     const dismissedUntil = Number(localStorage.getItem(DISMISSED_UNTIL_KEY) || 0);
@@ -100,13 +114,26 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     registerPwaServiceWorker().catch((registrationError) => {
       console.warn('PWA Service Worker registration failed:', registrationError);
     });
-    refreshNotificationState().catch(() => setNotificationState('unsupported'));
+    refreshNotifications().catch(() => setNotificationState('unsupported'));
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshNotifications().catch(() => undefined);
+      }
+    };
+    const handleFocus = () => {
+      refreshNotifications().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
       window.removeEventListener('appinstalled', handleInstalled);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
     };
-  }, [refreshNotificationState]);
+  }, [refreshNotifications]);
 
   useEffect(() => {
     if (!user) return;
@@ -177,7 +204,8 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     try {
       await disablePushNotifications();
       setNotificationState('disabled');
-      setDismissed(false);
+      setDismissed(true);
+      localStorage.setItem(DISMISSED_UNTIL_KEY, String(Date.now() + DISMISS_DURATION_MS));
     } catch (notificationError) {
       setError(notificationError instanceof Error ? notificationError.message : '通知を停止できませんでした。');
     } finally {
@@ -194,9 +222,10 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     installApp,
     enableNotifications,
     disableNotifications,
-  }), [notificationState, busy, error, installPrompt, isInstalled, installApp, enableNotifications, disableNotifications]);
+    refreshNotifications,
+  }), [notificationState, busy, error, installPrompt, isInstalled, installApp, enableNotifications, disableNotifications, refreshNotifications]);
 
-  const canEnableNotifications = notificationState === 'default' || notificationState === 'disabled';
+  const canEnableNotifications = notificationState === 'default';
   const showIosInstallGuide = detectIos() && !isInstalled && !installPrompt;
   const showPrompt = Boolean(
     user &&
@@ -263,19 +292,9 @@ export function PwaHeaderActions() {
     busy,
     canInstall,
     installApp,
-    enableNotifications,
-    disableNotifications,
   } = usePwa();
-
-  const handleNotificationClick = async () => {
-    if (notificationState === 'enabled') {
-      if (window.confirm('この端末へのFormix通知を停止しますか？')) await disableNotifications();
-      return;
-    }
-    await enableNotifications();
-  };
-
-  const showNotificationButton = !['checking', 'unsupported', 'unconfigured'].includes(notificationState);
+  const router = useRouter();
+  const showNotificationButton = notificationState !== 'checking';
 
   return (
     <div className="flex items-center gap-1">
@@ -290,14 +309,14 @@ export function PwaHeaderActions() {
           type="button"
           variant="ghost"
           size="sm"
-          onClick={handleNotificationClick}
-          disabled={busy || notificationState === 'blocked'}
-          title={notificationState === 'blocked' ? 'ブラウザ設定で通知がブロックされています' : notificationState === 'enabled' ? '通知は有効です' : '通知を有効にする'}
-          aria-label={notificationState === 'enabled' ? '通知は有効です' : '通知を有効にする'}
+          onClick={() => router.push('/notifications')}
+          disabled={busy}
+          title={notificationState === 'blocked' ? 'お知らせと通知ブロックの解除方法' : 'お知らせを開く'}
+          aria-label="お知らせと通知設定を開く"
           className={notificationState === 'enabled' ? 'text-emerald-700' : 'text-muted-foreground'}
         >
           {notificationState === 'enabled' ? <BellRing className="h-4 w-4" /> : notificationState === 'blocked' ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-          <span className="ml-2 hidden lg:inline">{notificationState === 'enabled' ? '通知ON' : '通知'}</span>
+          <span className="ml-2 hidden lg:inline">お知らせ</span>
         </Button>
       )}
     </div>

@@ -3,6 +3,10 @@ import { GET as getMessagingServiceWorker } from '@/app/firebase-messaging-sw.js
 import { GET as getLegacyPwaIcon } from '@/app/pwa-icon/route';
 import nextConfig from '../../next.config';
 import { normalizePushNotificationPayload } from '../../functions/src/pushNotificationPayload';
+import {
+  canReadNotificationCampaign,
+  normalizeNotificationLink,
+} from '../../functions/src/pushNotifications';
 
 describe('PWA configuration', () => {
   it('uses standalone display without declaring offline behavior', () => {
@@ -28,6 +32,7 @@ describe('PWA configuration', () => {
     expect(response.headers.get('cache-control')).toContain('no-store');
     expect(source).toContain('onBackgroundMessage');
     expect(source).toContain('notificationclick');
+    expect(source).toContain('/notifications');
     expect(source).not.toMatch(/addEventListener\(["']fetch["']/);
     expect(source).not.toContain('caches.open');
     expect(source).not.toContain('respondWith');
@@ -109,5 +114,28 @@ describe('push notification payload validation', () => {
       link: '/',
       target: 'unexpected',
     }).target).toBe('self');
+  });
+
+  it('defaults notification links to the in-app notification center', () => {
+    expect(normalizePushNotificationPayload({
+      title: 'テスト',
+      body: '本文',
+      target: 'all',
+    }).link).toBe('/notifications');
+  });
+});
+
+describe('notification inbox access', () => {
+  it('shows global campaigns and only the signed-in user self campaigns', () => {
+    expect(canReadNotificationCampaign({ target: 'all' }, 'user-1')).toBe(true);
+    expect(canReadNotificationCampaign({ target: 'self', sentByUid: 'user-1' }, 'user-1')).toBe(true);
+    expect(canReadNotificationCampaign({ target: 'self', sentByUid: 'user-2' }, 'user-1')).toBe(false);
+  });
+
+  it('fails closed for unsafe or missing campaign links', () => {
+    expect(normalizeNotificationLink('/drill/example')).toBe('/drill/example');
+    expect(normalizeNotificationLink('https://example.com')).toBe('/notifications');
+    expect(normalizeNotificationLink('//example.com')).toBe('/notifications');
+    expect(normalizeNotificationLink(undefined)).toBe('/notifications');
   });
 });

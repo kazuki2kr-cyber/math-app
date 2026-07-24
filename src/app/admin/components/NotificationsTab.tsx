@@ -42,7 +42,7 @@ export default function NotificationsTab() {
   const { notificationState, busy: deviceBusy, enableNotifications } = usePwa();
   const [title, setTitle] = useState('Formixからのお知らせ');
   const [body, setBody] = useState('');
-  const [link, setLink] = useState('/');
+  const [link, setLink] = useState('/notifications');
   const [target, setTarget] = useState<NotificationTarget>('self');
   const [overview, setOverview] = useState<Overview>({ subscriberCount: 0, campaigns: [] });
   const [loading, setLoading] = useState(true);
