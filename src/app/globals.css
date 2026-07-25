@@ -205,6 +205,33 @@
 }
 
 .dark :where(
+  [class~="text-amber-950"],
+  [class~="text-amber-900"],
+  [class~="text-amber-800"],
+  [class~="text-amber-700"]
+) {
+  color: #fde68a !important;
+}
+
+.dark :where(
+  [class~="text-amber-900/60"],
+  [class~="text-amber-900/50"],
+  [class~="text-amber-900/40"],
+  [class~="text-amber-700/60"],
+  [class~="text-amber-600/70"]
+) {
+  color: #fcd34d !important;
+}
+
+.dark :where(
+  [class~="text-amber-600"],
+  [class~="text-amber-500"],
+  [class~="text-amber-400"]
+) {
+  color: #fbbf24 !important;
+}
+
+.dark :where(
   [class~="border-gray-100"],
   [class~="border-gray-200"],
   [class~="border-gray-300"],
@@ -254,6 +281,14 @@
   [class~="bg-orange-50/80"]
 ) {
   background-color: color-mix(in oklab, var(--card) 82%, var(--primary) 18%) !important;
+}
+
+.dark :where(
+  [class~="bg-amber-100"],
+  [class~="bg-amber-100/60"],
+  [class~="bg-amber-200"]
+) {
+  background-color: oklch(0.32 0.065 75) !important;
 }
 
 .dark :where(

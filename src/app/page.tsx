@@ -477,10 +477,11 @@ export default function Home() {
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年7月24日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年7月25日</span>
               </div>
               <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
                 <li>・ ダッシュボード上部の<span className="font-semibold text-primary">「表示設定」</span>から、ライト・ダーク・端末設定を選べるようになりました。</li>
+                <li>・ ダーク表示で<span className="font-semibold text-primary">「わからない」</span>などの注意・補助メッセージを読み取りやすい配色に改善しました。</li>
                 <li>・ 計算用紙を問題ごとに最大10ページまで追加でき、前のページや問題へ戻って見返せるようになりました。</li>
                 <li>・ 演習後、間違えた問題と一緒にその問題で書いた計算用紙を確認できるようになりました。</li>
                 <li>・ 答えが思いつかないときに<span className="font-semibold text-primary">「わからない」</span>を選び、正解と解説を確認できるようになりました。</li>

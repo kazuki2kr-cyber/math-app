@@ -195,6 +195,22 @@ test.describe('ドリル演習', () => {
     await expect(page.getByText('1+1=2', { exact: true }).first()).toBeVisible();
   });
 
+  test('ダークテーマでも「わからない」ボタンを読み取れる', async ({ page }) => {
+    await page.evaluate(() => window.localStorage.setItem('formix:theme', 'dark'));
+    await page.reload();
+    await expect(page.locator('html')).toHaveClass(/dark/);
+
+    const unitCard = page.locator('.group', { hasText: 'テスト単元' }).first();
+    await unitCard.waitFor({ timeout: 10000 });
+    await unitCard.locator('button', { hasText: '演習開始' }).click();
+    await page.waitForURL(/\/drill\/test_unit$/, { timeout: 15000 });
+
+    const unknownButton = page.getByRole('button', { name: /わからない/ });
+    await expect(unknownButton).toBeVisible();
+    await expect(unknownButton).toHaveCSS('color', 'rgb(253, 230, 138)');
+    await expect(unknownButton).not.toHaveCSS('background-color', 'rgb(255, 251, 235)');
+  });
+
   test('間違えた問題では、その問題の計算用紙を結果画面で確認できる', async ({ page }) => {
     const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
     await unitCard.waitFor({ timeout: 10000 });
