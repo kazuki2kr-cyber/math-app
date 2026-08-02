@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import manifest from '@/app/manifest';
 import { GET as getMessagingServiceWorker } from '@/app/firebase-messaging-sw.js/route';
 import { GET as getLegacyPwaIcon } from '@/app/pwa-icon/route';
@@ -5,6 +7,7 @@ import nextConfig from '../../next.config';
 import { normalizePushNotificationPayload } from '../../functions/src/pushNotificationPayload';
 import {
   canReadNotificationCampaign,
+  normalizeNotificationCampaignId,
   normalizeNotificationLink,
 } from '../../functions/src/pushNotifications';
 
@@ -130,6 +133,13 @@ describe('notification inbox access', () => {
     expect(canReadNotificationCampaign({ target: 'all' }, 'user-1')).toBe(true);
     expect(canReadNotificationCampaign({ target: 'self', sentByUid: 'user-1' }, 'user-1')).toBe(true);
     expect(canReadNotificationCampaign({ target: 'self', sentByUid: 'user-2' }, 'user-1')).toBe(false);
+    expect(canReadNotificationCampaign({ target: 'all', deletedAt: new Date() }, 'user-1')).toBe(false);
+  });
+
+  it('validates campaign IDs before deletion', () => {
+    expect(normalizeNotificationCampaignId('campaign_123')).toBe('campaign_123');
+    expect(() => normalizeNotificationCampaignId('../campaign')).toThrow('削除対象のお知らせIDが不正です。');
+    expect(() => normalizeNotificationCampaignId('')).toThrow('削除対象のお知らせIDが不正です。');
   });
 
   it('fails closed for unsafe or missing campaign links', () => {
@@ -137,5 +147,19 @@ describe('notification inbox access', () => {
     expect(normalizeNotificationLink('https://example.com')).toBe('/notifications');
     expect(normalizeNotificationLink('//example.com')).toBe('/notifications');
     expect(normalizeNotificationLink(undefined)).toBe('/notifications');
+  });
+});
+
+describe('notification link UI', () => {
+  it('keeps notification destinations on the inbox without exposing link controls', () => {
+    const notificationPage = readFileSync(resolve(process.cwd(), 'src/app/notifications/page.tsx'), 'utf8');
+    const adminTab = readFileSync(resolve(process.cwd(), 'src/app/admin/components/NotificationsTab.tsx'), 'utf8');
+
+    expect(notificationPage).not.toContain('関連ページを開く');
+    expect(adminTab).not.toContain('開くページ');
+    expect(adminTab).not.toContain('notification-link');
+    expect(adminTab).toContain("link: '/notifications'");
+    expect(adminTab).toContain("'deleteNotificationCampaign'");
+    expect(adminTab).toContain('配信済みのプッシュ通知は取り消せません');
   });
 });

@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { httpsCallable } from 'firebase/functions';
 import {
   ArrowLeft,
-  ArrowUpRight,
   Bell,
   BellOff,
   BellRing,
@@ -23,7 +22,6 @@ type NotificationItem = {
   id: string;
   title: string;
   body: string;
-  link: string;
   sentAt: string;
 };
 
@@ -221,15 +219,6 @@ export default function NotificationsPage() {
                       </time>
                       <h3 className="mt-1 font-black leading-6 text-gray-900">{notification.title}</h3>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">{notification.body}</p>
-                      {notification.link !== '/notifications' && (
-                        <a
-                          href={notification.link}
-                          className="mt-3 inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline"
-                        >
-                          関連ページを開く
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                        </a>
-                      )}
                     </div>
                   </div>
                 </article>

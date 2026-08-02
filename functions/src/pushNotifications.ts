@@ -10,6 +10,7 @@ const PUSH_SUBSCRIPTIONS_COLLECTION = 'push_subscriptions';
 const NOTIFICATION_CAMPAIGNS_COLLECTION = 'notification_campaigns';
 const MAX_MULTICAST_TOKENS = 500;
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
+const MAX_ADMIN_HISTORY_ITEMS = 20;
 const MAX_INBOX_ITEMS = 50;
 const MAX_INBOX_CANDIDATES = 200;
 const INVALID_TOKEN_CODES = new Set([
@@ -39,7 +40,7 @@ function assertAppAccess(context: functions.https.CallableContext) {
 
 function assertAdmin(context: functions.https.CallableContext) {
   if (!context.auth?.token?.admin) {
-    throw new functions.https.HttpsError('permission-denied', '管理者のみが通知を送信できます。');
+    throw new functions.https.HttpsError('permission-denied', '管理者のみが通知を管理できます。');
   }
 }
 
@@ -55,8 +56,18 @@ export function canReadNotificationCampaign(
   campaign: Record<string, unknown>,
   uid: string,
 ) {
-  return campaign.target === 'all'
-    || (campaign.target === 'self' && campaign.sentByUid === uid);
+  return campaign.deletedAt == null && (
+    campaign.target === 'all'
+    || (campaign.target === 'self' && campaign.sentByUid === uid)
+  );
+}
+
+export function normalizeNotificationCampaignId(value: unknown) {
+  const campaignId = clampString(value, 128);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(campaignId)) {
+    throw new Error('削除対象のお知らせIDが不正です。');
+  }
+  return campaignId;
 }
 
 export function normalizeNotificationLink(value: unknown) {
@@ -138,27 +149,58 @@ export const getPushNotificationOverview = functions.region('us-central1').https
   const db = admin.firestore();
   const [subscriptions, campaigns] = await Promise.all([
     db.collection(PUSH_SUBSCRIPTIONS_COLLECTION).get(),
-    db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION).orderBy('sentAt', 'desc').limit(20).get(),
+    db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION).orderBy('sentAt', 'desc').limit(MAX_INBOX_CANDIDATES).get(),
   ]);
 
   return {
     subscriberCount: subscriptions.size,
-    campaigns: campaigns.docs.map((doc) => {
-      const campaign = doc.data();
-      return {
-        id: doc.id,
-        title: String(campaign.title || ''),
-        body: String(campaign.body || ''),
-        link: String(campaign.link || '/'),
-        target: campaign.target === 'all' ? 'all' : 'self',
-        recipientCount: Number(campaign.recipientCount || 0),
-        successCount: Number(campaign.successCount || 0),
-        failureCount: Number(campaign.failureCount || 0),
-        sentAt: campaign.sentAt?.toDate?.()?.toISOString?.() || '',
-        sentByEmail: String(campaign.sentByEmail || ''),
-      };
-    }),
+    campaigns: campaigns.docs
+      .filter((doc) => doc.data().deletedAt == null)
+      .slice(0, MAX_ADMIN_HISTORY_ITEMS)
+      .map((doc) => {
+        const campaign = doc.data();
+        return {
+          id: doc.id,
+          title: String(campaign.title || ''),
+          body: String(campaign.body || ''),
+          link: String(campaign.link || '/'),
+          target: campaign.target === 'all' ? 'all' : 'self',
+          recipientCount: Number(campaign.recipientCount || 0),
+          successCount: Number(campaign.successCount || 0),
+          failureCount: Number(campaign.failureCount || 0),
+          sentAt: campaign.sentAt?.toDate?.()?.toISOString?.() || '',
+          sentByEmail: String(campaign.sentByEmail || ''),
+        };
+      }),
   };
+});
+
+export const deleteNotificationCampaign = functions.region('us-central1').https.onCall(async (data, context) => {
+  assertAdmin(context);
+  let campaignId: string;
+  try {
+    campaignId = normalizeNotificationCampaignId((data || {}).campaignId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '削除対象のお知らせIDが不正です。';
+    throw new functions.https.HttpsError('invalid-argument', message);
+  }
+
+  const campaignRef = admin.firestore().collection(NOTIFICATION_CAMPAIGNS_COLLECTION).doc(campaignId);
+  await admin.firestore().runTransaction(async (transaction) => {
+    const campaign = await transaction.get(campaignRef);
+    if (!campaign.exists) {
+      throw new functions.https.HttpsError('not-found', '削除対象のお知らせが見つかりません。');
+    }
+    if (campaign.data()?.deletedAt != null) return;
+
+    transaction.update(campaignRef, {
+      deletedAt: admin.firestore.Timestamp.now(),
+      deletedByUid: context.auth!.uid,
+      deletedByEmail: String(context.auth!.token?.email || ''),
+    });
+  });
+
+  return { success: true };
 });
 
 export const getUserNotificationInbox = functions.region('us-central1').https.onCall(async (_data, context) => {

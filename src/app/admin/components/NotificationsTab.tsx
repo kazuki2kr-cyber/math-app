@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bell, BellRing, RefreshCw, Send, Smartphone, Users } from 'lucide-react';
+import { Bell, BellRing, RefreshCw, Send, Smartphone, Trash2, Users } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/lib/firebase';
 import { usePwa } from '@/components/PwaProvider';
@@ -16,7 +16,6 @@ type Campaign = {
   id: string;
   title: string;
   body: string;
-  link: string;
   target: NotificationTarget;
   recipientCount: number;
   successCount: number;
@@ -42,11 +41,11 @@ export default function NotificationsTab() {
   const { notificationState, busy: deviceBusy, enableNotifications } = usePwa();
   const [title, setTitle] = useState('Formixからのお知らせ');
   const [body, setBody] = useState('');
-  const [link, setLink] = useState('/notifications');
   const [target, setTarget] = useState<NotificationTarget>('self');
   const [overview, setOverview] = useState<Overview>({ subscriberCount: 0, campaigns: [] });
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [deletingCampaignId, setDeletingCampaignId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -88,7 +87,7 @@ export default function NotificationsTab() {
       const result = await sendNotification({
         title: title.trim(),
         body: body.trim(),
-        link: link.trim() || '/',
+        link: '/notifications',
         target,
       });
       setMessage(`${result.data.recipientCount}端末中、${result.data.successCount}端末への送信を受け付けました。`);
@@ -100,6 +99,30 @@ export default function NotificationsTab() {
       setError(sendError instanceof Error ? sendError.message : '通知を送信できませんでした。');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleDelete = async (campaign: Campaign) => {
+    const confirmed = window.confirm(
+      `「${campaign.title}」を削除します。\n\nユーザーのお知らせ一覧からは消えますが、配信済みのプッシュ通知は取り消せません。よろしいですか？`,
+    );
+    if (!confirmed) return;
+
+    setMessage('');
+    setError('');
+    setDeletingCampaignId(campaign.id);
+    try {
+      const deleteNotification = httpsCallable<{ campaignId: string }, { success: boolean }>(
+        functions,
+        'deleteNotificationCampaign',
+      );
+      await deleteNotification({ campaignId: campaign.id });
+      setMessage('お知らせを削除しました。');
+      await loadOverview();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'お知らせを削除できませんでした。');
+    } finally {
+      setDeletingCampaignId(null);
     }
   };
 
@@ -174,12 +197,6 @@ export default function NotificationsTab() {
             <p className="text-right text-xs text-gray-500">{body.length}/240</p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="notification-link">開くページ</Label>
-            <Input id="notification-link" value={link} onChange={(event) => setLink(event.target.value)} maxLength={200} placeholder="/" />
-            <p className="text-xs text-gray-500">Formix内のパスを `/` から指定します。</p>
-          </div>
-
           {message && <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
           {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
@@ -208,11 +225,12 @@ export default function NotificationsTab() {
                 <th className="px-4 py-3 font-medium">対象</th>
                 <th className="px-4 py-3 font-medium">成功 / 対象</th>
                 <th className="px-4 py-3 font-medium">送信者</th>
+                <th className="px-4 py-3 text-right font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {!loading && overview.campaigns.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">配信履歴はまだありません。</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">配信履歴はまだありません。</td></tr>
               )}
               {overview.campaigns.map((campaign) => (
                 <tr key={campaign.id}>
@@ -224,6 +242,19 @@ export default function NotificationsTab() {
                   <td className="whitespace-nowrap px-4 py-3">{campaign.target === 'all' ? '全ユーザー' : '自分'}</td>
                   <td className="whitespace-nowrap px-4 py-3">{campaign.successCount} / {campaign.recipientCount}</td>
                   <td className="px-4 py-3 text-xs text-gray-600">{campaign.sentByEmail || '-'}</td>
+                  <td className="px-4 py-3 text-right">
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleDelete(campaign)}
+                      disabled={deletingCampaignId !== null}
+                      aria-label={`「${campaign.title}」を削除`}
+                    >
+                      <Trash2 className="mr-1.5 h-4 w-4" />
+                      {deletingCampaignId === campaign.id ? '削除中...' : '削除'}
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>

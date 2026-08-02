@@ -2,7 +2,7 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import * as fs from 'fs';
 
 let testEnv: RulesTestEnvironment;
@@ -526,6 +526,7 @@ describe('Firestore Security Rules', () => {
       await expect(setDoc(subscriptionRef, { uid: aliceId, token: 'client-token' })).rejects.toThrow();
       await expect(getDoc(campaignRef)).rejects.toThrow();
       await expect(setDoc(campaignRef, { title: 'client-title' })).rejects.toThrow();
+      await expect(deleteDoc(campaignRef)).rejects.toThrow();
     }
   });
 });
