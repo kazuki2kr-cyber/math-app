@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
 import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download } from 'lucide-react';
 import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -472,24 +472,59 @@ export default function Home() {
 
             {/* Update Log */}
             <div className="lg:col-span-3 bg-white/80 rounded-xl border border-gray-100 shadow-sm p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年7月25日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年8月3日</span>
               </div>
-              <ul className="text-xs text-gray-600 space-y-1 leading-relaxed">
+
+              <section
+                aria-labelledby="pwa-update-title"
+                className="relative overflow-hidden rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/15 via-card to-primary/5 p-4 shadow-[0_16px_38px_-28px_rgba(20,83,45,0.9)] md:p-5"
+              >
+                <div className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-primary/10 blur-2xl" />
+                <div className="relative">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[10px] font-black tracking-wider text-primary-foreground shadow-sm">
+                      <Download className="h-3 w-3" />
+                      NEW・PWA対応
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/70">Formix App</span>
+                  </div>
+
+                  <h3 id="pwa-update-title" className="text-base font-black leading-relaxed text-foreground md:text-lg">
+                    Formixが<span className="mx-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-primary">デスクトップアプリ（PWA）</span>に対応しました。
+                  </h3>
+                  <p className="mt-1.5 text-sm font-semibold leading-relaxed text-foreground/80">
+                    画面上部の<span className="mx-1 inline-flex rounded-md border border-primary/25 bg-card px-2 py-0.5 font-black text-primary shadow-sm">「アプリ」</span>から追加して使ってみてください。
+                  </p>
+
+                  <ul className="mt-4 grid gap-2 text-xs leading-relaxed text-muted-foreground md:grid-cols-3">
+                    <li className="rounded-xl border border-primary/10 bg-card/70 p-3">
+                      <span className="mr-1 font-black text-primary">・</span>
+                      ブラウザのタブを探さずに、デスクトップやスタートメニューからすぐ起動でき、専用ウィンドウで学習できます。
+                    </li>
+                    <li className="rounded-xl border border-primary/10 bg-card/70 p-3">
+                      <span className="mr-1 font-black text-primary">・</span>
+                      通知を有効にすると、アプリを閉じているときも新しい課題や大切なお知らせを受け取れます。
+                    </li>
+                    <li className="rounded-xl border border-primary/10 bg-card/70 p-3">
+                      <span className="mr-1 font-black text-primary">・</span>
+                      届いた内容は、画面上部の<span className="font-black text-primary">「お知らせ」</span>からいつでも読み返せます。インターネット接続は引き続き必要です。
+                    </li>
+                  </ul>
+                </div>
+              </section>
+
+              <ul className="mt-4 space-y-1 text-xs leading-relaxed text-gray-600">
                 <li>・ ダッシュボード上部の<span className="font-semibold text-primary">「表示設定」</span>から、ライト・ダーク・端末設定を選べるようになりました。</li>
                 <li>・ ダーク表示で<span className="font-semibold text-primary">「わからない」</span>などの注意・補助メッセージを読み取りやすい配色に改善しました。</li>
                 <li>・ 計算用紙を問題ごとに最大10ページまで追加でき、前のページや問題へ戻って見返せるようになりました。</li>
                 <li>・ 演習後、間違えた問題と一緒にその問題で書いた計算用紙を確認できるようになりました。</li>
                 <li>・ 答えが思いつかないときに<span className="font-semibold text-primary">「わからない」</span>を選び、正解と解説を確認できるようになりました。</li>
                 <li>・ 獲得した経験値が、これまでより細かい間隔でランキングへ反映されるようになりました。</li>
-                <li>・ Formixが<span className="font-semibold text-primary">デスクトップアプリ（PWA）</span>に対応しました。画面上部の「アプリ」から追加して使ってみてください。</li>
-                <li>・ ブラウザのタブを探さずに、デスクトップやスタートメニューからすぐ起動でき、専用ウィンドウで学習できます。</li>
-                <li>・ 通知を有効にすると、アプリを閉じているときも新しい課題や大切なお知らせを受け取れます。</li>
-                <li>・ 届いた内容は、画面上部の<span className="font-semibold text-primary">「お知らせ」</span>からいつでも読み返せます。インターネット接続は引き続き必要です。</li>
               </ul>
             </div>
 

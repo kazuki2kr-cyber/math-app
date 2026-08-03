@@ -124,7 +124,7 @@ export function isPushDisabledOnThisDevice() {
 }
 
 export async function listenForForegroundMessages(
-  onNotification: (data: { title: string; body: string; link: string }) => void,
+  onNotification: (data: { title: string; body: string; link: string; campaignId: string }) => void,
 ) {
   const support = await getPushSupport();
   if (!support.supported || !support.configured) return () => undefined;
@@ -135,6 +135,7 @@ export async function listenForForegroundMessages(
       title: payload.data?.title || 'Formix',
       body: payload.data?.body || '新しいお知らせがあります。',
       link: payload.data?.link || '/',
+      campaignId: payload.data?.campaignId || '',
     });
   });
 }

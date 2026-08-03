@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
+import { Timestamp } from 'firebase-admin/firestore';
 import {
   normalizePushNotificationPayload,
   type PushNotificationPayload,
@@ -8,15 +9,25 @@ import {
 
 const PUSH_SUBSCRIPTIONS_COLLECTION = 'push_subscriptions';
 const NOTIFICATION_CAMPAIGNS_COLLECTION = 'notification_campaigns';
+const NOTIFICATION_INBOX_STATE_COLLECTION = 'notification_inbox_state';
+const NOTIFICATION_INBOX_STATE_DOCUMENT = 'current';
 const MAX_MULTICAST_TOKENS = 500;
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
 const MAX_ADMIN_HISTORY_ITEMS = 20;
 const MAX_INBOX_ITEMS = 50;
 const MAX_INBOX_CANDIDATES = 200;
+const MAX_NOTIFICATION_SUMMARY_ITEMS = 200;
 const INVALID_TOKEN_CODES = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
 ]);
+
+type NotificationSummaryItem = {
+  id: string;
+  target: 'self' | 'all';
+  sentByUid: string;
+  sentAt: Timestamp;
+};
 
 function clampString(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -62,6 +73,100 @@ export function canReadNotificationCampaign(
   );
 }
 
+export function canReadNotificationSummaryItem(
+  item: Pick<NotificationSummaryItem, 'target' | 'sentByUid'>,
+  uid: string,
+) {
+  return item.target === 'all' || (item.target === 'self' && item.sentByUid === uid);
+}
+
+function parseNotificationSummaryItems(value: unknown): NotificationSummaryItem[] {
+  if (!Array.isArray(value)) return [];
+
+  const items: NotificationSummaryItem[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    const item = (candidate || {}) as Record<string, unknown>;
+    const id = clampString(item.id, 128);
+    const target = item.target === 'all' ? 'all' : item.target === 'self' ? 'self' : null;
+    const sentByUid = clampString(item.sentByUid, 128);
+    const sentAt = item.sentAt instanceof Timestamp ? item.sentAt : null;
+    if (!id || !target || !sentAt || seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, target, sentByUid, sentAt });
+  }
+
+  return items
+    .sort((a, b) => b.sentAt.toMillis() - a.sentAt.toMillis())
+    .slice(0, MAX_NOTIFICATION_SUMMARY_ITEMS);
+}
+
+function summaryItemFromCampaign(
+  id: string,
+  campaign: Record<string, unknown>,
+): NotificationSummaryItem | null {
+  if (campaign.deletedAt != null) return null;
+  const target = campaign.target === 'all' ? 'all' : campaign.target === 'self' ? 'self' : null;
+  const sentAt = campaign.sentAt instanceof Timestamp ? campaign.sentAt : null;
+  if (!target || !sentAt) return null;
+  return {
+    id,
+    target,
+    sentByUid: clampString(campaign.sentByUid, 128),
+    sentAt,
+  };
+}
+
+function mergeNotificationSummaryItems(...groups: NotificationSummaryItem[][]) {
+  return parseNotificationSummaryItems(groups.flat());
+}
+
+function parseNotificationCampaignIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((item) => clampString(item, 128))
+    .filter((item) => /^[A-Za-z0-9_-]{1,128}$/.test(item));
+  return Array.from(new Set(ids)).slice(0, MAX_NOTIFICATION_SUMMARY_ITEMS);
+}
+
+function notificationInboxStateRef(db: admin.firestore.Firestore) {
+  return db.collection(NOTIFICATION_INBOX_STATE_COLLECTION).doc(NOTIFICATION_INBOX_STATE_DOCUMENT);
+}
+
+async function getNotificationSummaryItems(db: admin.firestore.Firestore) {
+  const stateRef = notificationInboxStateRef(db);
+  const stateSnapshot = await stateRef.get();
+  if (stateSnapshot.data()?.initialized === true) {
+    return parseNotificationSummaryItems(stateSnapshot.data()?.campaigns);
+  }
+
+  const campaigns = await db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION)
+    .orderBy('sentAt', 'desc')
+    .limit(MAX_INBOX_CANDIDATES)
+    .get();
+  const seededItems = campaigns.docs.flatMap((doc) => {
+    const item = summaryItemFromCampaign(doc.id, doc.data());
+    return item ? [item] : [];
+  });
+
+  return db.runTransaction(async (transaction) => {
+    const currentState = await transaction.get(stateRef);
+    const excludedCampaignIds = new Set(parseNotificationCampaignIds(
+      currentState.data()?.excludedCampaignIds,
+    ));
+    const mergedItems = mergeNotificationSummaryItems(
+      parseNotificationSummaryItems(currentState.data()?.campaigns),
+      seededItems,
+    ).filter((item) => !excludedCampaignIds.has(item.id));
+    transaction.set(stateRef, {
+      campaigns: mergedItems,
+      initialized: true,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    return mergedItems;
+  });
+}
+
 export function normalizeNotificationCampaignId(value: unknown) {
   const campaignId = clampString(value, 128);
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(campaignId)) {
@@ -96,7 +201,7 @@ export const registerPushSubscription = functions.region('us-central1').https.on
   const subscriptionId = subscriptionIdForToken(token);
   const ref = admin.firestore().collection(PUSH_SUBSCRIPTIONS_COLLECTION).doc(subscriptionId);
   const existing = await ref.get();
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   if (!existing.exists) {
     const userSubscriptions = await admin.firestore()
@@ -175,6 +280,20 @@ export const getPushNotificationOverview = functions.region('us-central1').https
   };
 });
 
+export const getUserNotificationSummary = functions.region('us-central1').https.onCall(async (_data, context) => {
+  assertAppAccess(context);
+  const summaryItems = await getNotificationSummaryItems(admin.firestore());
+  return {
+    notifications: summaryItems
+      .filter((item) => canReadNotificationSummaryItem(item, context.auth!.uid))
+      .slice(0, MAX_INBOX_ITEMS)
+      .map((item) => ({
+        id: item.id,
+        sentAt: item.sentAt.toDate().toISOString(),
+      })),
+  };
+});
+
 export const deleteNotificationCampaign = functions.region('us-central1').https.onCall(async (data, context) => {
   assertAdmin(context);
   let campaignId: string;
@@ -185,19 +304,32 @@ export const deleteNotificationCampaign = functions.region('us-central1').https.
     throw new functions.https.HttpsError('invalid-argument', message);
   }
 
-  const campaignRef = admin.firestore().collection(NOTIFICATION_CAMPAIGNS_COLLECTION).doc(campaignId);
-  await admin.firestore().runTransaction(async (transaction) => {
+  const db = admin.firestore();
+  const campaignRef = db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION).doc(campaignId);
+  const stateRef = notificationInboxStateRef(db);
+  await db.runTransaction(async (transaction) => {
     const campaign = await transaction.get(campaignRef);
+    const state = await transaction.get(stateRef);
     if (!campaign.exists) {
       throw new functions.https.HttpsError('not-found', '削除対象のお知らせが見つかりません。');
     }
     if (campaign.data()?.deletedAt != null) return;
 
     transaction.update(campaignRef, {
-      deletedAt: admin.firestore.Timestamp.now(),
+      deletedAt: Timestamp.now(),
       deletedByUid: context.auth!.uid,
       deletedByEmail: String(context.auth!.token?.email || ''),
     });
+    transaction.set(stateRef, {
+      campaigns: parseNotificationSummaryItems(state.data()?.campaigns)
+        .filter((item) => item.id !== campaignId),
+      excludedCampaignIds: parseNotificationCampaignIds([
+        campaignId,
+        ...parseNotificationCampaignIds(state.data()?.excludedCampaignIds),
+      ]),
+      initialized: state.data()?.initialized === true,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
   });
 
   return { success: true };
@@ -237,6 +369,7 @@ export const sendPushNotification = functions
     const payload = normalizeCallablePushPayload(data);
     const db = admin.firestore();
     const campaignRef = db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION).doc();
+    const stateRef = notificationInboxStateRef(db);
 
     const subscriptions = payload.target === 'self'
       ? await db.collection(PUSH_SUBSCRIPTIONS_COLLECTION).where('uid', '==', context.auth!.uid).get()
@@ -293,7 +426,8 @@ export const sendPushNotification = functions
       }
     }
 
-    await campaignRef.set({
+    const sentAt = Timestamp.now();
+    const campaignData = {
       ...payload,
       recipientCount: subscriptionDocs.length,
       successCount,
@@ -301,7 +435,20 @@ export const sendPushNotification = functions
       invalidTokenCount: invalidSubscriptionRefs.length,
       sentByUid: context.auth!.uid,
       sentByEmail: String(context.auth!.token?.email || ''),
-      sentAt: admin.firestore.Timestamp.now(),
+      sentAt,
+    };
+    await db.runTransaction(async (transaction) => {
+      const state = await transaction.get(stateRef);
+      const summaryItem = summaryItemFromCampaign(campaignRef.id, campaignData);
+      transaction.set(campaignRef, campaignData);
+      transaction.set(stateRef, {
+        campaigns: mergeNotificationSummaryItems(
+          summaryItem ? [summaryItem] : [],
+          parseNotificationSummaryItems(state.data()?.campaigns),
+        ),
+        initialized: state.data()?.initialized === true,
+        updatedAt: sentAt,
+      }, { merge: true });
     });
 
     return {

@@ -7,9 +7,16 @@ import nextConfig from '../../next.config';
 import { normalizePushNotificationPayload } from '../../functions/src/pushNotificationPayload';
 import {
   canReadNotificationCampaign,
+  canReadNotificationSummaryItem,
   normalizeNotificationCampaignId,
   normalizeNotificationLink,
 } from '../../functions/src/pushNotifications';
+import {
+  addNotificationId,
+  getUnreadNotificationIds,
+  markNotificationIdsRead,
+  normalizeNotificationIds,
+} from '@/lib/notificationReadState';
 
 describe('PWA configuration', () => {
   it('uses standalone display without declaring offline behavior', () => {
@@ -36,6 +43,8 @@ describe('PWA configuration', () => {
     expect(source).toContain('onBackgroundMessage');
     expect(source).toContain('notificationclick');
     expect(source).toContain('/notifications');
+    expect(source).toContain('setAppBadge');
+    expect(source).toContain('FORMIX_NOTIFICATION_RECEIVED');
     expect(source).not.toMatch(/addEventListener\(["']fetch["']/);
     expect(source).not.toContain('caches.open');
     expect(source).not.toContain('respondWith');
@@ -136,6 +145,12 @@ describe('notification inbox access', () => {
     expect(canReadNotificationCampaign({ target: 'all', deletedAt: new Date() }, 'user-1')).toBe(false);
   });
 
+  it('filters summary entries by the same audience rules', () => {
+    expect(canReadNotificationSummaryItem({ target: 'all', sentByUid: 'admin-1' }, 'user-1')).toBe(true);
+    expect(canReadNotificationSummaryItem({ target: 'self', sentByUid: 'user-1' }, 'user-1')).toBe(true);
+    expect(canReadNotificationSummaryItem({ target: 'self', sentByUid: 'admin-1' }, 'user-1')).toBe(false);
+  });
+
   it('validates campaign IDs before deletion', () => {
     expect(normalizeNotificationCampaignId('campaign_123')).toBe('campaign_123');
     expect(() => normalizeNotificationCampaignId('../campaign')).toThrow('削除対象のお知らせIDが不正です。');
@@ -150,6 +165,22 @@ describe('notification inbox access', () => {
   });
 });
 
+describe('local notification read state', () => {
+  it('tracks unread notification IDs without per-user database writes', () => {
+    const campaignIds = normalizeNotificationIds(['new-2', 'new-1', 'new-1']);
+    const readIds = markNotificationIdsRead([], ['new-1']);
+
+    expect(campaignIds).toEqual(['new-2', 'new-1']);
+    expect(readIds).toEqual(['new-1']);
+    expect(getUnreadNotificationIds(campaignIds, readIds)).toEqual(['new-2']);
+    expect(addNotificationId(campaignIds, 'new-3')).toEqual(['new-3', 'new-2', 'new-1']);
+  });
+
+  it('drops malformed IDs from local storage data', () => {
+    expect(normalizeNotificationIds(['valid_id', '../invalid', 123, 'valid_id'])).toEqual(['valid_id']);
+  });
+});
+
 describe('notification link UI', () => {
   it('keeps notification destinations on the inbox without exposing link controls', () => {
     const notificationPage = readFileSync(resolve(process.cwd(), 'src/app/notifications/page.tsx'), 'utf8');
@@ -161,5 +192,7 @@ describe('notification link UI', () => {
     expect(adminTab).toContain("link: '/notifications'");
     expect(adminTab).toContain("'deleteNotificationCampaign'");
     expect(adminTab).toContain('配信済みのプッシュ通知は取り消せません');
+    expect(notificationPage).toContain('すべて既読');
+    expect(notificationPage).toContain('既読にする');
   });
 });

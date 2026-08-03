@@ -38,7 +38,12 @@ function formatSentAt(value: string) {
 }
 
 export default function NotificationsTab() {
-  const { notificationState, busy: deviceBusy, enableNotifications } = usePwa();
+  const {
+    notificationState,
+    busy: deviceBusy,
+    enableNotifications,
+    refreshNotificationSummary,
+  } = usePwa();
   const [title, setTitle] = useState('Formixからのお知らせ');
   const [body, setBody] = useState('');
   const [target, setTarget] = useState<NotificationTarget>('self');
@@ -95,6 +100,7 @@ export default function NotificationsTab() {
         setMessage((current) => `${current} 失敗: ${result.data.failureCount}端末`);
       }
       await loadOverview();
+      await refreshNotificationSummary();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : '通知を送信できませんでした。');
     } finally {
@@ -119,6 +125,7 @@ export default function NotificationsTab() {
       await deleteNotification({ campaignId: campaign.id });
       setMessage('お知らせを削除しました。');
       await loadOverview();
+      await refreshNotificationSummary();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'お知らせを削除できませんでした。');
     } finally {

@@ -290,7 +290,28 @@ async function globalSetup(config: FullConfig) {
       });
 
       // =====================================================================
-      // 6. 管理者ユーザーの作成（admin.spec.ts 用）
+      // 6. お知らせ未読表示テスト用の全体通知
+      // =====================================================================
+      const notificationBaseTime = Date.now();
+      await patchDoc(projectId, 'notification_campaigns', 'e2e-notification-new', {
+        title: { stringValue: '新しいお知らせ' },
+        body: { stringValue: '未読表示を確認するためのお知らせです。' },
+        link: { stringValue: '/notifications' },
+        target: { stringValue: 'all' },
+        sentByUid: { stringValue: 'e2e-admin' },
+        sentAt: { timestampValue: new Date(notificationBaseTime).toISOString() },
+      });
+      await patchDoc(projectId, 'notification_campaigns', 'e2e-notification-older', {
+        title: { stringValue: 'もう一つのお知らせ' },
+        body: { stringValue: 'すべて既読の動作を確認します。' },
+        link: { stringValue: '/notifications' },
+        target: { stringValue: 'all' },
+        sentByUid: { stringValue: 'e2e-admin' },
+        sentAt: { timestampValue: new Date(notificationBaseTime - 60_000).toISOString() },
+      });
+
+      // =====================================================================
+      // 7. 管理者ユーザーの作成（admin.spec.ts 用）
       // =====================================================================
       console.log('Creating admin test user...');
       const adminUid = await createAuthUser(

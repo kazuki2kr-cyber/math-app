@@ -41,11 +41,16 @@ export default function NotificationsPage() {
   const router = useRouter();
   const {
     notificationState,
+    unreadNotificationCount,
     busy,
     error: notificationError,
     enableNotifications,
     disableNotifications,
     refreshNotifications,
+    isNotificationRead,
+    markNotificationRead,
+    markAllNotificationsRead,
+    syncNotificationCampaigns,
   } = usePwa();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,13 +66,14 @@ export default function NotificationsPage() {
       );
       const result = await getInbox({});
       setNotifications(result.data.notifications);
+      syncNotificationCampaigns(result.data.notifications.map((notification) => notification.id));
     } catch (loadError) {
       console.error('Failed to load notification inbox:', loadError);
       setInboxError('お知らせを読み込めませんでした。時間をおいてもう一度お試しください。');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [syncNotificationCampaigns]);
 
   useEffect(() => {
     loadNotifications();
@@ -183,10 +189,18 @@ export default function NotificationsPage() {
               <h2 id="notification-list-title" className="font-black text-gray-900">届いたお知らせ</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">新しいものから最大50件表示します</p>
             </div>
-            <Button type="button" variant="ghost" size="sm" onClick={loadNotifications} disabled={loading}>
-              <RefreshCw className={`mr-1 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              更新
-            </Button>
+            <div className="flex items-center gap-2">
+              {unreadNotificationCount > 0 && (
+                <Button type="button" variant="outline" size="sm" onClick={markAllNotificationsRead}>
+                  <CheckCircle2 className="mr-1 h-4 w-4" />
+                  すべて既読
+                </Button>
+              )}
+              <Button type="button" variant="ghost" size="sm" onClick={loadNotifications} disabled={loading}>
+                <RefreshCw className={`mr-1 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                更新
+              </Button>
+            </div>
           </div>
 
           {inboxError && (
@@ -207,22 +221,49 @@ export default function NotificationsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {notifications.map((notification) => (
-                <article key={notification.id} className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 rounded-xl bg-primary/10 p-2.5 text-primary">
-                      <Bell className="h-4 w-4" />
+              {notifications.map((notification) => {
+                const unread = !isNotificationRead(notification.id);
+                return (
+                  <article
+                    key={notification.id}
+                    className={`rounded-2xl border p-5 transition-colors ${unread
+                      ? 'border-emerald-300 bg-emerald-50/80 shadow-md ring-1 ring-emerald-200'
+                      : 'border-gray-100 bg-white shadow-sm'}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-0.5 rounded-xl p-2.5 ${unread ? 'bg-primary text-white' : 'bg-primary/10 text-primary'}`}>
+                        <Bell className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <time className="text-[11px] font-semibold text-muted-foreground">
+                            {formatSentAt(notification.sentAt)}
+                          </time>
+                          {unread && (
+                            <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white">
+                              未読
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="mt-1 font-black leading-6 text-gray-900">{notification.title}</h3>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">{notification.body}</p>
+                        {unread && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="mt-3 text-primary"
+                            onClick={() => markNotificationRead(notification.id)}
+                          >
+                            <CheckCircle2 className="mr-1 h-4 w-4" />
+                            既読にする
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <time className="text-[11px] font-semibold text-muted-foreground">
-                        {formatSentAt(notification.sentAt)}
-                      </time>
-                      <h3 className="mt-1 font-black leading-6 text-gray-900">{notification.title}</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">{notification.body}</p>
-                    </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>

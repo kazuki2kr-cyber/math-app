@@ -461,7 +461,7 @@ ${wrongList || 'なし'}
         </div>
 
         {/* Score Header */}
-        <Card className={`overflow-hidden border-0 shadow-2xl relative ${isHighScore ? 'bg-gradient-to-br from-yellow-50 to-orange-50' : 'bg-white'}`}>
+        <Card className={`overflow-hidden border-0 shadow-2xl relative ${isHighScore ? 'bg-gradient-to-br from-yellow-50 to-orange-50 dark:from-card dark:to-card' : 'bg-white'}`}>
           <div className="absolute top-0 left-0 w-full h-2 bg-primary"></div>
           <CardContent className="p-10 text-center flex flex-col items-center">
             {isHighScore && (
@@ -474,7 +474,7 @@ ${wrongList || 'なし'}
             </h2>
             <div className="text-7xl font-black text-primary my-4 flex items-baseline justify-center gap-3">
               {score}
-              <span className="text-3xl text-primary/40 font-medium">/ 100</span>
+              <span className="text-3xl text-primary/40 dark:text-primary/70 font-medium">/ 100</span>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-2 mb-6">
@@ -713,20 +713,20 @@ ${wrongList || 'なし'}
 
         {/* AI Advisor Prompt generator */}
         {storedData.type !== 'written' && (
-        <Card className="shadow-xl border-0 bg-gradient-to-br flex flex-col overflow-hidden from-blue-50 to-indigo-50/50">
+        <Card className="shadow-xl border-0 bg-gradient-to-br flex flex-col overflow-hidden from-blue-50 to-indigo-50/50 dark:from-card dark:to-card">
           <div className="h-1.5 w-full bg-blue-500"></div>
           <CardHeader className="px-8 pt-8">
-            <CardTitle className="flex items-center text-blue-800 text-2xl font-bold">
+            <CardTitle className="flex items-center text-blue-800 text-2xl font-bold dark:text-blue-300">
               <Sparkles className="w-6 h-6 mr-3 text-blue-600" />
               AI学習アドバイザーを活用する
             </CardTitle>
-            <CardDescription className="text-base text-blue-700/80 mt-2">
+            <CardDescription className="text-base text-blue-700/80 mt-2 dark:text-blue-200/80">
               結果をもとに生成されたプロンプトを外部のAIチャットに貼り付けて、個別アドバイスをもらえます。
             </CardDescription>
           </CardHeader>
           <CardContent className="px-8 pb-4">
             <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-200 to-indigo-200 rounded-lg blur opacity-50 group-hover:opacity-100 transition duration-500"></div>
+              <div className="absolute -inset-1 bg-gradient-to-r from-blue-200 to-indigo-200 dark:from-blue-800 dark:to-indigo-800 rounded-lg blur opacity-50 group-hover:opacity-100 transition duration-500"></div>
               <div className="relative bg-white/90 backdrop-blur p-6 rounded-xl text-sm text-gray-800 whitespace-pre-wrap font-mono h-40 overflow-y-auto border border-blue-100 shadow-inner">
                 {generatePrompt()}
               </div>

@@ -30,13 +30,25 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   const data = payload.data || {};
-  self.registration.showNotification(data.title || "Formix", {
+  const tasks = [self.registration.showNotification(data.title || "Formix", {
     body: data.body || "新しいお知らせがあります。",
     icon: "/images/icon.webp",
     badge: "/images/icon.webp",
     tag: data.campaignId || "formix-notification",
     data: { link: data.link || "/notifications" },
-  });
+  })];
+  if (self.navigator && "setAppBadge" in self.navigator) {
+    tasks.push(self.navigator.setAppBadge());
+  }
+  tasks.push(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      clientList.forEach((client) => client.postMessage({
+        type: "FORMIX_NOTIFICATION_RECEIVED",
+        campaignId: data.campaignId || "",
+      }));
+    })
+  );
+  return Promise.all(tasks);
 });`
     : 'console.warn("Formix push messaging is not configured.");';
 

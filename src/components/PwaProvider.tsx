@@ -2,9 +2,17 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { httpsCallable } from 'firebase/functions';
 import { Bell, BellOff, BellRing, Download, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { functions } from '@/lib/firebase';
+import {
+  addNotificationId,
+  getUnreadNotificationIds,
+  markNotificationIdsRead,
+  normalizeNotificationIds,
+} from '@/lib/notificationReadState';
 import {
   disablePushNotifications,
   enablePushNotifications,
@@ -24,6 +32,7 @@ type NotificationState = 'checking' | 'unsupported' | 'unconfigured' | 'default'
 
 type PwaContextValue = {
   notificationState: NotificationState;
+  unreadNotificationCount: number;
   busy: boolean;
   error: string;
   canInstall: boolean;
@@ -32,9 +41,16 @@ type PwaContextValue = {
   enableNotifications: () => Promise<void>;
   disableNotifications: () => Promise<void>;
   refreshNotifications: () => Promise<void>;
+  refreshNotificationSummary: () => Promise<void>;
+  isNotificationRead: (notificationId: string) => boolean;
+  markNotificationRead: (notificationId: string) => void;
+  markAllNotificationsRead: () => void;
+  syncNotificationCampaigns: (notificationIds: string[]) => void;
 };
 
 const DISMISSED_UNTIL_KEY = 'formix_pwa_prompt_dismissed_until';
+const NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX = 'formix_notification_campaign_ids:';
+const NOTIFICATION_READ_IDS_KEY_PREFIX = 'formix_notification_read_ids:';
 const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const PwaContext = createContext<PwaContextValue | null>(null);
@@ -50,15 +66,93 @@ function detectIos() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent);
 }
 
+function readStoredNotificationIds(key: string) {
+  try {
+    return normalizeNotificationIds(JSON.parse(localStorage.getItem(key) || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredNotificationIds(key: string, ids: string[]) {
+  localStorage.setItem(key, JSON.stringify(normalizeNotificationIds(ids)));
+}
+
+type NotificationSummaryResponse = {
+  notifications: Array<{ id: string; sentAt: string }>;
+};
+
+type NavigatorWithBadging = Navigator & {
+  setAppBadge?: (contents?: number) => Promise<void>;
+  clearAppBadge?: () => Promise<void>;
+};
+
 export function PwaProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const pathname = usePathname();
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [notificationState, setNotificationState] = useState<NotificationState>('checking');
+  const [notificationCampaignIds, setNotificationCampaignIds] = useState<string[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dismissed, setDismissed] = useState(true);
+
+  const syncNotificationCampaigns = useCallback((notificationIds: string[]) => {
+    const normalizedIds = normalizeNotificationIds(notificationIds);
+    setNotificationCampaignIds(normalizedIds);
+    if (user?.uid) {
+      writeStoredNotificationIds(`${NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX}${user.uid}`, normalizedIds);
+    }
+  }, [user?.uid]);
+
+  const registerUnreadNotification = useCallback((notificationId: string) => {
+    if (!notificationId || !user?.uid) return;
+    setNotificationCampaignIds((currentIds) => {
+      const nextIds = addNotificationId(currentIds, notificationId);
+      writeStoredNotificationIds(`${NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX}${user.uid}`, nextIds);
+      return nextIds;
+    });
+  }, [user?.uid]);
+
+  const refreshNotificationSummary = useCallback(async () => {
+    if (!user?.uid) return;
+    const getSummary = httpsCallable<Record<string, never>, NotificationSummaryResponse>(
+      functions,
+      'getUserNotificationSummary',
+    );
+    const result = await getSummary({});
+    syncNotificationCampaigns(result.data.notifications.map((notification) => notification.id));
+  }, [syncNotificationCampaigns, user?.uid]);
+
+  const markNotificationRead = useCallback((notificationId: string) => {
+    if (!user?.uid) return;
+    setReadNotificationIds((currentIds) => {
+      const nextIds = markNotificationIdsRead(currentIds, [notificationId]);
+      writeStoredNotificationIds(`${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`, nextIds);
+      return nextIds;
+    });
+  }, [user?.uid]);
+
+  const markAllNotificationsRead = useCallback(() => {
+    if (!user?.uid) return;
+    setReadNotificationIds((currentIds) => {
+      const nextIds = markNotificationIdsRead(currentIds, notificationCampaignIds);
+      writeStoredNotificationIds(`${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`, nextIds);
+      return nextIds;
+    });
+  }, [notificationCampaignIds, user?.uid]);
+
+  const readNotificationIdSet = useMemo(() => new Set(readNotificationIds), [readNotificationIds]);
+  const isNotificationRead = useCallback(
+    (notificationId: string) => readNotificationIdSet.has(notificationId),
+    [readNotificationIdSet],
+  );
+  const unreadNotificationCount = useMemo(
+    () => getUnreadNotificationIds(notificationCampaignIds, readNotificationIds).length,
+    [notificationCampaignIds, readNotificationIds],
+  );
 
   const refreshNotificationState = useCallback(async () => {
     const support = await getPushSupport();
@@ -136,6 +230,24 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
   }, [refreshNotifications]);
 
   useEffect(() => {
+    if (!user?.uid) {
+      setNotificationCampaignIds([]);
+      setReadNotificationIds([]);
+      return;
+    }
+
+    setNotificationCampaignIds(readStoredNotificationIds(
+      `${NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX}${user.uid}`,
+    ));
+    setReadNotificationIds(readStoredNotificationIds(
+      `${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`,
+    ));
+    refreshNotificationSummary().catch((summaryError) => {
+      console.warn('Notification summary refresh failed:', summaryError);
+    });
+  }, [refreshNotificationSummary, user?.uid]);
+
+  useEffect(() => {
     if (!user) return;
     syncPushSubscriptionIfNeeded().catch((syncError) => {
       console.warn('Push subscription sync failed:', syncError);
@@ -146,7 +258,8 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     let disposed = false;
     let unsubscribe: () => void = () => {};
 
-    listenForForegroundMessages(async ({ title, body, link }) => {
+    listenForForegroundMessages(async ({ title, body, link, campaignId }) => {
+      registerUnreadNotification(campaignId);
       const registration = await registerPwaServiceWorker();
       await registration?.showNotification(title, {
         body,
@@ -164,7 +277,27 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       disposed = true;
       unsubscribe();
     };
-  }, []);
+  }, [registerUnreadNotification]);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'FORMIX_NOTIFICATION_RECEIVED') {
+        registerUnreadNotification(String(event.data.campaignId || ''));
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+  }, [registerUnreadNotification]);
+
+  useEffect(() => {
+    const badgingNavigator = navigator as NavigatorWithBadging;
+    if (unreadNotificationCount > 0 && user) {
+      badgingNavigator.setAppBadge?.(unreadNotificationCount).catch(() => undefined);
+    } else {
+      badgingNavigator.clearAppBadge?.().catch(() => undefined);
+    }
+  }, [unreadNotificationCount, user]);
 
   const installApp = useCallback(async () => {
     if (!installPrompt) return;
@@ -215,6 +348,7 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
 
   const contextValue = useMemo<PwaContextValue>(() => ({
     notificationState,
+    unreadNotificationCount,
     busy,
     error,
     canInstall: Boolean(installPrompt),
@@ -223,7 +357,28 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     enableNotifications,
     disableNotifications,
     refreshNotifications,
-  }), [notificationState, busy, error, installPrompt, isInstalled, installApp, enableNotifications, disableNotifications, refreshNotifications]);
+    refreshNotificationSummary,
+    isNotificationRead,
+    markNotificationRead,
+    markAllNotificationsRead,
+    syncNotificationCampaigns,
+  }), [
+    notificationState,
+    unreadNotificationCount,
+    busy,
+    error,
+    installPrompt,
+    isInstalled,
+    installApp,
+    enableNotifications,
+    disableNotifications,
+    refreshNotifications,
+    refreshNotificationSummary,
+    isNotificationRead,
+    markNotificationRead,
+    markAllNotificationsRead,
+    syncNotificationCampaigns,
+  ]);
 
   const canEnableNotifications = notificationState === 'default';
   const showIosInstallGuide = detectIos() && !isInstalled && !installPrompt;
@@ -289,6 +444,7 @@ export function usePwa() {
 export function PwaHeaderActions() {
   const {
     notificationState,
+    unreadNotificationCount,
     busy,
     canInstall,
     installApp,
@@ -312,10 +468,19 @@ export function PwaHeaderActions() {
           onClick={() => router.push('/notifications')}
           disabled={busy}
           title={notificationState === 'blocked' ? 'お知らせと通知ブロックの解除方法' : 'お知らせを開く'}
-          aria-label="お知らせと通知設定を開く"
-          className={notificationState === 'enabled' ? 'text-emerald-700' : 'text-muted-foreground'}
+          aria-label={unreadNotificationCount > 0
+            ? `お知らせを開く、未読${unreadNotificationCount}件`
+            : 'お知らせと通知設定を開く'}
+          className={`relative ${notificationState === 'enabled' ? 'text-emerald-700' : 'text-muted-foreground'}`}
         >
-          {notificationState === 'enabled' ? <BellRing className="h-4 w-4" /> : notificationState === 'blocked' ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+          <span className="relative inline-flex">
+            {notificationState === 'enabled' ? <BellRing className="h-4 w-4" /> : notificationState === 'blocked' ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+            {unreadNotificationCount > 0 && (
+              <span className="absolute -right-2.5 -top-2.5 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white shadow-sm ring-2 ring-white">
+                {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+              </span>
+            )}
+          </span>
           <span className="ml-2 hidden lg:inline">お知らせ</span>
         </Button>
       )}

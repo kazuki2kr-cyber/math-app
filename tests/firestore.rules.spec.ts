@@ -513,6 +513,9 @@ describe('Firestore Security Rules', () => {
       await setDoc(doc(context.firestore(), 'notification_campaigns', 'campaign-1'), {
         title: 'お知らせ',
       });
+      await setDoc(doc(context.firestore(), 'notification_inbox_state', 'current'), {
+        campaigns: [],
+      });
     });
 
     const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
@@ -521,12 +524,16 @@ describe('Firestore Security Rules', () => {
     for (const context of [aliceContext, adminContext]) {
       const subscriptionRef = doc(context.firestore(), 'push_subscriptions', 'subscription-1');
       const campaignRef = doc(context.firestore(), 'notification_campaigns', 'campaign-1');
+      const inboxStateRef = doc(context.firestore(), 'notification_inbox_state', 'current');
 
       await expect(getDoc(subscriptionRef)).rejects.toThrow();
       await expect(setDoc(subscriptionRef, { uid: aliceId, token: 'client-token' })).rejects.toThrow();
       await expect(getDoc(campaignRef)).rejects.toThrow();
       await expect(setDoc(campaignRef, { title: 'client-title' })).rejects.toThrow();
       await expect(deleteDoc(campaignRef)).rejects.toThrow();
+      await expect(getDoc(inboxStateRef)).rejects.toThrow();
+      await expect(setDoc(inboxStateRef, { campaigns: ['client-data'] })).rejects.toThrow();
+      await expect(deleteDoc(inboxStateRef)).rejects.toThrow();
     }
   });
 });
