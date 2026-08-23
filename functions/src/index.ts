@@ -1465,7 +1465,12 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     });
 
     if (isCorrect) {
-      safeCorrectQuestions.push({ id: q.id, question_text: q.question_text });
+      safeCorrectQuestions.push({
+        id: q.id,
+        question_text: q.question_text,
+        correctOptionText,
+        explanation: q.explanation || "",
+      });
     } else {
       safeWrongQuestions.push({
         id: q.id,

@@ -125,9 +125,7 @@ export function OnDeviceAiAdvisor({
     return followUpSessionRef.current;
   };
 
-  const finishWithError = (generationError: unknown) => {
-    const message = getOnDeviceAiErrorMessage(generationError);
-    if (message) setError(message);
+  const resetSessionsAfterError = () => {
     // A rejected prompt can leave a session unusable (quota/context/model errors).
     // Reset on every failure so the next explicit retry starts from clean context.
     followUpSessionRef.current?.destroy();
@@ -135,6 +133,12 @@ export function OnDeviceAiAdvisor({
     followUpSessionRef.current = null;
     sessionRef.current = null;
     followUpQuestionIdRef.current = '';
+  };
+
+  const finishWithError = (generationError: unknown) => {
+    const message = getOnDeviceAiErrorMessage(generationError);
+    if (message) setError(message);
+    resetSessionsAfterError();
   };
 
   const handleGenerateAdvice = async () => {
@@ -223,6 +227,7 @@ export function OnDeviceAiAdvisor({
       const message = getOnDeviceAiErrorMessage(generationError);
       if (message && adviceGenerated) {
         setError(`アドバイスは生成できましたが、類題を生成できませんでした。${message}`);
+        resetSessionsAfterError();
       } else {
         finishWithError(generationError);
       }

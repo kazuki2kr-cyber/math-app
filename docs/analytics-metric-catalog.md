@@ -171,6 +171,10 @@ These can be calculated from the existing `analytics_events.questionResults` dat
 | Co-mistake pairs | `agg_question_pair_current` | Latest-state co-wrong counts and rates | Find conceptual links | Show only high-support pairs, no phi needed |
 | Last 7/30 day attempts | `fact_attempts` | Date-window counts | Activity tracking | Class trend card |
 | Last 7/30 day accuracy | `fact_attempts` | Windowed `correct / answered` | Recent progress | Class trend card |
+| Weekly unique learners | `fact_attempts` | `COUNT(DISTINCT uid)` over the exact 7-day window | Separate reach from learner-days | Emit only when unique learners >= k |
+| Weekly category attribution | `fact_attempts` + unit metadata | Resolve category from current unit metadata first, then event category, and aggregate the exact 7-day window | Avoid losing weekly activity through daily k-suppression | Emit each category only when weekly unique learners >= k; report the remaining coverage gap without exposing a small group |
+| Latest-answer mastery rate | `fact_attempt_question_results` | Accuracy of the latest answer per uid/unit/question inside the 7-day window | Weekly mastery proxy | Aggregated only; label as a proxy, not durable mastery |
+| Next-item correctness after error | `fact_attempt_question_results` | Accuracy of the next question in the same attempt after an incorrect answer | Measure immediate recovery | Aggregated only; not evidence of tutor/hint causality |
 | Low accuracy high attempt units | `fact_attempts` | Accuracy below threshold and attempts above threshold | Intervention queue | Public "review recommended" list without student names |
 
 ## Implementation Order

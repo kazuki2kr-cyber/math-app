@@ -1333,6 +1333,15 @@ async function buildPublicReportDocs(
   config: AnalyticsConfig,
   metadata: Map<string, UnitMetadata>
 ) {
+  // Events normally carry a category, but older/partial events can be missing it.
+  // Prefer current unit metadata so weekly/category totals have a stable owner.
+  // Keep one typed placeholder because BigQuery cannot infer an empty ARRAY<STRUCT> parameter.
+  const unitCategories = Array.from(metadata.values()).map((unit) => ({
+    unit_id: unit.unitId,
+    category: unit.category,
+  }));
+  if (unitCategories.length === 0) unitCategories.push({ unit_id: "", category: "" });
+
   const [overviewRow] = await runQuery(bigquery, config, `
 SELECT
   COUNT(*) AS total_attempts,
@@ -1567,6 +1576,8 @@ SELECT
   occurred_date AS date,
   COUNT(*) AS total_attempts,
   COUNT(DISTINCT uid) AS unique_users,
+  SUM(answered_count) AS total_answered,
+  SUM(correct_count) AS total_correct,
   SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
   SUM(time_sec) AS study_time_sec
 FROM ${tableRef(config, "fact_attempts")}
@@ -1576,7 +1587,155 @@ HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
 ORDER BY occurred_date
   `);
 
+  const weeklyPeriodRows = await runQuery(bigquery, config, `
+WITH periods AS (
+  SELECT
+    'current' AS period_key,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY) AS start_date,
+    CURRENT_DATE('${config.timezone}') AS end_date
+  UNION ALL
+  SELECT
+    'previous' AS period_key,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 13 DAY) AS start_date,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 7 DAY) AS end_date
+),
+period_attempts AS (
+  SELECT
+    periods.period_key,
+    periods.start_date,
+    periods.end_date,
+    attempts.*
+  FROM periods
+  JOIN ${tableRef(config, "fact_attempts")} attempts
+    ON attempts.occurred_date BETWEEN periods.start_date AND periods.end_date
+),
+attempt_metrics AS (
+  SELECT
+    period_key,
+    ANY_VALUE(start_date) AS start_date,
+    ANY_VALUE(end_date) AS end_date,
+    COUNT(DISTINCT occurred_date) AS calendar_days_with_data,
+    COUNT(*) AS total_attempts,
+    COUNT(DISTINCT uid) AS unique_learners,
+    SUM(answered_count) AS total_answered,
+    SUM(correct_count) AS total_correct,
+    SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+    SUM(time_sec) AS total_study_time_sec
+  FROM period_attempts
+  GROUP BY period_key
+),
+daily_activity AS (
+  SELECT
+    period_key,
+    occurred_date,
+    COUNT(DISTINCT uid) AS unique_learners
+  FROM period_attempts
+  GROUP BY period_key, occurred_date
+),
+activity_metrics AS (
+  SELECT
+    period_key,
+    SUM(unique_learners) AS active_learner_days
+  FROM daily_activity
+  GROUP BY period_key
+),
+period_questions AS (
+  SELECT
+    periods.period_key,
+    questions.*
+  FROM periods
+  JOIN ${tableRef(config, "fact_attempt_question_results")} questions
+    ON questions.occurred_date BETWEEN periods.start_date AND periods.end_date
+),
+latest_question_state AS (
+  SELECT
+    period_key,
+    uid,
+    unit_id,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY period_key, uid, unit_id, question_id
+      ORDER BY occurred_at DESC, attempt_id DESC
+    ) AS latest_order
+  FROM period_questions
+),
+mastery_metrics AS (
+  SELECT
+    period_key,
+    COUNT(*) AS eligible_learner_questions,
+    COUNTIF(is_correct) AS mastered_learner_questions,
+    AVG(CAST(is_correct AS INT64)) * 100 AS latest_answer_mastery_rate
+  FROM latest_question_state
+  WHERE latest_order = 1
+  GROUP BY period_key
+),
+ordered_transitions AS (
+  SELECT
+    period_key,
+    uid,
+    attempt_id,
+    is_correct,
+    LEAD(is_correct) OVER (
+      PARTITION BY period_key, uid, attempt_id
+      ORDER BY question_order, question_id
+    ) AS next_is_correct
+  FROM period_questions
+),
+next_item_metrics AS (
+  SELECT
+    period_key,
+    COUNTIF(NOT is_correct AND next_is_correct IS NOT NULL) AS eligible_transitions_after_error,
+    COUNTIF(NOT is_correct AND next_is_correct) AS correct_transitions_after_error,
+    SAFE_DIVIDE(
+      COUNTIF(NOT is_correct AND next_is_correct),
+      NULLIF(COUNTIF(NOT is_correct AND next_is_correct IS NOT NULL), 0)
+    ) * 100 AS next_item_correctness_rate_after_error
+  FROM ordered_transitions
+  GROUP BY period_key
+)
+SELECT
+  attempts.period_key,
+  attempts.start_date,
+  attempts.end_date,
+  attempts.calendar_days_with_data,
+  attempts.total_attempts,
+  attempts.unique_learners,
+  attempts.total_answered,
+  attempts.total_correct,
+  attempts.avg_accuracy,
+  attempts.total_study_time_sec,
+  activity.active_learner_days,
+  mastery.eligible_learner_questions,
+  mastery.mastered_learner_questions,
+  mastery.latest_answer_mastery_rate,
+  next_item.eligible_transitions_after_error,
+  next_item.correct_transitions_after_error,
+  next_item.next_item_correctness_rate_after_error
+FROM attempt_metrics attempts
+LEFT JOIN activity_metrics activity USING (period_key)
+LEFT JOIN mastery_metrics mastery USING (period_key)
+LEFT JOIN next_item_metrics next_item USING (period_key)
+WHERE attempts.unique_learners >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY attempts.start_date
+  `);
+
   const categoryRows = await runQuery(bigquery, config, `
+WITH unit_categories AS (
+  SELECT unit_id, category
+  FROM UNNEST(@unitCategories)
+),
+categorized_attempts AS (
+  SELECT
+    attempts.* EXCEPT(category),
+    COALESCE(
+      NULLIF(TRIM(unit_categories.category), ''),
+      NULLIF(TRIM(attempts.category), ''),
+      'その他'
+    ) AS category
+  FROM ${tableRef(config, "fact_attempts")} attempts
+  LEFT JOIN unit_categories USING (unit_id)
+)
 SELECT
   category,
   COUNT(*) AS total_attempts,
@@ -1589,28 +1748,127 @@ SELECT
   COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY), uid, NULL)) AS wau,
   COUNT(DISTINCT IF(occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY), uid, NULL)) AS mau,
   COUNT(DISTINCT unit_id) AS unit_count
-FROM ${tableRef(config, "fact_attempts")}
-WHERE category IS NOT NULL AND category != ''
+FROM categorized_attempts
 GROUP BY category
 HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
 ORDER BY total_attempts DESC
-  `);
+  `, { unitCategories });
 
   const categoryTrendRows = await runQuery(bigquery, config, `
+WITH unit_categories AS (
+  SELECT unit_id, category
+  FROM UNNEST(@unitCategories)
+),
+categorized_attempts AS (
+  SELECT
+    attempts.* EXCEPT(category),
+    COALESCE(
+      NULLIF(TRIM(unit_categories.category), ''),
+      NULLIF(TRIM(attempts.category), ''),
+      'その他'
+    ) AS category
+  FROM ${tableRef(config, "fact_attempts")} attempts
+  LEFT JOIN unit_categories USING (unit_id)
+)
 SELECT
   category,
   occurred_date AS date,
   COUNT(*) AS total_attempts,
   COUNT(DISTINCT uid) AS unique_users,
+  SUM(answered_count) AS total_answered,
+  SUM(correct_count) AS total_correct,
   SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
   SUM(time_sec) AS study_time_sec
-FROM ${tableRef(config, "fact_attempts")}
+FROM categorized_attempts
 WHERE occurred_date >= DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 29 DAY)
-  AND category IS NOT NULL AND category != ''
 GROUP BY category, occurred_date
 HAVING unique_users >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
 ORDER BY category, occurred_date
-  `);
+  `, { unitCategories });
+
+  const categoryWeeklyPeriodRows = await runQuery(bigquery, config, `
+WITH periods AS (
+  SELECT
+    'current' AS period_key,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 6 DAY) AS start_date,
+    CURRENT_DATE('${config.timezone}') AS end_date
+  UNION ALL
+  SELECT
+    'previous' AS period_key,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 13 DAY) AS start_date,
+    DATE_SUB(CURRENT_DATE('${config.timezone}'), INTERVAL 7 DAY) AS end_date
+),
+unit_categories AS (
+  SELECT unit_id, category
+  FROM UNNEST(@unitCategories)
+),
+period_attempts AS (
+  SELECT
+    periods.period_key,
+    periods.start_date,
+    periods.end_date,
+    COALESCE(
+      NULLIF(TRIM(unit_categories.category), ''),
+      NULLIF(TRIM(attempts.category), ''),
+      'その他'
+    ) AS category,
+    attempts.* EXCEPT(category)
+  FROM periods
+  JOIN ${tableRef(config, "fact_attempts")} attempts
+    ON attempts.occurred_date BETWEEN periods.start_date AND periods.end_date
+  LEFT JOIN unit_categories USING (unit_id)
+),
+period_metrics AS (
+  SELECT
+    period_key,
+    category,
+    ANY_VALUE(start_date) AS start_date,
+    ANY_VALUE(end_date) AS end_date,
+    COUNT(DISTINCT occurred_date) AS calendar_days_with_data,
+    COUNT(*) AS total_attempts,
+    COUNT(DISTINCT uid) AS unique_learners,
+    SUM(answered_count) AS total_answered,
+    SUM(correct_count) AS total_correct,
+    SAFE_DIVIDE(SUM(correct_count), NULLIF(SUM(answered_count), 0)) * 100 AS avg_accuracy,
+    SUM(time_sec) AS total_study_time_sec
+  FROM period_attempts
+  GROUP BY period_key, category
+),
+daily_activity AS (
+  SELECT
+    period_key,
+    category,
+    occurred_date,
+    COUNT(DISTINCT uid) AS unique_learners
+  FROM period_attempts
+  GROUP BY period_key, category, occurred_date
+),
+activity_metrics AS (
+  SELECT
+    period_key,
+    category,
+    SUM(unique_learners) AS active_learner_days
+  FROM daily_activity
+  GROUP BY period_key, category
+)
+SELECT
+  metrics.period_key,
+  metrics.category,
+  metrics.start_date,
+  metrics.end_date,
+  metrics.calendar_days_with_data,
+  metrics.total_attempts,
+  metrics.unique_learners,
+  metrics.total_answered,
+  metrics.total_correct,
+  metrics.avg_accuracy,
+  metrics.total_study_time_sec,
+  activity.active_learner_days
+FROM period_metrics metrics
+LEFT JOIN activity_metrics activity USING (period_key, category)
+WHERE metrics.unique_learners >= ${PUBLIC_REPORT_THRESHOLDS.unitMinUsers}
+ORDER BY metrics.start_date, metrics.total_attempts DESC
+  `, { unitCategories });
 
   const questionMap = new Map<string, any[]>();
   for (const row of questionRows) {
@@ -1686,10 +1944,38 @@ ORDER BY category, occurred_date
       date: String(row.date?.value || row.date || ""),
       totalAttempts: Number(row.total_attempts || 0),
       uniqueUsers: Number(row.unique_users || 0),
+      totalAnswered: Number(row.total_answered || 0),
+      totalCorrect: Number(row.total_correct || 0),
       avgAccuracy: Number(row.avg_accuracy || 0),
       studyTimeSec: Number(row.study_time_sec || 0),
     });
     categoryTrendMap.set(categoryKey, list);
+  }
+
+  const categoryWeeklyPeriodMap = new Map<string, any[]>();
+  for (const row of categoryWeeklyPeriodRows) {
+    const category = String(row.category || "");
+    if (!category) continue;
+    const categoryKey = safeServingDocId(category);
+    const list = categoryWeeklyPeriodMap.get(categoryKey) || [];
+    list.push({
+      periodKey: String(row.period_key || ""),
+      startDate: String(row.start_date?.value || row.start_date || ""),
+      endDate: String(row.end_date?.value || row.end_date || ""),
+      calendarDaysWithData: Number(row.calendar_days_with_data || 0),
+      totalAttempts: Number(row.total_attempts || 0),
+      uniqueLearners: Number(row.unique_learners || 0),
+      totalAnswered: Number(row.total_answered || 0),
+      totalCorrect: Number(row.total_correct || 0),
+      avgAccuracy: Number(row.avg_accuracy || 0),
+      totalStudyTimeSec: Number(row.total_study_time_sec || 0),
+      activeLearnerDays: Number(row.active_learner_days || 0),
+      privacy: {
+        pii: false,
+        minUniqueLearners: PUBLIC_REPORT_THRESHOLDS.unitMinUsers,
+      },
+    });
+    categoryWeeklyPeriodMap.set(categoryKey, list);
   }
 
   const quartileMap = new Map<string, { wide: any[]; narrow: any[] }>();
@@ -1788,6 +2074,7 @@ ORDER BY category, occurred_date
       trends: {
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
         days: categoryTrendMap.get(categoryKey) || [],
+        weeklyPeriods: categoryWeeklyPeriodMap.get(categoryKey) || [],
       },
     };
   });
@@ -1848,8 +2135,33 @@ ORDER BY category, occurred_date
         date: String(row.date?.value || row.date || ""),
         totalAttempts: Number(row.total_attempts || 0),
         uniqueUsers: Number(row.unique_users || 0),
+        totalAnswered: Number(row.total_answered || 0),
+        totalCorrect: Number(row.total_correct || 0),
         avgAccuracy: Number(row.avg_accuracy || 0),
         studyTimeSec: Number(row.study_time_sec || 0),
+      })),
+      weeklyPeriods: weeklyPeriodRows.map((row) => ({
+        periodKey: String(row.period_key || ""),
+        startDate: String(row.start_date?.value || row.start_date || ""),
+        endDate: String(row.end_date?.value || row.end_date || ""),
+        calendarDaysWithData: Number(row.calendar_days_with_data || 0),
+        totalAttempts: Number(row.total_attempts || 0),
+        uniqueLearners: Number(row.unique_learners || 0),
+        totalAnswered: Number(row.total_answered || 0),
+        totalCorrect: Number(row.total_correct || 0),
+        avgAccuracy: Number(row.avg_accuracy || 0),
+        totalStudyTimeSec: Number(row.total_study_time_sec || 0),
+        activeLearnerDays: Number(row.active_learner_days || 0),
+        eligibleLearnerQuestions: Number(row.eligible_learner_questions || 0),
+        masteredLearnerQuestions: Number(row.mastered_learner_questions || 0),
+        latestAnswerMasteryRate: Number(row.latest_answer_mastery_rate || 0),
+        eligibleTransitionsAfterError: Number(row.eligible_transitions_after_error || 0),
+        correctTransitionsAfterError: Number(row.correct_transitions_after_error || 0),
+        nextItemCorrectnessRateAfterError: Number(row.next_item_correctness_rate_after_error || 0),
+        privacy: {
+          pii: false,
+          minUniqueLearners: PUBLIC_REPORT_THRESHOLDS.unitMinUsers,
+        },
       })),
     },
   };
@@ -2164,7 +2476,7 @@ async function writeServingDocs(
     `${PUBLIC_REPORT_ROOT}/manifest/current`,
     {
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      version: 1,
+      version: 3,
       reportOverviewPath: `${PUBLIC_REPORT_ROOT}/report_overview/current`,
       reportCategoryCollection: `${PUBLIC_REPORT_ROOT}/report_categories`,
       reportCategoryTrendCollection: `${PUBLIC_REPORT_ROOT}/report_category_trends`,

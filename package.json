@@ -11,6 +11,8 @@
     "setup:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-new-pc.ps1 -Mode check",
     "check:mojibake": "node scripts/check-mojibake.mjs",
     "check:staged-files": "node scripts/check-staged-files.mjs",
+    "automation:weekly-snapshot": "node scripts/generate-weekly-automation-snapshot.js",
+    "test:weekly-snapshot": "jest tests/weekly-automation-snapshot.spec.ts",
     "test": "node scripts/run-tests-emu.js",
     "test:jest": "jest",
     "test:security": "node scripts/run-security-tests.js",

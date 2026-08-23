@@ -65,7 +65,7 @@ test.describe('結果ページ', () => {
   // 結果ページの要素
   // ─────────────────────────────────────────────────────
 
-  test('正解問題が一覧表示される', async ({ page }) => {
+  test('正解問題にも正しい答えと解説が表示される', async ({ page }) => {
     const unitCard = page.locator('.group', { hasText: 'テスト単元2' }).first();
     await unitCard.waitFor({ timeout: 10000 });
     await unitCard.locator('button', { hasText: '演習開始' }).click();
@@ -78,10 +78,11 @@ test.describe('結果ページ', () => {
     await page.waitForURL(/\/result\/test_unit_2/, { timeout: 15000 });
     await page.getByText('Result').waitFor({ timeout: 20000 });
 
-    // 正解問題リストに問題テキストが表示される
-    await expect(page.locator('.katex').filter({ hasText: '2+2' }).first()).toBeVisible({
-      timeout: 5000,
-    });
+    const correctReview = page.getByTestId('correct-question-review');
+    await expect(correctReview.locator('.katex').filter({ hasText: '2+2' }).first()).toBeVisible({ timeout: 5000 });
+    await expect(correctReview.getByText('正しい答え', { exact: true })).toBeVisible();
+    await expect(correctReview.getByText('解説', { exact: true })).toBeVisible();
+    await expect(correctReview.locator('.katex').filter({ hasText: '2+2=4' }).first()).toBeVisible();
   });
 
   test('不正解問題には解説と正解が表示される', async ({ page }) => {

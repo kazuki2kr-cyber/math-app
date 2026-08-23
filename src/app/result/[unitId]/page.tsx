@@ -40,6 +40,8 @@ interface StoredDrillData {
 interface CorrectQuestion {
   id: string;
   question_text: string;
+  correctOptionText: string;
+  explanation: string;
 }
 
 // Incorrect questions returned from the server.
@@ -744,7 +746,7 @@ export default function ResultPage() {
             )}
 
             {correctQuestions.length > 0 && (
-              <div className="space-y-4 mt-8">
+              <div className="mt-8 space-y-4" data-testid="correct-question-review">
                 <h4 className="font-bold text-green-700 flex items-center text-lg bg-green-50 p-3 rounded-lg border border-green-100">
                   <CheckCircle2 className="w-6 h-6 mr-2" />
                   正解した問題<span className="text-sm font-normal text-green-700/70 ml-2">({correctQuestions.length}問)</span>
@@ -752,11 +754,28 @@ export default function ResultPage() {
                 {correctQuestions.map((q, i) => (
                   <Card key={`correct-${i}`} className="border-0 shadow-sm overflow-hidden bg-white opacity-90 transition-opacity hover:opacity-100">
                     <div className="h-1 w-full bg-green-400"></div>
-                    <CardHeader className="px-6 py-5">
+                    <CardHeader className="border-b bg-gray-50/50 px-6 py-5">
                       <CardTitle className="text-base font-normal leading-relaxed text-gray-700">
                         <MathDisplay math={q.question_text} />
                       </CardTitle>
                     </CardHeader>
+                    <CardContent className="space-y-4 bg-green-50/30 px-6 py-5">
+                      <div className="flex items-start rounded-lg border border-green-100 bg-white p-3 shadow-sm">
+                        <span className="mr-3 mt-0.5 inline-block whitespace-nowrap rounded bg-green-100 px-2 py-1 text-xs font-bold text-green-700">正しい答え</span>
+                        <div className="overflow-x-auto font-bold text-gray-900">
+                          <MathDisplay math={q.correctOptionText} />
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 flex items-center text-sm font-bold text-green-800">
+                          <span className="mr-2 rounded bg-green-100 px-2 py-0.5 text-green-800">解説</span>
+                        </p>
+                        <div className="leading-relaxed text-gray-800">
+                          <MathDisplay math={q.explanation || '解説がありません。'} />
+                        </div>
+                      </div>
+                      <ScratchPaperReview pages={scratchPagesByQuestion[q.id] ?? []} />
+                    </CardContent>
                   </Card>
                 ))}
               </div>
