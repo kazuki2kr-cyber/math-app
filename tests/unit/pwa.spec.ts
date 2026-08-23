@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import manifest from '@/app/manifest';
 import { GET as getMessagingServiceWorker } from '@/app/firebase-messaging-sw.js/route';
 import { GET as getLegacyPwaIcon } from '@/app/pwa-icon/route';
+import { waitForServiceWorkerActivation } from '@/lib/pwaServiceWorker';
 import nextConfig from '../../next.config';
 import { normalizePushNotificationPayload } from '../../functions/src/pushNotificationPayload';
 import {
@@ -19,6 +20,38 @@ import {
 } from '@/lib/notificationReadState';
 
 describe('PWA configuration', () => {
+  it('waits for a newly registered service worker to become active', async () => {
+    const worker = new EventTarget() as ServiceWorker;
+    Object.defineProperty(worker, 'state', { value: 'installing', writable: true });
+    const registration = {
+      active: null,
+      installing: worker,
+      waiting: null,
+    } as unknown as ServiceWorkerRegistration;
+
+    const activation = waitForServiceWorkerActivation(registration, 1_000);
+    Object.defineProperty(worker, 'state', { value: 'activated', writable: true });
+    worker.dispatchEvent(new Event('statechange'));
+
+    await expect(activation).resolves.toBe(registration);
+  });
+
+  it('rejects a redundant service worker instead of subscribing too early', async () => {
+    const worker = new EventTarget() as ServiceWorker;
+    Object.defineProperty(worker, 'state', { value: 'installing', writable: true });
+    const registration = {
+      active: null,
+      installing: worker,
+      waiting: null,
+    } as unknown as ServiceWorkerRegistration;
+
+    const activation = waitForServiceWorkerActivation(registration, 1_000);
+    Object.defineProperty(worker, 'state', { value: 'redundant', writable: true });
+    worker.dispatchEvent(new Event('statechange'));
+
+    await expect(activation).rejects.toThrow('Service Workerの有効化に失敗しました。');
+  });
+
   it('uses standalone display without declaring offline behavior', () => {
     const value = manifest();
     expect(value.name).toBe('Formix');

@@ -8,12 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
 import { ScratchPaperReview } from '@/components/ScratchPaperReview';
+import { OnDeviceAiAdvisor } from '@/components/OnDeviceAiAdvisor';
 import {
   loadScratchAttempt,
   type ScratchPagesByQuestion,
 } from '@/lib/scratchPaperStorage';
 const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
-import { Copy, ArrowLeft, Trophy, Sparkles, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
+import { ArrowLeft, Trophy, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
 
 // Drill result data saved in sessionStorage. Correctness is recalculated server-side.
@@ -160,7 +161,6 @@ export default function ResultPage() {
   const [isHighScore, setIsHighScore] = useState(false);
   const [saving, setSaving] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
   const writtenFeedbackRef = React.useRef<HTMLDivElement | null>(null);
@@ -321,45 +321,6 @@ export default function ResultPage() {
   useEffect(() => {
     processResult();
   }, [processResult]);
-
-  const generatePrompt = () => {
-    if (!storedData) return '';
-
-    const correctList = correctQuestions.map((q, i) => `${i + 1}. ${q.question_text}`).join('\n');
-    const wrongList = wrongQuestions.map((q, i) => `${i + 1}. ${q.question_text}\n   解説: ${q.explanation}`).join('\n\n');
-
-    return `
-あなたは優秀なプロの塾講師・数学アドバイザーです。
-中学1年生の生徒が「${storedData.unitTitle}」の演習ドリルを完了しました。
-
-結果: ${score}点（${storedData.totalQuestions}問中 ${correctQuestions.length}問 正解）
-所要時間: ${storedData.time}秒
-
-【正解した問題】
-${correctList || 'なし'}
-
-【不正解だった問題】
-${wrongList || 'なし'}
-
-上記のデータから、以下の3点を出力してください。
-1. この生徒の「強み」と「弱み」の具体的な分析
-2. 弱点を克服するためのアドバイスを3点
-3. 弱点を補強するための類題（解説付きで2問程度）
-
-中学生に話しかけるような、優しく励ますトーンでお願いします。
-`.trim();
-  };
-
-  const handleCopyPrompt = async () => {
-    const promptText = generatePrompt();
-    try {
-      await navigator.clipboard.writeText(promptText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    } catch (err) {
-      console.error('Failed to copy', err);
-    }
-  };
 
   const handleSubmitWrittenFeedback = async () => {
     if (!storedData || !writtenGrading || !storedData.attemptId || !storedData.questionId || writtenFeedbackSubmitting || writtenFeedbackSent) return;
@@ -711,38 +672,24 @@ ${wrongList || 'なし'}
           </Card>
         )}
 
-        {/* AI Advisor Prompt generator */}
+        {/* On-device AI advisor */}
         {storedData.type !== 'written' && (
-        <Card className="shadow-xl border-0 bg-gradient-to-br flex flex-col overflow-hidden from-blue-50 to-indigo-50/50 dark:from-card dark:to-card">
-          <div className="h-1.5 w-full bg-blue-500"></div>
-          <CardHeader className="px-8 pt-8">
-            <CardTitle className="flex items-center text-blue-800 text-2xl font-bold dark:text-blue-300">
-              <Sparkles className="w-6 h-6 mr-3 text-blue-600" />
-              AI学習アドバイザーを活用する
-            </CardTitle>
-            <CardDescription className="text-base text-blue-700/80 mt-2 dark:text-blue-200/80">
-              結果をもとに生成されたプロンプトを外部のAIチャットに貼り付けて、個別アドバイスをもらえます。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="px-8 pb-4">
-            <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-200 to-indigo-200 dark:from-blue-800 dark:to-indigo-800 rounded-lg blur opacity-50 group-hover:opacity-100 transition duration-500"></div>
-              <div className="relative bg-white/90 backdrop-blur p-6 rounded-xl text-sm text-gray-800 whitespace-pre-wrap font-mono h-40 overflow-y-auto border border-blue-100 shadow-inner">
-                {generatePrompt()}
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter className="flex justify-end px-8 pb-8 pt-4">
-            <Button
-              size="lg"
-              onClick={handleCopyPrompt}
-              className={`shadow-md transition-all font-bold ${copied ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700 hover:-translate-y-0.5 hover:shadow-lg'}`}
-            >
-              {copied ? <CheckCircle2 className="w-5 h-5 mr-2" /> : <Copy className="w-5 h-5 mr-2" />}
-              {copied ? 'コピーしました' : 'プロンプトをコピー'}
-            </Button>
-          </CardFooter>
-        </Card>
+          <OnDeviceAiAdvisor
+            unitTitle={storedData.unitTitle}
+            score={score}
+            totalQuestions={storedData.totalQuestions}
+            correctQuestions={correctQuestions.map((question) => ({
+              id: question.id,
+              questionText: question.question_text,
+            }))}
+            wrongQuestions={wrongQuestions.map((question) => ({
+              id: question.id,
+              questionText: question.question_text,
+              selectedAnswer: question.answerType === 'unknown' ? 'わからない' : question.selectedOptionText,
+              correctAnswer: question.correctOptionText,
+              explanation: question.explanation,
+            }))}
+          />
         )}
 
         {/* Question Review */}

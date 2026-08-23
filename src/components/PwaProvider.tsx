@@ -17,6 +17,7 @@ import {
   disablePushNotifications,
   enablePushNotifications,
   getPushSupport,
+  hasActivePushSubscriptionOnThisDevice,
   isPushDisabledOnThisDevice,
   listenForForegroundMessages,
   registerPwaServiceWorker,
@@ -169,7 +170,12 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (Notification.permission === 'granted') {
-      setNotificationState(isPushDisabledOnThisDevice() ? 'disabled' : 'enabled');
+      if (isPushDisabledOnThisDevice()) {
+        setNotificationState('disabled');
+        return;
+      }
+      const hasActiveSubscription = await hasActivePushSubscriptionOnThisDevice();
+      setNotificationState(hasActiveSubscription ? 'enabled' : 'default');
       return;
     }
     setNotificationState('default');

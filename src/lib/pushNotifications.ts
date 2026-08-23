@@ -1,11 +1,17 @@
 import app, { functions } from '@/lib/firebase';
 import { httpsCallable } from 'firebase/functions';
+import { registerPwaServiceWorker } from '@/lib/pwaServiceWorker';
+
+export { registerPwaServiceWorker } from '@/lib/pwaServiceWorker';
 
 const SUBSCRIPTION_ID_KEY = 'formix_push_subscription_id';
 const PUSH_DISABLED_KEY = 'formix_push_disabled';
 const PUSH_SYNCED_AT_KEY = 'formix_push_synced_at';
 const PUSH_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_FIREBASE_VAPID_KEY = 'BDAFYRU8NaiPvkTzxe9O9IHxiO5f0Y-Bxl7ZofoxeVArS8MEMtzFvCb49i2J9UnyGzl9P8iDcEfvlmx8OAzGLcQ';
+
+let tokenRegistrationInFlight: Promise<ServiceWorkerRegistration> | null = null;
+let pushSyncInFlight: Promise<void> | null = null;
 
 function getFirebaseVapidKey() {
   return process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || DEFAULT_FIREBASE_VAPID_KEY;
@@ -15,11 +21,6 @@ export type PushSupport = {
   supported: boolean;
   configured: boolean;
 };
-
-export async function registerPwaServiceWorker(): Promise<ServiceWorkerRegistration | null> {
-  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null;
-  return navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
-}
 
 export async function getPushSupport(): Promise<PushSupport> {
   if (
@@ -38,29 +39,40 @@ export async function getPushSupport(): Promise<PushSupport> {
 }
 
 async function obtainAndRegisterToken(registration: ServiceWorkerRegistration) {
-  const vapidKey = getFirebaseVapidKey();
-  if (!vapidKey) throw new Error('Firebase Web Push VAPID key is not configured.');
+  if (!tokenRegistrationInFlight) {
+    tokenRegistrationInFlight = (async () => {
+      const vapidKey = getFirebaseVapidKey();
+      if (!vapidKey) throw new Error('Firebase Web Push VAPID key is not configured.');
 
-  const { getMessaging, getToken } = await import('firebase/messaging');
-  const token = await getToken(getMessaging(app), {
-    vapidKey,
-    serviceWorkerRegistration: registration,
-  });
-  if (!token) throw new Error('通知用の端末トークンを取得できませんでした。');
+      const { getMessaging, getToken } = await import('firebase/messaging');
+      const token = await getToken(getMessaging(app), {
+        vapidKey,
+        serviceWorkerRegistration: registration,
+      });
+      if (!token) throw new Error('通知用の端末トークンを取得できませんでした。');
 
-  const registerPushSubscription = httpsCallable<
-    { token: string; userAgent: string },
-    { subscriptionId: string }
-  >(functions, 'registerPushSubscription');
-  const result = await registerPushSubscription({
-    token,
-    userAgent: navigator.userAgent.slice(0, 300),
-  });
+      const registerPushSubscription = httpsCallable<
+        { token: string; userAgent: string },
+        { subscriptionId: string }
+      >(functions, 'registerPushSubscription');
+      const result = await registerPushSubscription({
+        token,
+        userAgent: navigator.userAgent.slice(0, 300),
+      });
 
-  localStorage.setItem(SUBSCRIPTION_ID_KEY, result.data.subscriptionId);
-  localStorage.setItem(PUSH_SYNCED_AT_KEY, String(Date.now()));
-  localStorage.removeItem(PUSH_DISABLED_KEY);
-  return registration;
+      localStorage.setItem(SUBSCRIPTION_ID_KEY, result.data.subscriptionId);
+      localStorage.setItem(PUSH_SYNCED_AT_KEY, String(Date.now()));
+      localStorage.removeItem(PUSH_DISABLED_KEY);
+      return registration;
+    })();
+  }
+
+  const currentRegistration = tokenRegistrationInFlight;
+  try {
+    return await currentRegistration;
+  } finally {
+    if (tokenRegistrationInFlight === currentRegistration) tokenRegistrationInFlight = null;
+  }
 }
 
 export async function enablePushNotifications() {
@@ -96,10 +108,35 @@ export async function syncPushSubscriptionIfNeeded() {
   const lastSyncedAt = Number(localStorage.getItem(PUSH_SYNCED_AT_KEY) || 0);
   if (Date.now() - lastSyncedAt < PUSH_SYNC_INTERVAL_MS) return;
 
-  const support = await getPushSupport();
-  if (!support.supported || !support.configured) return;
-  const registration = await registerPwaServiceWorker();
-  if (registration) await obtainAndRegisterToken(registration);
+  if (!pushSyncInFlight) {
+    pushSyncInFlight = (async () => {
+      const support = await getPushSupport();
+      if (!support.supported || !support.configured) return;
+      const registration = await registerPwaServiceWorker();
+      if (registration) await obtainAndRegisterToken(registration);
+    })();
+  }
+
+  const currentSync = pushSyncInFlight;
+  try {
+    await currentSync;
+  } finally {
+    if (pushSyncInFlight === currentSync) pushSyncInFlight = null;
+  }
+}
+
+export async function hasActivePushSubscriptionOnThisDevice() {
+  if (
+    typeof window === 'undefined'
+    || !('serviceWorker' in navigator)
+    || !localStorage.getItem(SUBSCRIPTION_ID_KEY)
+  ) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.getRegistration('/');
+  if (!registration?.active) return false;
+  return Boolean(await registration.pushManager.getSubscription());
 }
 
 export async function disablePushNotifications() {

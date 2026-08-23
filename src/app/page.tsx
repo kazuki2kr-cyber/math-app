@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
 import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download, BrainCircuit, ShieldCheck } from 'lucide-react';
 import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -477,7 +477,7 @@ export default function Home() {
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年8月3日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年8月24日</span>
               </div>
 
               <section
@@ -515,6 +515,47 @@ export default function Home() {
                       届いた内容は、画面上部の<span className="font-black text-primary">「お知らせ」</span>からいつでも読み返せます。インターネット接続は引き続き必要です。
                     </li>
                   </ul>
+                </div>
+              </section>
+
+              <section
+                aria-labelledby="ai-stability-update-title"
+                className="mt-4 overflow-hidden rounded-2xl border border-blue-200/80 bg-gradient-to-br from-blue-50 via-card to-emerald-50/50 p-4 md:p-5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-2.5 py-1 text-[10px] font-black tracking-wider text-white shadow-sm">
+                    <BrainCircuit className="h-3 w-3" />
+                    NEW・端末内AI
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-black tracking-wider text-emerald-700">
+                    <ShieldCheck className="h-3 w-3" />
+                    安定性改善
+                  </span>
+                </div>
+
+                <h3 id="ai-stability-update-title" className="mt-3 text-base font-black leading-relaxed text-foreground md:text-lg">
+                  演習後の復習を<span className="mx-1 text-blue-700">この端末のAI</span>がサポート。通知・同期も安定しました。
+                </h3>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <article className="rounded-xl border border-blue-100 bg-white/80 p-4 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-sm font-black text-blue-900">
+                      <BrainCircuit className="h-4 w-4 text-blue-600" />
+                      Chrome内蔵AIで個別復習
+                    </h4>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                      演習結果から強み・重点ポイント・復習手順を整理し、間違えた問題への追加質問や類題を生成できます。対応端末では学習データをクラウドAIへ送らず、端末内で処理します。
+                    </p>
+                  </article>
+                  <article className="rounded-xl border border-emerald-100 bg-white/80 p-4 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-sm font-black text-emerald-900">
+                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                      通知・バックグラウンド同期を改善
+                    </h4>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                      Service Workerの起動を待ってから通知を登録するようにし、プッシュ通知の登録失敗や重複した同期処理が起きにくい構成へ改善しました。
+                    </p>
+                  </article>
                 </div>
               </section>
 
