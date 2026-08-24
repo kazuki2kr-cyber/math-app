@@ -18,6 +18,7 @@ import {
   buildPracticePrompt,
   createOnDeviceAiSession,
   getOnDeviceAiErrorMessage,
+  groundAdvisorResult,
   isOnDeviceAiResponseFormatError,
   normalizeOnDeviceAiMathText,
   parseAdvisorResult,
@@ -189,6 +190,7 @@ export function OnDeviceAiAdvisor({
           if (retryTask.shouldDestroy) retryTask.session.destroy();
         }
       }
+      advisorResult = groundAdvisorResult(advisorResult, input);
       setAdvice(advisorResult);
       adviceGenerated = true;
 

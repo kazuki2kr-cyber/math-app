@@ -402,6 +402,45 @@ export function parseAdvisorResult(text: string): AdvisorResult {
   return result;
 }
 
+export function groundAdvisorResult(result: AdvisorResult, input: AdvisorInput): AdvisorResult {
+  const correctCount = input.correctQuestions.length;
+  const wrongCount = input.wrongQuestions.length;
+  const answeredCount = correctCount + wrongCount;
+  const accuracyPercent = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+  const summary = wrongCount > 0
+    ? `${answeredCount}問中${correctCount}問正解（正答率${accuracyPercent}%）でした。間違えた${wrongCount}問は、元の解説と計算手順を確認しましょう。`
+    : `${answeredCount}問中${correctCount}問正解（正答率${accuracyPercent}%）でした。今回正解した問題の解き方を振り返りましょう。`;
+
+  const strengths: AdvisorFinding[] = input.correctQuestions.length > 0
+    ? [{
+        point: '今回、正解できた問題があります。',
+        evidence: `「${clampText(input.correctQuestions[0].questionText, 160)}」に正解しました。`,
+      }]
+    : [{
+        point: '今回の結果だけでは、強みを明確に判断できません。',
+        evidence: '今回の正解は0問でした。',
+      }];
+
+  const weaknesses: AdvisorFinding[] = input.wrongQuestions.length > 0
+    ? input.wrongQuestions.slice(0, 2).map((question, index) => ({
+        point: `間違えた問題${index + 1}の解き方を確認しましょう。`,
+        evidence: question.selectedAnswer === 'わからない'
+          ? `「${clampText(question.questionText, 180)}」は「わからない」と回答しました。`
+          : `「${clampText(question.questionText, 180)}」で誤答がありました。`,
+      }))
+    : [{
+        point: '今回の結果だけでは、重点ポイントを明確に判断できません。',
+        evidence: '今回の不正解は0問でした。',
+      }];
+
+  return {
+    summary,
+    strengths,
+    weaknesses,
+    reviewSteps: result.reviewSteps,
+  };
+}
+
 export function parsePracticeResult(text: string): PracticeResult {
   const parsed = parseJsonObject(text);
   const practiceProblems = Array.isArray(parsed.practiceProblems)

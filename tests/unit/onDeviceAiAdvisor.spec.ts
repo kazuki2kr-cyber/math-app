@@ -8,6 +8,7 @@ import {
   buildFollowUpPrompt,
   buildPracticePrompt,
   getOnDeviceAiErrorMessage,
+  groundAdvisorResult,
   normalizeOnDeviceAiMathText,
   parseAdvisorResult,
   parseFollowUpResult,
@@ -95,6 +96,30 @@ describe('on-device AI advisor', () => {
     expect(toPlainOnDeviceAiMathText('1行目<br>2行目')).toBe('1行目 2行目');
     expect(toPlainOnDeviceAiMathText('x&lt;3、y&gt;2')).toBe('x<3、y>2');
     expect(toPlainOnDeviceAiMathText('x<3、y>2')).toBe('x<3、y>2');
+  });
+
+  it('grounds visible claims in actual results instead of model-inferred ability or causes', () => {
+    const parsed = parseAdvisorResult(JSON.stringify({
+      summary: '計算練習が不足しています。',
+      strengths: [{ point: '計算力があります。', evidence: '推測です。' }],
+      weaknesses: [{ point: '考え方を混同しています。', evidence: '推測です。' }],
+      reviewSteps: ['同類項をまとめる。', '答えを確認する。'],
+    }));
+    const grounded = groundAdvisorResult(parsed, {
+      unitTitle: '方程式',
+      score: 50,
+      totalQuestions: 2,
+      correctQuestions: [{ id: 'q-2', questionText: 'x + 1 = 3' }],
+      wrongQuestions: [wrongQuestion],
+    });
+
+    expect(grounded.summary).toBe(
+      '2問中1問正解（正答率50%）でした。間違えた1問は、元の解説と計算手順を確認しましょう。',
+    );
+    expect(grounded.strengths[0].evidence).toBe('「x + 1 = 3」に正解しました。');
+    expect(grounded.weaknesses[0].evidence).toBe('「2x + 3 = 9 を解きなさい。」で誤答がありました。');
+    expect(JSON.stringify(grounded)).not.toMatch(/不足|計算力があります|混同|推測/);
+    expect(grounded.reviewSteps).toEqual(['同類項をまとめる。', '答えを確認する。']);
   });
 
   it('removes HTML and replaces leaked internal field labels in generated advice', () => {
