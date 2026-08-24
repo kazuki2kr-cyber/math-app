@@ -1,6 +1,7 @@
 import {
   COMPACT_ADVISOR_RESPONSE_SCHEMA,
   COMPACT_PRACTICE_RESPONSE_SCHEMA,
+  PRACTICE_RESPONSE_SCHEMA,
   buildAdvisorPrompt,
   buildCompactAdvisorPrompt,
   buildCompactPracticePrompt,
@@ -86,7 +87,7 @@ describe('on-device AI advisor', () => {
       '式は \\(2a-b\\) です。',
     );
     expect(toPlainOnDeviceAiMathText('計算 \\((5z+12)\\times\\frac{1}{4}\\)')).toBe(
-      '計算 (5z+12)×(1)/(4)',
+      '計算 (5z+12)×1/4',
     );
     expect(toPlainOnDeviceAiMathText('次の式を簡潔にせよ。 2x^2-x+3-x^{2}+4x-1')).toBe(
       '次の式を簡潔にせよ。 2x²-x+3-x²+4x-1',
@@ -171,8 +172,21 @@ describe('on-device AI advisor', () => {
     expect(prompt).toContain('類題作成だけ');
     expect(prompt).toContain('"回答状況":"誤答"');
     expect(prompt).not.toContain('learnerAnswer');
+    expect(prompt).toContain('類題を1問');
     expect(prompt).toContain('verification');
     expect(result.practiceProblems[0].verification).toContain('3+2=5');
+  });
+
+  it('rejects malformed or self-contradicting practice problems so the compact retry can run', () => {
+    expect(() => parsePracticeResult(JSON.stringify({
+      practiceProblems: [{
+        question: '2x^2-x^2を計算せよ。</br>',
+        hint: '同類項をまとめます。',
+        answer: '\\~x^2\\~',
+        explanation: '同じ文です。同じ文です。',
+        verification: '答えが間違っています。正しくは3xです。',
+      }],
+    }))).toThrow('端末内AIの回答が途中で終了しました。');
   });
 
   it('removes source HTML before including question data in prompts', () => {
@@ -204,6 +218,9 @@ describe('on-device AI advisor', () => {
 
     expect(prompt).toContain('類題を1問だけ');
     expect(COMPACT_PRACTICE_RESPONSE_SCHEMA).toMatchObject({
+      properties: { practiceProblems: { maxItems: 1 } },
+    });
+    expect(PRACTICE_RESPONSE_SCHEMA).toMatchObject({
       properties: { practiceProblems: { maxItems: 1 } },
     });
   });

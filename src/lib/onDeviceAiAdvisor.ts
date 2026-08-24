@@ -182,7 +182,7 @@ export const PRACTICE_RESPONSE_SCHEMA: Record<string, unknown> = {
     practiceProblems: {
       type: 'array',
       minItems: 1,
-      maxItems: 2,
+      maxItems: 1,
       items: {
         type: 'object',
         properties: {
@@ -256,7 +256,7 @@ function sanitizeOnDeviceAiText(value: unknown, maxLength: number) {
   if (typeof value !== 'string') return '';
 
   let sanitized = value
-    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?br\s*\/?>/gi, '\n')
     .replace(/<\/(?:div|p|li|tr|h[1-6])\s*>/gi, '\n')
     .replace(/<\/?(?:b|strong|i|em|u|span|div|p|li|ol|ul|table|tbody|thead|tr|td|th|h[1-6])\s*>/gi, '')
     .replace(/\r\n?/g, '\n')
@@ -325,12 +325,17 @@ export function toPlainOnDeviceAiMathText(text: string) {
   );
 
   return normalizeOnDeviceAiMathText(text)
-    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)')
-    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
     .replace(/\\times\b/g, '×')
     .replace(/\\div\b/g, '÷')
     .replace(/\\cdot\b/g, '·')
     .replace(/\\pi\b/g, 'π')
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, (_match, numerator: string, denominator: string) => {
+      const isSimple = (value: string) => /^[+\-−]?\w+$/u.test(value.trim());
+      return isSimple(numerator) && isSimple(denominator)
+        ? `${numerator}/${denominator}`
+        : `(${numerator})/(${denominator})`;
+    })
+    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
     .replace(/\\left|\\right/g, '')
     .replace(/\$\$|\$|\\\(|\\\)|\\\[|\\\]/g, '')
     .replace(/\^\{([+\-−]?\d+)\}/g, (_match, exponent: string) => toSuperscript(exponent))
@@ -410,10 +415,34 @@ export function parsePracticeResult(text: string): PracticeResult {
           explanation: clampText(record.explanation, 700),
           verification: clampText(record.verification, 500),
         };
-        return problem.question && problem.answer && problem.explanation && problem.verification
+        const combinedText = Object.values(problem).join('\n');
+        const hasGenerationArtifact = /\\~|[~]{2,}|[\u0900-\u097f]/u.test(combinedText);
+        const contradictsItsAnswer = /答え(?:が|は).{0,16}(?:間違|誤)|正しくは|不一致|一致しません/u.test(combinedText);
+        const compactText = combinedText.replace(/\s+/g, ' ');
+        let hasImmediateRepetition = false;
+        for (let phraseLength = 4; phraseLength <= 24 && !hasImmediateRepetition; phraseLength += 1) {
+          for (let index = 0; index + (phraseLength * 2) <= compactText.length; index += 1) {
+            const phrase = compactText.slice(index, index + phraseLength);
+            if (
+              /[\u3040-\u30ff\u3400-\u9fff]/u.test(phrase)
+              && phrase === compactText.slice(index + phraseLength, index + (phraseLength * 2))
+            ) {
+              hasImmediateRepetition = true;
+              break;
+            }
+          }
+        }
+        return problem.question
+          && problem.hint
+          && problem.answer
+          && problem.explanation
+          && problem.verification
+          && !hasGenerationArtifact
+          && !contradictsItsAnswer
+          && !hasImmediateRepetition
           ? [problem]
           : [];
-      }).slice(0, 2)
+      }).slice(0, 1)
     : [];
   if (practiceProblems.length === 0) {
     throw new OnDeviceAiResponseFormatError();
@@ -464,6 +493,8 @@ export function buildAdvisorPrompt(input: AdvisorInput) {
     'evidenceは根拠が伝わる1〜2文にし、問題文を挙げる場合は1問だけにしてください。',
     '正解数・不正解数は演習全体の結果です。個別の学習ポイントごとの件数として書かないでください。',
     'JSONのキー名や内部データ名を本文へ書かず、「生徒の回答」「正答」など自然な日本語で説明してください。',
+    '「理解できていない」「できていない」「混同している」「苦手」「計算力が課題」のように、生徒の能力や誤答原因を断定しないでください。',
+    'summaryは「全体の正解状況＋復習提案」、weaknessesのpointは「〜を確認しましょう」、evidenceは「〜を含む問題で誤答がありました」の形を優先してください。',
     '1問の正解だけで「完全に理解した」などと一般化しないでください。今回確認できた範囲として表現してください。',
     '正解が0問、または不正解が0問で判断材料がない項目は、その事実を根拠に「明確には判断できない」としてください。',
     '「わからない」は誤った考え方とは限りません。誤解があると断定しないでください。',
@@ -485,7 +516,7 @@ export function buildCompactAdvisorPrompt(input: AdvisorInput) {
 }
 
 export function buildPracticePrompt(input: AdvisorInput) {
-  const wrongSources = input.wrongQuestions.slice(0, 2).map((question) => ({
+  const wrongSources = input.wrongQuestions.slice(0, 1).map((question) => ({
     回答状況: question.selectedAnswer === 'わからない' ? '未回答' : '誤答',
     問題文: clampText(question.questionText, 500),
     生徒の回答: clampText(question.selectedAnswer, 300),
@@ -502,12 +533,14 @@ export function buildPracticePrompt(input: AdvisorInput) {
   return [
     'タスクは練習用の類題作成だけです。学習分析や励ましの文章は書かないでください。',
     'practiceProblemsの各要素にはquestion、hint、answer、explanation、verificationだけを出力してください。',
-    '問題データごとに同じ学習ポイントを使い、数値または状況を変えた類題を作ってください。元問題のコピーは禁止です。',
+    '元問題と同じ出題形式・学習ポイントを使い、数値だけを変えた類題を1問作ってください。元問題のコピーは禁止です。',
     '難易度は元問題と同程度か少し易しくし、問題文だけで一意に解けるようにしてください。',
     '回答状況が「未回答」の場合は、最初の一歩を練習できる易しい問題にしてください。誤解があると決めつけないでください。',
-    '類題は1問、異なる学習ポイントの不正解が2つある場合のみ2問作ってください。',
+    '類題は必ず1問だけにしてください。',
     '各問を実際に解き、answerとexplanationが一致することを確認してください。',
     'verificationには、代入または再計算による短い答えの確認を書いてください。確認できない問題は出力しないでください。',
+    'verificationでanswerの誤りを指摘したり別の答えへ訂正したりしてはいけません。不一致に気づいた場合は全体を計算し直してください。',
+    '同じ語句や文を繰り返さず、日本語と数式以外の文字を混ぜないでください。',
     '問題文や解説にJSONのキー名や内部データ名を書かないでください。',
     'HTMLタグやMarkdownの装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
     '',
