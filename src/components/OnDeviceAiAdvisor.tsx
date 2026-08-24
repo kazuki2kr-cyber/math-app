@@ -115,12 +115,13 @@ export function OnDeviceAiAdvisor({
     questionId: string,
     controller: AbortController,
   ) => {
-    if (!baseSession.clone) return baseSession;
     if (followUpSessionRef.current && followUpQuestionIdRef.current === questionId) {
       return followUpSessionRef.current;
     }
     followUpSessionRef.current?.destroy();
-    followUpSessionRef.current = await baseSession.clone({ signal: controller.signal });
+    followUpSessionRef.current = baseSession.clone
+      ? await baseSession.clone({ signal: controller.signal })
+      : (await createOnDeviceAiSession(controller.signal, () => undefined)).session;
     followUpQuestionIdRef.current = questionId;
     return followUpSessionRef.current;
   };
@@ -161,7 +162,7 @@ export function OnDeviceAiAdvisor({
       };
       let advisorResult: AdvisorResult;
       try {
-        const advisorTask = await createIsolatedSession(baseSession, controller);
+        const advisorTask = await createIsolatedSession(baseSession, controller, true);
         try {
           const response = await advisorTask.session.prompt(buildAdvisorPrompt(input), {
             responseConstraint: ADVISOR_RESPONSE_SCHEMA,
@@ -194,7 +195,7 @@ export function OnDeviceAiAdvisor({
       setStatusText('間違いに合わせた練習問題を作っています…');
       let generatedPracticeProblems: PracticeProblem[];
       try {
-        const practiceTask = await createIsolatedSession(baseSession, controller);
+        const practiceTask = await createIsolatedSession(baseSession, controller, true);
         try {
           const response = await practiceTask.session.prompt(buildPracticePrompt(input), {
             responseConstraint: PRACTICE_RESPONSE_SCHEMA,

@@ -236,8 +236,44 @@ export const FOLLOW_UP_RESPONSE_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+const INTERNAL_FIELD_LABELS: Array<[RegExp, string]> = [
+  [/learnerAnswer/gi, '生徒の回答'],
+  [/correctAnswer/gi, '正答'],
+  [/providedExplanation/gi, '元の解説'],
+];
+
+function decodeBasicHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&lt;|&#60;/gi, '<')
+    .replace(/&gt;|&#62;/gi, '>')
+    .replace(/&quot;|&#34;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;|&#38;/gi, '&');
+}
+
+function sanitizeOnDeviceAiText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return '';
+
+  let sanitized = value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:div|p|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<\/?(?:b|strong|i|em|u|span|div|p|li|ol|ul|table|tbody|thead|tr|td|th|h[1-6])\s*>/gi, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+  sanitized = decodeBasicHtmlEntities(sanitized);
+
+  for (const [pattern, replacement] of INTERNAL_FIELD_LABELS) {
+    sanitized = sanitized.replace(pattern, replacement);
+  }
+
+  return sanitized.trim().slice(0, maxLength);
+}
+
 function clampText(value: unknown, maxLength: number) {
-  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+  return sanitizeOnDeviceAiText(value, maxLength);
 }
 
 function stripListMarker(value: string) {
@@ -253,7 +289,7 @@ function clampStringArray(value: unknown, maxItems: number) {
 export function normalizeOnDeviceAiMathText(text: string) {
   if (!text) return text;
 
-  const normalized = text
+  const normalized = sanitizeOnDeviceAiText(text, text.length)
     .replace(/\\{2,}(?=(?:\(|\)|\[|\]|frac\b|sqrt\b|times\b|div\b|pi\b))/g, '\\')
     .replace(/\u000crac/g, '\\frac')
     .replace(/\u000crt/g, '\\sqrt')
@@ -269,13 +305,36 @@ export function normalizeOnDeviceAiMathText(text: string) {
 }
 
 export function toPlainOnDeviceAiMathText(text: string) {
+  const superscriptCharacters: Record<string, string> = {
+    '0': '⁰',
+    '1': '¹',
+    '2': '²',
+    '3': '³',
+    '4': '⁴',
+    '5': '⁵',
+    '6': '⁶',
+    '7': '⁷',
+    '8': '⁸',
+    '9': '⁹',
+    '+': '⁺',
+    '-': '⁻',
+    '−': '⁻',
+  };
+  const toSuperscript = (value: string) => (
+    [...value].map((character) => superscriptCharacters[character] || character).join('')
+  );
+
   return normalizeOnDeviceAiMathText(text)
     .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)')
     .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
     .replace(/\\times\b/g, '×')
     .replace(/\\div\b/g, '÷')
+    .replace(/\\cdot\b/g, '·')
     .replace(/\\pi\b/g, 'π')
+    .replace(/\\left|\\right/g, '')
     .replace(/\$\$|\$|\\\(|\\\)|\\\[|\\\]/g, '')
+    .replace(/\^\{([+\-−]?\d+)\}/g, (_match, exponent: string) => toSuperscript(exponent))
+    .replace(/\^([+\-−]?\d+)/g, (_match, exponent: string) => toSuperscript(exponent))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -287,7 +346,7 @@ function clampFindings(value: unknown, maxItems: number) {
         const record = item as Record<string, unknown>;
         const finding = {
           point: clampText(record.point, 300),
-          evidence: clampText(record.evidence, 400),
+          evidence: clampText(record.evidence, 260),
         };
         return finding.point && finding.evidence ? [finding] : [];
       }).slice(0, maxItems)
@@ -377,22 +436,23 @@ export function buildAdvisorPrompt(input: AdvisorInput) {
   const wrongCount = input.wrongQuestions.length;
   const answeredCount = correctCount + wrongCount;
   const payload = {
-    unitTitle: clampText(input.unitTitle, 120),
-    result: {
-      score: input.score,
-      totalQuestions: input.totalQuestions,
-      correctCount,
-      wrongCount,
-      accuracyPercent: answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0,
+    単元: clampText(input.unitTitle, 120),
+    結果: {
+      得点: input.score,
+      問題数: input.totalQuestions,
+      正解数: correctCount,
+      不正解数: wrongCount,
+      正答率: answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0,
     },
-    correctExamples: input.correctQuestions.slice(0, 3).map((question) => ({
-      question: clampText(question.questionText, 500),
+    正解した問題: input.correctQuestions.slice(0, 3).map((question) => ({
+      問題文: clampText(question.questionText, 500),
     })),
-    wrongExamples: input.wrongQuestions.slice(0, 6).map((question) => ({
-      question: clampText(question.questionText, 500),
-      learnerAnswer: clampText(question.selectedAnswer, 300),
-      correctAnswer: clampText(question.correctAnswer, 300),
-      providedExplanation: clampText(question.explanation, 700),
+    間違えた問題: input.wrongQuestions.slice(0, 6).map((question) => ({
+      問題文: clampText(question.questionText, 500),
+      回答状況: question.selectedAnswer === 'わからない' ? '未回答' : '誤答',
+      生徒の回答: clampText(question.selectedAnswer, 300),
+      正答: clampText(question.correctAnswer, 300),
+      元の解説: clampText(question.explanation, 700),
     })),
   };
 
@@ -401,11 +461,14 @@ export function buildAdvisorPrompt(input: AdvisorInput) {
     'summary、strengthsのpointとevidence、weaknessesのpointとevidence、reviewStepsだけを出力してください。',
     '最初に正解数、不正解数、正答率を確認してください。scoreだけから正答数を推測しないでください。',
     '強みと弱みは、根拠となる問題文または正解数・不正解数をevidenceに示してください。',
+    'evidenceは根拠が伝わる1〜2文にし、問題文を挙げる場合は1問だけにしてください。',
+    '正解数・不正解数は演習全体の結果です。個別の学習ポイントごとの件数として書かないでください。',
+    'JSONのキー名や内部データ名を本文へ書かず、「生徒の回答」「正答」など自然な日本語で説明してください。',
     '1問の正解だけで「完全に理解した」などと一般化しないでください。今回確認できた範囲として表現してください。',
     '正解が0問、または不正解が0問で判断材料がない項目は、その事実を根拠に「明確には判断できない」としてください。',
     '「わからない」は誤った考え方とは限りません。誤解があると断定しないでください。',
     '復習手順は、今すぐ実行できる順序で2〜3個示し、1項目につき1つの行動だけを書いてください。',
-    '文章の装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
+    'HTMLタグやMarkdownの装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
     '',
     `演習結果(JSON): ${JSON.stringify(payload)}`,
   ].join('\n');
@@ -423,17 +486,17 @@ export function buildCompactAdvisorPrompt(input: AdvisorInput) {
 
 export function buildPracticePrompt(input: AdvisorInput) {
   const wrongSources = input.wrongQuestions.slice(0, 2).map((question) => ({
-    outcome: question.selectedAnswer === 'わからない' ? 'unknown' : 'incorrect',
-    question: clampText(question.questionText, 500),
-    learnerAnswer: clampText(question.selectedAnswer, 300),
-    correctAnswer: clampText(question.correctAnswer, 300),
-    providedExplanation: clampText(question.explanation, 700),
+    回答状況: question.selectedAnswer === 'わからない' ? '未回答' : '誤答',
+    問題文: clampText(question.questionText, 500),
+    生徒の回答: clampText(question.selectedAnswer, 300),
+    正答: clampText(question.correctAnswer, 300),
+    元の解説: clampText(question.explanation, 700),
   }));
   const sources = wrongSources.length > 0
     ? wrongSources
     : input.correctQuestions.slice(0, 1).map((question) => ({
-        outcome: 'correct',
-        question: clampText(question.questionText, 500),
+        回答状況: '正解',
+        問題文: clampText(question.questionText, 500),
       }));
 
   return [
@@ -441,15 +504,16 @@ export function buildPracticePrompt(input: AdvisorInput) {
     'practiceProblemsの各要素にはquestion、hint、answer、explanation、verificationだけを出力してください。',
     '問題データごとに同じ学習ポイントを使い、数値または状況を変えた類題を作ってください。元問題のコピーは禁止です。',
     '難易度は元問題と同程度か少し易しくし、問題文だけで一意に解けるようにしてください。',
-    '入力がunknownの場合は、最初の一歩を練習できる易しい問題にしてください。誤解があると決めつけないでください。',
+    '回答状況が「未回答」の場合は、最初の一歩を練習できる易しい問題にしてください。誤解があると決めつけないでください。',
     '類題は1問、異なる学習ポイントの不正解が2つある場合のみ2問作ってください。',
     '各問を実際に解き、answerとexplanationが一致することを確認してください。',
     'verificationには、代入または再計算による短い答えの確認を書いてください。確認できない問題は出力しないでください。',
-    '文章の装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
+    '問題文や解説にJSONのキー名や内部データ名を書かないでください。',
+    'HTMLタグやMarkdownの装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
     '',
     `類題の基になる問題(JSON): ${JSON.stringify({
-      unitTitle: clampText(input.unitTitle, 120),
-      sources,
+      単元: clampText(input.unitTitle, 120),
+      元問題: sources,
     })}`,
   ].join('\n');
 }
@@ -476,9 +540,15 @@ export function buildFollowUpPrompt(question: AdvisorWrongQuestion, learnerQuest
     '問題データの解説を根拠に、正答を言うだけでなく、1段階ずつ説明してください。',
     '問題データだけでは答えられない場合は、推測せず、分からない点を短く伝えてください。',
     '質問が問題と無関係な場合は、数学の復習に戻るよう短く案内してください。',
-    '文章の装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
+    '問題データのキー名や内部データ名を本文に書かないでください。',
+    'HTMLタグやMarkdownの装飾は使わず、数式を含む場合は数式部分だけを$...$で囲んだLaTeXにしてください。',
     '',
-    `問題データ(JSON): ${JSON.stringify(question)}`,
+    `問題データ(JSON): ${JSON.stringify({
+      問題文: clampText(question.questionText, 500),
+      生徒の回答: clampText(question.selectedAnswer, 300),
+      正答: clampText(question.correctAnswer, 300),
+      元の解説: clampText(question.explanation, 700),
+    })}`,
     `生徒の質問: ${clampText(learnerQuestion, 500)}`,
   ].join('\n');
 }

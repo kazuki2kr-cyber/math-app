@@ -34,12 +34,13 @@ describe('on-device AI advisor', () => {
 
     expect(prompt).toContain('方程式');
     expect(prompt).toContain('2x + 3 = 9');
-    expect(prompt).toContain('"correctCount":1');
-    expect(prompt).toContain('"wrongCount":1');
-    expect(prompt).toContain('"accuracyPercent":50');
+    expect(prompt).toContain('"正解数":1');
+    expect(prompt).toContain('"不正解数":1');
+    expect(prompt).toContain('"正答率":50');
     expect(prompt).toContain('根拠となる問題文');
     expect(prompt).toContain('類題は作らないでください');
     expect(prompt).not.toContain('"id"');
+    expect(prompt).not.toContain('learnerAnswer');
     expect(prompt).not.toContain('APIキー');
   });
 
@@ -87,6 +88,30 @@ describe('on-device AI advisor', () => {
     expect(toPlainOnDeviceAiMathText('計算 \\((5z+12)\\times\\frac{1}{4}\\)')).toBe(
       '計算 (5z+12)×(1)/(4)',
     );
+    expect(toPlainOnDeviceAiMathText('次の式を簡潔にせよ。 2x^2-x+3-x^{2}+4x-1')).toBe(
+      '次の式を簡潔にせよ。 2x²-x+3-x²+4x-1',
+    );
+    expect(toPlainOnDeviceAiMathText('1行目<br>2行目')).toBe('1行目 2行目');
+    expect(toPlainOnDeviceAiMathText('x&lt;3、y&gt;2')).toBe('x<3、y>2');
+    expect(toPlainOnDeviceAiMathText('x<3、y>2')).toBe('x<3、y>2');
+  });
+
+  it('removes HTML and replaces leaked internal field labels in generated advice', () => {
+    const result = parseAdvisorResult(JSON.stringify({
+      summary: '式を確認しましょう。',
+      strengths: [{ point: '1問に正解しました。', evidence: '正答数は1問です。' }],
+      weaknesses: [{
+        point: '同類項を確認しましょう。',
+        evidence: '問題文です。learnerAnswerが間違っています。<br>providedExplanationを確認します。',
+      }],
+      reviewSteps: ['<b>同類項</b>をまとめる。', '答えを確認する。'],
+    }));
+
+    expect(result.weaknesses[0].evidence).toBe(
+      '問題文です。生徒の回答が間違っています。\n元の解説を確認します。',
+    );
+    expect(result.reviewSteps[0]).toBe('同類項をまとめる。');
+    expect(JSON.stringify(result)).not.toMatch(/learnerAnswer|providedExplanation|<br>|<b>/i);
   });
 
   it('uses a shorter advisor structure for the automatic retry', () => {
@@ -144,9 +169,28 @@ describe('on-device AI advisor', () => {
     }));
 
     expect(prompt).toContain('類題作成だけ');
-    expect(prompt).toContain('"outcome":"incorrect"');
+    expect(prompt).toContain('"回答状況":"誤答"');
+    expect(prompt).not.toContain('learnerAnswer');
     expect(prompt).toContain('verification');
     expect(result.practiceProblems[0].verification).toContain('3+2=5');
+  });
+
+  it('removes source HTML before including question data in prompts', () => {
+    const prompt = buildAdvisorPrompt({
+      unitTitle: '式の計算',
+      score: 0,
+      totalQuestions: 1,
+      correctQuestions: [],
+      wrongQuestions: [{
+        ...wrongQuestion,
+        questionText: '1行目<br>2行目',
+        explanation: '<p>同類項をまとめます。</p>',
+      }],
+    });
+
+    expect(prompt).toContain('1行目\\n2行目');
+    expect(prompt).toContain('同類項をまとめます。');
+    expect(prompt).not.toMatch(/<br|<p>|<\/p>/i);
   });
 
   it('uses one short practice problem for the automatic retry', () => {
