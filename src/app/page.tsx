@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
 import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download, BrainCircuit, ShieldCheck } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download, BrainCircuit, ShieldCheck, BarChart3 } from 'lucide-react';
 import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -20,6 +20,7 @@ import {
   isMathSubjectValue,
   type DashboardUnit,
 } from '@/lib/dashboardUnits';
+import { buildLearningProgressReport, getLearningProgressReadiness } from '@/lib/learningProgress';
 
 interface Unit extends DashboardUnit {
   id: string;
@@ -93,6 +94,7 @@ export default function Home() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [unitsRefreshToken, setUnitsRefreshToken] = useState(0);
+  const [learningProgressReady, setLearningProgressReady] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -108,6 +110,7 @@ export default function Home() {
       if (!user) return;
       setLoading(true);
       setError(null);
+      setLearningProgressReady(false);
       try {
         // 1. Fetch units with caching
         localStorage.removeItem('math_units_cache'); // v1 cleanup
@@ -193,6 +196,9 @@ export default function Home() {
             level: ud.level || 1,
             progress: ud.progressPercent !== undefined ? ud.progressPercent : calculateLevelAndProgress(ud.xp || 0).progressPercent
           });
+          setLearningProgressReady(
+            getLearningProgressReadiness(buildLearningProgressReport(soloUnitsData, ud)).ready,
+          );
         }
 
         setWrongAnswers(newWrongAnswers);
@@ -345,6 +351,20 @@ export default function Home() {
 
         <div className="flex shrink-0 items-center gap-1 md:gap-4">
           <PwaHeaderActions />
+          {learningProgressReady && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push('/progress')}
+              className="text-muted-foreground hover:text-primary"
+              title="学習の振り返り"
+              aria-label="学習の振り返りを開く"
+            >
+              <BarChart3 className="h-4 w-4" />
+              <span className="ml-2 hidden lg:inline">学習の振り返り</span>
+            </Button>
+          )}
           <ThemeSettingsButton />
           <Button
             variant="outline"

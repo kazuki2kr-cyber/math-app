@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { updateLearningReviewStats } from "./learningReview";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { extractJsonObject } from "./writtenGradingJson";
 import {
@@ -1670,6 +1671,15 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     currentWrongs = currentWrongs.filter((id: string) => !newlyCorrectIds.includes(id));
     newlyWrongIds.forEach((id: string) => { if (!currentWrongs.includes(id)) currentWrongs.push(id); });
 
+    const learningReviewUpdate = updateLearningReviewStats({
+      existingReview: existingUnitData.reviewV1,
+      existingDaily: userSnap.exists ? userSnap.data()?.learningDailyV1 : null,
+      correctCount: safeCorrectQuestions.length,
+      answeredCount: totalAnswered,
+      studyTimeSec: time,
+      now: now.toDate(),
+    });
+
     // 修正: FieldPath オブジェクトを {} のキーに使うと "[object Object]" という文字列になってしまうため、
     // 複数の FieldPath を含む更新には可変引数形式 (variadic) を使用する。
     const statsPathValue = {
@@ -1678,6 +1688,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       wrongQuestionIds: currentWrongs,
       totalCorrect: (existingUnitData.totalCorrect || 0) + safeCorrectQuestions.length,
       drillCount: drillCount + 1,
+      reviewV1: learningReviewUpdate.reviewV1,
       updatedAt: dateStr
     };
 
@@ -1691,6 +1702,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     // 他の基本フィールドの更新
     const baseUpdates: any = { ...userUpdate };
+    baseUpdates.learningDailyV1 = learningReviewUpdate.learningDailyV1;
     delete baseUpdates.unitStats;
     delete baseUpdates.lastAttemptTimes;
 
