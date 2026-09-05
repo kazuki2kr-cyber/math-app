@@ -4,25 +4,16 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
-import {
-  equalTo,
-  get,
-  limitToFirst,
-  onDisconnect,
-  orderByChild,
-  query as realtimeQuery,
-  ref,
-  serverTimestamp,
-  set,
-} from 'firebase/database';
-import { ArrowLeft, Lock, Medal, Shuffle, Swords, Trophy, Users } from 'lucide-react';
+import { limitToLast, onValue, orderByChild, query as realtimeQuery, ref, startAt } from 'firebase/database';
+import { kanjiBattleCall, kanjiBattleError, KanjiRoomListing } from '@/lib/kanjiBattle';
+import { useBattleClock } from '@/hooks/useBattleClock';
+import { ArrowLeft, Lock, Medal, Swords, Trophy, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   BATTLE_RANKS,
-  BATTLE_ROOM_TTL_MS,
   BATTLE_XP_PER_RANK,
   KANJI_BATTLE_ACCESS_PASSWORD,
   KANJI_BATTLE_ACCESS_STORAGE_KEY,
@@ -31,7 +22,6 @@ import {
 } from '@/lib/battle';
 import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
 
-const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 
 interface BattleUnit {
   id: string;
@@ -54,28 +44,7 @@ interface BattleRankingEntry {
   xp?: number;
   wins?: number;
   totalBattles?: number;
-  badges?: any[];
-}
-
-interface WaitingRoomCandidate {
-  code: string;
-  createdAtMs: number;
-}
-
-interface RoomParticipantState {
-  abandoned?: boolean;
-}
-
-function getJoinErrorMessage(err: unknown) {
-  return err instanceof Error && err.message === 'room-not-found'
-    ? '指定されたルームが見つかりません。'
-    : err instanceof Error && err.message === 'room-not-waiting'
-      ? 'このルームは現在参加できません。'
-      : err instanceof Error && err.message === 'room-full'
-        ? 'このルームは満員です。'
-        : err instanceof Error && err.message === 'no-waiting-room'
-          ? '参加できる待機中のルームがありません。'
-          : 'ルームに参加できませんでした。';
+  badges?: unknown[];
 }
 
 export default function KanjiBattlePage() {
@@ -85,7 +54,7 @@ export default function KanjiBattlePage() {
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
-  const [userData, setUserData] = useState<any>(null);
+  const [userData, setUserData] = useState<Record<string, unknown> | null>(null);
   const [season2Archive, setSeason2Archive] = useState<KanjiSeasonArchive | null>(null);
   const [battleRanking, setBattleRanking] = useState<BattleRankingEntry[]>([]);
   const [rankingLoading, setRankingLoading] = useState(false);
@@ -96,8 +65,25 @@ export default function KanjiBattlePage() {
   const [loading, setLoading] = useState(true);
   const [creatingUnitId, setCreatingUnitId] = useState<string | null>(null);
   const [joiningRoom, setJoiningRoom] = useState(false);
-  const [joiningRandomRoom, setJoiningRandomRoom] = useState(false);
-  const [roomCode, setRoomCode] = useState('');
+  const [mode, setMode] = useState<'create' | 'join' | null>(null);
+  const [listings, setListings] = useState<KanjiRoomListing[]>([]);
+  const [listingLimit, setListingLimit] = useState(30);
+  const [listingLoading, setListingLoading] = useState(false);
+  const [listingRefresh, setListingRefresh] = useState(0);
+  const createRequestRef = useRef<{ unitId: string; requestId: string } | null>(null);
+  const { nowMs, synchronized } = useBattleClock();
+
+  useEffect(() => {
+    if (mode !== 'join' || !user) return;
+    setListingLoading(true);
+    return onValue(realtimeQuery(ref(getRealtimeDb(), 'kanjiBattleRoomListings'),
+      orderByChild('listedAt'), startAt(1), limitToLast(listingLimit)), snapshot => {
+      const rows: KanjiRoomListing[] = [];
+      snapshot.forEach(child => { rows.push({ roomId: child.key!, ...child.val() }); });
+      setListings(rows.reverse());
+      setListingLoading(false);
+    }, err => { setError(kanjiBattleError(err)); setListingLoading(false); });
+  }, [mode, user, listingLimit, listingRefresh]);
   const [error, setError] = useState<string | null>(null);
   const isCreatingRoomRef = useRef(false);
   const isJoiningRoomRef = useRef(false);
@@ -214,199 +200,33 @@ export default function KanjiBattlePage() {
     setPasswordError('パスワードが違います。');
   };
 
-  const generateRoomCode = async () => {
-    const realtimeDb = getRealtimeDb();
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const code = String(Math.floor(100000 + Math.random() * 900000));
-      const roomSnap = await get(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${code}`));
-      if (!roomSnap.exists()) return code;
-    }
-    throw new Error('room-code-collision');
-  };
-
-  const createRandomRoom = () => {
-    const eligible = units.filter(u => (u.totalQuestions || 0) >= 10);
-    if (eligible.length === 0) {
-      setError('ランダム範囲で対戦できる範囲がありません。');
-      return;
-    }
-    const unit = eligible[Math.floor(Math.random() * eligible.length)];
-    createRoom({ ...unit, title: '???', category: 'ランダム範囲' });
-  };
-
   const createRoom = async (unit: BattleUnit) => {
     if (!user || isCreatingRoomRef.current) return;
     isCreatingRoomRef.current = true;
     setCreatingUnitId(unit.id);
     setError(null);
-    let navigated = false;
+    if (createRequestRef.current?.unitId !== unit.id) {
+      createRequestRef.current = { unitId: unit.id, requestId: crypto.randomUUID() };
+    }
     try {
-      const realtimeDb = getRealtimeDb();
-      const nextRoomCode = await generateRoomCode();
-      const roomRef = ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${nextRoomCode}`);
-      const now = Date.now();
-      await Promise.race([
-        set(roomRef, {
-          status: 'waiting',
-          unitId: unit.id,
-          unitTitle: unit.title,
-          subject: unit.baseSubject || unit.subject || '漢字',
-          category: unit.category || '漢字対戦',
-          questionCount: 10,
-          minPlayers: 2,
-          maxPlayers: 4,
-          hostUid: user.uid,
-          createdAt: serverTimestamp(),
-          createdAtMs: now,
-          updatedAt: serverTimestamp(),
-          expiresAt: now + BATTLE_ROOM_TTL_MS,
-          participants: {
-            [user.uid]: {
-              uid: user.uid,
-              name: user.displayName || user.email || 'Player',
-              joinedAt: serverTimestamp(),
-              connected: true,
-              ready: false,
-              questionsReady: false,
-              playReady: false,
-            },
-          },
-        }),
-        new Promise((_, reject) => {
-          window.setTimeout(() => reject(new Error('realtime-database-timeout')), 10000);
-        }),
-      ]);
-      await onDisconnect(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${nextRoomCode}/participants/${user.uid}`)).update({
-        uid: user.uid,
-        name: user.displayName || user.email || 'Player',
-        connected: false,
-        abandoned: true,
-        abandonedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      navigated = true;
-      router.push(`/yamato/battle/room/${nextRoomCode}`);
-    } catch (err) {
-      console.error('Failed to create kanji battle room:', err);
-      const message = err instanceof Error && err.message === 'realtime-database-timeout'
-        ? 'Realtime Database への接続がタイムアウトしました。設定を確認してください。'
-        : err instanceof Error && err.message === 'room-code-collision'
-          ? 'ルーム番号の生成に失敗しました。もう一度お試しください。'
-          : '対戦ルームを作成できませんでした。';
-      setError(message);
-    } finally {
-      if (!navigated) {
-        isCreatingRoomRef.current = false;
-        setCreatingUnitId(null);
-      }
-    }
+      const result = await kanjiBattleCall<{ roomId: string }>('createKanjiBattleRoom', createRequestRef.current);
+      sessionStorage.setItem('kanji-battle-current-room', result.roomId);
+      router.push('/yamato/battle/room/' + result.roomId);
+    } catch (err) { setError(kanjiBattleError(err)); }
+    finally { isCreatingRoomRef.current = false; setCreatingUnitId(null); }
   };
 
-  const joinRoomByCode = async (normalizedCode: string) => {
-    if (!user) return;
-    const realtimeDb = getRealtimeDb();
-    const roomRef = ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${normalizedCode}`);
-    const roomSnap = await get(roomRef);
-    if (!roomSnap.exists()) throw new Error('room-not-found');
-
-    const room = roomSnap.val();
-    const participants = (room?.participants || {}) as Record<string, RoomParticipantState>;
-    const activeParticipantCount = Object.values(participants).filter(participant => !participant?.abandoned).length;
-    if (room?.status !== 'waiting') throw new Error('room-not-waiting');
-    if (!participants[user.uid] && activeParticipantCount >= Number(room?.maxPlayers || 4)) throw new Error('room-full');
-
-    await set(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${normalizedCode}/participants/${user.uid}`), {
-      uid: user.uid,
-      name: user.displayName || user.email || 'Player',
-      joinedAt: serverTimestamp(),
-      connected: true,
-      abandoned: false,
-      ready: false,
-      questionsReady: false,
-      playReady: false,
-    });
-    await onDisconnect(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${normalizedCode}/participants/${user.uid}`)).update({
-      uid: user.uid,
-      name: user.displayName || user.email || 'Player',
-      connected: false,
-      abandoned: true,
-      abandonedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    router.push(`/yamato/battle/room/${normalizedCode}`);
-  };
-
-  const joinRoom = async () => {
+  const joinRoom = async (roomId: string) => {
     if (!user || isJoiningRoomRef.current) return;
-    const normalizedCode = roomCode.replace(/\D/g, '').slice(0, 6);
-    if (normalizedCode.length !== 6) {
-      setError('6桁のルーム番号を入力してください。');
-      return;
-    }
-
     isJoiningRoomRef.current = true;
     setJoiningRoom(true);
     setError(null);
     try {
-      await joinRoomByCode(normalizedCode);
-    } catch (err) {
-      console.error('Failed to join kanji battle room:', err);
-      setError(getJoinErrorMessage(err));
-    } finally {
-      isJoiningRoomRef.current = false;
-      setJoiningRoom(false);
-    }
-  };
-
-  const joinRandomRoom = async () => {
-    if (!user || isJoiningRoomRef.current) return;
-    isJoiningRoomRef.current = true;
-    setJoiningRandomRoom(true);
-    setError(null);
-    try {
-      const realtimeDb = getRealtimeDb();
-      const waitingRoomsSnap = await get(realtimeQuery(
-        ref(realtimeDb, KANJI_BATTLE_ROOM_PATH),
-        orderByChild('status'),
-        equalTo('waiting'),
-        limitToFirst(30)
-      ));
-      const candidates: WaitingRoomCandidate[] = [];
-      waitingRoomsSnap.forEach((roomSnap) => {
-        const room = roomSnap.val();
-        const participants = (room?.participants || {}) as Record<string, RoomParticipantState>;
-        const participantCount = Object.values(participants).filter(participant => !participant?.abandoned).length;
-        const maxPlayers = Number(room?.maxPlayers || 4);
-        const expiresAt = Number(room?.expiresAt || 0);
-        const isFresh = !expiresAt || expiresAt > Date.now();
-        const alreadyParticipant = !!participants[user.uid] && !participants[user.uid]?.abandoned;
-        if (isFresh && !alreadyParticipant && participantCount < maxPlayers) {
-          candidates.push({
-            code: String(roomSnap.key),
-            createdAtMs: Number(room?.createdAtMs || room?.createdAt || (expiresAt ? expiresAt - BATTLE_ROOM_TTL_MS : 0)),
-          });
-        }
-      });
-      if (candidates.length === 0) throw new Error('no-waiting-room');
-
-      const sortedCandidates = [...candidates].sort((a, b) => b.createdAtMs - a.createdAtMs || b.code.localeCompare(a.code));
-      let lastErr: unknown;
-      for (const candidate of sortedCandidates) {
-        try {
-          await joinRoomByCode(candidate.code);
-          return;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-      throw lastErr ?? new Error('no-waiting-room');
-    } catch (err) {
-      console.error('Failed to join random kanji battle room:', err);
-      setError(getJoinErrorMessage(err));
-    } finally {
-      isJoiningRoomRef.current = false;
-      setJoiningRandomRoom(false);
-    }
+      await kanjiBattleCall('joinKanjiBattleRoom', { roomId });
+      sessionStorage.setItem('kanji-battle-current-room', roomId);
+      router.push('/yamato/battle/room/' + roomId);
+    } catch (err) { setError(kanjiBattleError(err)); setListingRefresh(v => v + 1); }
+    finally { isJoiningRoomRef.current = false; setJoiningRoom(false); }
   };
 
   const loadBattleRanking = async () => {
@@ -661,45 +481,33 @@ export default function KanjiBattlePage() {
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0 space-y-6">
-          <div className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Button
-                type="button"
-                onClick={joinRandomRoom}
-                disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null}
-                className="h-14 bg-amber-500 px-4 text-sm font-bold leading-tight text-white shadow-sm hover:bg-amber-600 sm:min-w-44"
-              >
-                {joiningRandomRoom ? (
-                  '検索中...'
-                ) : (
-                  <span className="flex flex-col items-center">
-                    <span>空きのあるルームに</span>
-                    <span>おまかせで参加</span>
-                  </span>
-                )}
-              </Button>
-              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
-                <input
-                  value={roomCode}
-                  onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder="ルーム番号"
-                  className="h-14 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm font-bold tracking-widest outline-none focus:border-amber-400 sm:min-w-40"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={joinRoom}
-                  disabled={joiningRoom || joiningRandomRoom || creatingUnitId !== null || roomCode.length !== 6}
-                  className="h-14 border-amber-200 bg-white px-5 font-bold text-amber-700 hover:bg-amber-50"
-                >
-                  {joiningRoom ? '参加中...' : 'コードで参加'}
-                </Button>
-              </div>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button className="h-20 text-lg" variant={mode === 'create' ? 'default' : 'outline'} onClick={() => { setMode('create'); setError(null); }}>ルームを作る</Button>
+            <Button className="h-20 text-lg" variant={mode === 'join' ? 'default' : 'outline'} onClick={() => { setMode('join'); setError(null); }}>ルームに参加する</Button>
           </div>
+          <Button variant="ghost" onClick={() => {
+            const id = sessionStorage.getItem('kanji-battle-current-room');
+            if (id) router.push('/yamato/battle/room/' + id);
+            else setError('参加中のルームはありません。');
+          }}>参加中のルームに戻る</Button>
+          {mode === 'join' && (
+            <section aria-label="参加できるルーム" className="space-y-3">
+              <div className="flex justify-between items-center"><h2 className="text-lg font-bold">参加できるルーム</h2>
+                <Button variant="outline" onClick={() => setListingRefresh(v => v + 1)}>再読み込み</Button></div>
+              {listingLoading || !synchronized ? <p role="status">ルームを読み込んでいます…</p> : (
+                <>
+                  {listings.filter(r => r.expiresAt > nowMs).length === 0 && <p>参加できるルームはありません。「ルームを作る」から募集できます。</p>}
+                  {listings.filter(r => r.expiresAt > nowMs).map(r => (
+                    <Card key={r.roomId}><CardHeader><CardTitle>{r.hostName} さんのルーム</CardTitle></CardHeader>
+                      <CardContent><p>{r.unitTitle}</p><p className="mt-2 font-bold">{r.participantCount}/{r.maxPlayers}人</p></CardContent>
+                      <CardFooter><Button disabled={joiningRoom} onClick={() => joinRoom(r.roomId)}>{joiningRoom ? '参加中…' : 'このルームに参加'}</Button></CardFooter>
+                    </Card>
+                  ))}
+                  {listings.length >= listingLimit && <Button variant="outline" onClick={() => setListingLimit(v => v + 30)}>さらに表示</Button>}
+                </>
+              )}
+            </section>
+          )}
 
           {false && (
           <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
@@ -737,7 +545,7 @@ export default function KanjiBattlePage() {
           </div>
         )}
 
-        {loading ? (
+        {mode === 'create' && (loading ? (
           <div className="flex justify-center py-20">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
           </div>
@@ -781,40 +589,9 @@ export default function KanjiBattlePage() {
                 </Card>
               );
             })}
-            {/* ランダム単元カード */}
-            {units.filter(u => (u.totalQuestions || 0) >= 10).length > 0 && (
-              <Card className="flex flex-col overflow-hidden border-dashed border-amber-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-amber-400 hover:shadow-lg">
-                <CardHeader className="border-b bg-amber-50/60">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
-                    漢字対戦 / ランダム
-                  </div>
-                  <CardTitle className="flex items-center gap-2 text-lg font-black leading-tight text-gray-900">
-                    <Shuffle className="h-5 w-5 text-amber-500" />
-                    ランダム範囲で対戦
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 p-5">
-                  <div className="flex items-center gap-2 text-sm font-bold text-gray-600">
-                    <Users className="h-4 w-4 text-amber-500" />
-                    2〜4人 / 10問
-                  </div>
-                  <div className="mt-3 text-xs font-semibold text-muted-foreground">
-                    出題範囲をランダムに選んで対戦を始めます。
-                  </div>
-                </CardContent>
-                <CardFooter className="p-5 pt-0">
-                  <Button
-                    className="w-full bg-amber-500 font-bold text-white shadow-sm hover:bg-amber-600"
-                    disabled={creatingUnitId !== null}
-                    onClick={createRandomRoom}
-                  >
-                    {creatingUnitId !== null ? '作成中...' : 'ランダムでルーム作成'}
-                  </Button>
-                </CardFooter>
-              </Card>
-            )}
+
           </div>
-        )}
+        ))}
           </div>
 
           <aside className="space-y-6 lg:sticky lg:top-6">

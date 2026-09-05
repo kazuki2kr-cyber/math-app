@@ -2,7 +2,10 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { updateLearningReviewStats } from "./learningReview";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
+import { ServerValue } from "firebase-admin/database";
 import { extractJsonObject } from "./writtenGradingJson";
+import { mutateKanjiRoom } from "./kanjiBattle";
+import { member as kanjiMember, touch as touchKanjiRoom } from "./kanjiBattleState";
 import {
   decideWrittenAttemptFinalization,
   decideWrittenAttemptReservation,
@@ -237,6 +240,7 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
 export * from "./kanji";
 export * from "./analyticsAggregation";
 export * from "./cleanup";
+export * from "./kanjiBattle";
 export * from "./pushNotifications";
 
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
@@ -953,6 +957,20 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
     };
   });
 
+  if (room.schemaVersion === 2) {
+    await mutateKanjiRoom(roomId, current => {
+      const p = kanjiMember(current, callerUid);
+      if (current.matchId !== room.matchId) throw new functions.https.HttpsError("failed-precondition", "Battle changed.");
+      const ids = questions.map(q => q.id);
+      if (current.questionIds && JSON.stringify(current.questionIds) !== JSON.stringify(ids)) {
+        throw new functions.https.HttpsError("failed-precondition", "問題が変更されました。ルームを作り直してください。");
+      }
+      if (p.questionsReady) return current;
+      current.questionIds = ids;
+      p.questionsReady = true;
+      return touchKanjiRoom(current, Date.now());
+    });
+  }
   return { questions };
 });
 
@@ -1059,11 +1077,11 @@ export const submitKanjiBattleOcr = functions
 
     // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）
     const responseMsPromises = questionIds.map((_, qi) =>
-      realtimeDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/${qi}/${callerUid}/responseMs`).get()
+      realtimeDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/${qi}/${callerUid}`).get()
     );
     const responseMsSnaps = await Promise.all(responseMsPromises);
     const responseMsMap: number[] = responseMsSnaps.map((snap) =>
-      clampBattleResponseMs(snap.exists() ? snap.val() : null)
+      clampBattleResponseMs(snap.exists() && (room.schemaVersion !== 2 || snap.val()?.serverVerified === true) ? snap.val()?.responseMs : null)
     );
 
     // 7. 問題ごとのスコア計算
@@ -1072,6 +1090,8 @@ export const submitKanjiBattleOcr = functions
     let totalTimeMs = 0;
     const questionResults = ocrResults.map((result, qi) => {
       const responseMs = responseMsMap[qi] ?? BATTLE_ANSWER_LIMIT_MS;
+      const accepted = room.schemaVersion !== 2 || responseMsSnaps[qi]?.val()?.serverVerified === true;
+      result.isCorrect = result.isCorrect && accepted;
       const baseScore = result.isCorrect ? BATTLE_BASE_SCORE : 0;
       const speedBonus = result.isCorrect ? calculateBattleSpeedBonus(responseMs) : 0;
       const questionScore = baseScore + speedBonus;
@@ -1100,7 +1120,7 @@ export const submitKanjiBattleOcr = functions
       totalQuestions: BATTLE_QUESTION_COUNT,
       totalTimeMs,
       questionResults,
-      submittedAt: admin.database.ServerValue.TIMESTAMP,
+      submittedAt: ServerValue.TIMESTAMP,
     });
 
     // 9. べき等マーカーを Firestore に書き込む
@@ -1167,8 +1187,8 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       status: "cancelled",
       phase: "completed",
       cancellationReason: "not-enough-participants",
-      cancelledAt: admin.database.ServerValue.TIMESTAMP,
-      updatedAt: admin.database.ServerValue.TIMESTAMP,
+      cancelledAt: ServerValue.TIMESTAMP,
+      updatedAt: ServerValue.TIMESTAMP,
     });
     return { success: true, cancelled: true, reason: "not-enough-participants" };
   }
@@ -1198,7 +1218,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
         totalQuestions: BATTLE_QUESTION_COUNT,
         totalTimeMs: BATTLE_ANSWER_LIMIT_MS * BATTLE_QUESTION_COUNT,
         abandoned: true,
-        finishedAt: admin.database.ServerValue.TIMESTAMP,
+        finishedAt: ServerValue.TIMESTAMP,
       };
     }
     return {
@@ -1209,7 +1229,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
       totalQuestions: BATTLE_QUESTION_COUNT,
       totalTimeMs: Number(ps.totalTimeMs || 0),
       abandoned: false,
-      finishedAt: admin.database.ServerValue.TIMESTAMP,
+      finishedAt: ServerValue.TIMESTAMP,
     };
   }).sort((a, b) => {
     if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
@@ -1318,7 +1338,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
 
   await roomRef.update({
     results: finalizeResult.results,
-    finalizedAt: admin.database.ServerValue.TIMESTAMP,
+    finalizedAt: ServerValue.TIMESTAMP,
     finalizedBy: callerUid,
   });
 

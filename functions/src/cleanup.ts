@@ -91,9 +91,10 @@ export const cleanupRetentionData = functions
       "suspicious_activities"
     );
 
-    const [deletedKanjiBattleRooms, deletedBattleRooms] = await Promise.all([
+    const [deletedKanjiBattleRooms, deletedBattleRooms, deletedKanjiBattleListings] = await Promise.all([
       deleteExpiredRtdbRooms("kanjiBattleRooms"),
       deleteExpiredRtdbRooms("battleRooms"),
+      deleteExpiredRtdbRooms("kanjiBattleRoomListings"),
     ]);
 
     functions.logger.info("[cleanupRetentionData] completed", {
@@ -102,6 +103,7 @@ export const cleanupRetentionData = functions
       deletedSuspiciousActivities,
       deletedKanjiBattleRooms,
       deletedBattleRooms,
+      deletedKanjiBattleListings,
       retention: RETENTION,
     });
 

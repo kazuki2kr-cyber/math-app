@@ -180,3 +180,13 @@ Firebase CLI は `.firebaserc` に既定プロジェクトが入っていない�
 - 成績・XP・ランキング・分析イベントなど信頼境界内の書き込みは原則 Cloud Functions 経由
 - 数学ドリルのスコアは Functions 側で再計算する。`standard` / `wrong` は正解1問あたり10点、`all` は正答率ベース。復習モードも解いた問題数ぶんだけスコア・XP・集計に反映する
 - `firestore.rules` を変更した場合は、関連テスト追加と `npm run test:security` を必須とする
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

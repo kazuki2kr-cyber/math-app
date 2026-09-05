@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { onDisconnect, onValue, ref, serverTimestamp, set, update } from 'firebase/database';
+import { onValue, ref } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Clock, Eraser, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,10 +15,12 @@ import {
   BATTLE_NEXT_QUESTION_COUNTDOWN_MS,
   BATTLE_QUESTION_COUNT,
 } from '@/lib/battle';
+import { useBattleClock } from '@/hooks/useBattleClock';
+import { canAnswerKanji, kanjiBattleCall, kanjiBattleError } from '@/lib/kanjiBattle';
 import { buildOcrPayload, getExpectedCharCount, OcrQuestionLayout } from '@/lib/kanjiOcr';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
-const QUESTION_CACHE_PREFIX = 'kanji_battle_questions';
+const QUESTION_CACHE_PREFIX = 'kanji_battle_questions:v2';
 const FINALIZE_RETRY_MAX = 5;
 const FINALIZE_RETRY_BASE_MS = 2000;
 const FINALIZE_RETRY_MAX_DELAY_MS = 30000;
@@ -36,6 +38,10 @@ interface AnswerRecord {
 }
 
 interface BattleRoom {
+  schemaVersion?: number;
+  matchId?: string;
+  version?: number;
+  phaseDeadlineMs?: number;
   status?: 'waiting' | 'active' | 'completed' | 'cancelled';
   phase?: 'loading' | 'answering' | 'countdown' | 'completed';
   currentQuestionIndex?: number;
@@ -75,8 +81,15 @@ export default function KanjiBattlePlayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasStrokes, setHasStrokes] = useState(false);
-  const [handwritingDataUrls, setHandwritingDataUrls] = useState<Record<string, string>>({});
-  const [nowMs, setNowMs] = useState(Date.now());
+  const handwritingRef = useRef<Record<string, string>>({});
+  const { nowMs, synchronized } = useBattleClock();
+  const advanceAtRef = useRef(0);
+  const readyRequestedRef = useRef(false);
+  const imageStorageKey = 'kanji-battle-ink:v2:' + roomId + ':' + user?.uid;
+  useEffect(() => {
+    try { handwritingRef.current = JSON.parse(sessionStorage.getItem(imageStorageKey) || '{}'); }
+    catch { handwritingRef.current = {}; }
+  }, [imageStorageKey]);
   const [submitting, setSubmitting] = useState(false);
   const [ocrSubmitting, setOcrSubmitting] = useState(false);
   const [ocrSubmitted, setOcrSubmitted] = useState(false);
@@ -93,10 +106,6 @@ export default function KanjiBattlePlayPage() {
   const ocrSubmittingRef = useRef(false);
   const ocrRetryCountRef = useRef(0);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -105,38 +114,22 @@ export default function KanjiBattlePlayPage() {
   }, []);
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !user) return;
     const realtimeDb = getRealtimeDb();
     const roomRef = ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
       const nextRoom = snapshot.exists() ? snapshot.val() : null;
       setRoom(nextRoom);
+      if (nextRoom && nextRoom.schemaVersion !== 2) setError('画面を更新して新しいルームを作成してください。');
       if (nextRoom?.status === 'waiting') router.replace(`/yamato/battle/room/${roomId}`);
       if (nextRoom?.status === 'cancelled') router.replace('/yamato/battle');
       if (nextRoom?.finalizedAt && !redirectedToResultRef.current) {
         redirectedToResultRef.current = true;
         router.replace(`/yamato/battle/room/${roomId}/result`);
       }
-    });
+    }, () => setError('ルームへのアクセスに失敗しました。一覧から参加してください。'));
     return () => unsubscribe();
-  }, [roomId, router]);
-
-  useEffect(() => {
-    if (!roomId || !user) return;
-    const realtimeDb = getRealtimeDb();
-    const disconnectAction = onDisconnect(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/participants/${user.uid}`));
-    disconnectAction.update({
-      uid: user.uid,
-      name: user.displayName || user.email || 'Player',
-      connected: false,
-      abandoned: true,
-      abandonedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    return () => {
-      disconnectAction.cancel();
-    };
-  }, [roomId, user]);
+  }, [roomId, router, user]);
 
   useEffect(() => {
     async function fetchQuestions() {
@@ -169,7 +162,7 @@ export default function KanjiBattlePlayPage() {
     }
 
     fetchQuestions();
-  }, [room?.unitId, roomId, user?.uid]);
+  }, [room?.unitId, roomId, user]);
 
   const currentQuestionIndex = Math.min(Number(room?.currentQuestionIndex || 0), Math.max(0, questions.length - 1));
   const currentQuestion = questions[currentQuestionIndex];
@@ -180,8 +173,6 @@ export default function KanjiBattlePlayPage() {
   );
   const questionAnswers = room?.questionAnswers?.[String(currentQuestionIndex)] || {};
   const myAnswer = user ? questionAnswers[user.uid] : undefined;
-  const coordinatorUid = activeParticipantIds[0] || null;
-  const isCoordinator = !!user && user.uid === coordinatorUid;
   const questionStartedAtMs = Number(room?.questionStartedAtMs || nowMs);
   const countdownStartedAtMs = Number(room?.countdownStartedAtMs || nowMs);
   const elapsedMs = room?.phase === 'answering' ? clampResponseMs(nowMs - questionStartedAtMs) : 0;
@@ -196,140 +187,86 @@ export default function KanjiBattlePlayPage() {
     ? currentQuestion.answer.trim()
     : '';
 
-  useEffect(() => {
-    async function markPlayReady() {
-      if (!user || !room || room.status !== 'active' || !questions.length || room.participants?.[user.uid]?.playReady || room.participants?.[user.uid]?.abandoned) return;
-      const realtimeDb = getRealtimeDb();
-      await update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/participants/${user.uid}`), {
-        uid: user.uid,
-        name: user.displayName || user.email || room.participants?.[user.uid]?.name || 'Player',
-        connected: true,
-        playReady: true,
-      });
-    }
+  const answerWindow = room?.schemaVersion === 2 && canAnswerKanji(room, nowMs, synchronized);
+  const inputEnabled = answerWindow && !myAnswer && !submitting && !!user && !!room?.participants?.[user.uid] && !room.participants[user.uid].abandoned;
 
-    markPlayReady();
-  }, [questions.length, room, roomId, user]);
+  const captureInk = (questionId: string) => {
+    // A remounted, empty canvas must not replace an already captured answer.
+    const dataURL = canvasRef.current?.hasStrokes() ? canvasRef.current.toDataURL() : null;
+    if (dataURL) handwritingRef.current[questionId] = dataURL;
+    try { sessionStorage.setItem(imageStorageKey, JSON.stringify(handwritingRef.current)); }
+    catch { setError('手書きの一時保存に失敗しました。この画面を閉じずに対戦を続けてください。'); }
+  };
+
+  useLayoutEffect(() => {
+    const questionId = currentQuestion?.id;
+    if (!questionId) return;
+    // Capture the outgoing canvas before React removes it (including question 10).
+    return () => { captureInk(questionId); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestion?.id]);
+
+  useEffect(() => {
+    if (!answerWindow && currentQuestion) captureInk(currentQuestion.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerWindow, currentQuestion?.id]);
 
   useEffect(() => {
     if (lastQuestionIndexRef.current === currentQuestionIndex) return;
     lastQuestionIndexRef.current = currentQuestionIndex;
     setHasStrokes(false);
-    setTimeout(() => canvasRef.current?.clear(), 0);
+    canvasRef.current?.clear();
   }, [currentQuestionIndex]);
 
-  const writeAnswer = async (timedOut = false) => {
-    if (answerSubmittingRef.current || !user || !currentQuestion || myAnswer || !room || room.participants?.[user.uid]?.abandoned || !['answering', 'countdown'].includes(String(room.phase))) return;
+  useEffect(() => {
+    if (!user || !room || room.phase !== 'loading' || !questions.length || !room.participants?.[user.uid] || room.participants[user.uid].playReady || readyRequestedRef.current) return;
+    readyRequestedRef.current = true;
+    void kanjiBattleCall('readyKanjiBattleRoom', { roomId, playReady: true }).catch(err => {
+      readyRequestedRef.current = false;
+      setError(kanjiBattleError(err));
+    });
+  }, [questions.length, room, roomId, user]);
+
+  const writeAnswer = async () => {
+    if (answerSubmittingRef.current || !inputEnabled || !user || !currentQuestion || !room) return;
     answerSubmittingRef.current = true;
     setSubmitting(true);
+    const index = currentQuestionIndex;
+    captureInk(currentQuestion.id);
     try {
-      // キャンバスの内容をキャプチャしてローカル保存（後でOCRペイロードに使用）
-      const dataURL = canvasRef.current?.toDataURL() || '';
-      if (dataURL) {
-        setHandwritingDataUrls(prev => ({ ...prev, [currentQuestion.id]: dataURL }));
-      }
-      const safeResponseMs = clampResponseMs(Date.now() - questionStartedAtMs);
-      const realtimeDb = getRealtimeDb();
-      await set(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/questionAnswers/${currentQuestionIndex}/${user.uid}`), {
-        uid: user.uid,
-        questionId: currentQuestion.id,
-        responseMs: safeResponseMs,
-        answeredAtMs: Date.now(),
-        submitted: true,
-        timedOut,
+      await kanjiBattleCall('submitKanjiBattleAnswer', {
+        roomId, matchId: room.matchId, questionIndex: index, questionId: currentQuestion.id,
       });
-    } finally {
-      answerSubmittingRef.current = false;
-      setSubmitting(false);
-    }
+    } catch (err) { setError(kanjiBattleError(err)); }
+    finally { answerSubmittingRef.current = false; setSubmitting(false); }
   };
 
   const leaveBattle = async () => {
-    if (user && room?.status === 'active' && room.participants?.[user.uid]) {
-      const realtimeDb = getRealtimeDb();
-      await update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}/participants/${user.uid}`), {
-        uid: user.uid,
-        name: user.displayName || user.email || room.participants[user.uid]?.name || 'Player',
-        connected: false,
-        abandoned: true,
-        abandonedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-    router.push('/yamato/battle');
+    try {
+      await kanjiBattleCall('leaveKanjiBattleRoom', { roomId });
+      sessionStorage.removeItem('kanji-battle-current-room');
+      router.push('/yamato/battle');
+    } catch (err) { setError(kanjiBattleError(err)); }
   };
 
-  // タイムアウト or countdown 移行時に自動送信
   useEffect(() => {
-    if (!currentQuestion || !user || myAnswer || room?.phase !== 'answering') return;
-    if (remainingMs <= 0) writeAnswer(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentQuestion, myAnswer, remainingMs, room?.phase, user]);
-
-  useEffect(() => {
-    if (!currentQuestion || !user || myAnswer || room?.phase !== 'countdown') return;
-    writeAnswer(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentQuestion, myAnswer, room?.phase, user]);
-
-  // コーディネーターのフェーズ管理
-  useEffect(() => {
-    if (!isCoordinator || !room || !questions.length || room.status !== 'active') return;
-    const realtimeDb = getRealtimeDb();
-    const allPlayReady = activeParticipantIds.length > 0 && activeParticipantIds.every(uid => !!room.participants?.[uid]?.playReady);
-    if (room.phase === 'loading' && allPlayReady) {
-      update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`), {
-        phase: 'answering',
-        questionStartedAtMs: Date.now() + 3000,
-        updatedAt: serverTimestamp(),
-      });
-      return;
-    }
-    if (room.phase === 'loading') return;
-    const allAnswered = activeParticipantIds.length > 0 && activeParticipantIds.every(uid => !!questionAnswers[uid]);
-    const timeUp = remainingMs <= 0;
-
-    if (room.phase === 'answering' && (allAnswered || timeUp)) {
-      update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`), {
-        phase: 'countdown',
-        countdownStartedAtMs: Date.now(),
-        updatedAt: serverTimestamp(),
-      });
-      return;
-    }
-
-    if (room.phase === 'countdown' && countdownRemainingMs <= 0) {
-      if (currentQuestionIndex >= questions.length - 1) {
-        update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`), {
-          status: 'completed',
-          phase: 'completed',
-          completedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        update(ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`), {
-          currentQuestionIndex: currentQuestionIndex + 1,
-          phase: 'answering',
-          questionStartedAtMs: Date.now() + 1000,
-          countdownStartedAtMs: null,
-          updatedAt: serverTimestamp(),
-        });
-      }
-    }
-  }, [activeParticipantIds, countdownRemainingMs, currentQuestionIndex, isCoordinator, questionAnswers, questions.length, remainingMs, room, roomId]);
+    if (!room || !user || !room.participants?.[user.uid] || room.participants[user.uid].abandoned || !synchronized || !room.phaseDeadlineMs || nowMs < room.phaseDeadlineMs || nowMs < advanceAtRef.current) return;
+    advanceAtRef.current = nowMs + 2000;
+    void kanjiBattleCall('advanceKanjiBattleRoom', { roomId, matchId: room.matchId, version: room.version }).catch(err => setError(kanjiBattleError(err)));
+  }, [room, user, roomId, nowMs, synchronized]);
 
   // 対戦完了後: 手書き画像を一括OCR送信
   useEffect(() => {
     async function submitOcr() {
       if (!user || !room || room.status !== 'completed' || ocrSubmittingRef.current || ocrSubmitted) return;
-      if (!questions.length) return;
+      if (!questions.length || !room.participants?.[user.uid] || room.participants[user.uid].abandoned) return;
       ocrSubmittingRef.current = true;
       setOcrSubmitting(true);
       setOcrError(null);
       try {
         const { composedImageBase64, layout } = await buildOcrPayload(
           questions.map(q => ({ id: q.id, expectedCharCount: q.expectedCharCount })),
-          handwritingDataUrls
+          handwritingRef.current
         );
         const submitOcrFn = httpsCallable<
           { roomId: string; composedImageBase64: string; layout: OcrQuestionLayout[]; questionIds: string[] },
@@ -369,10 +306,10 @@ export default function KanjiBattlePlayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ocrSubmitted, ocrSubmitting, room?.status, questions.length]);
 
-  // コーディネーター: playerScores が揃ったら finalizeKanjiBattleRoom を呼ぶ
+  // Any remaining participant can finalize; the server transaction is idempotent.
   useEffect(() => {
     async function finalizeIfReady() {
-      if (!isCoordinator || !user || !room || room.status !== 'completed' || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
+      if (!user || !room || !room.participants?.[user.uid] || room.status !== 'completed' || room.finalizedAt || finalizing || finalizeRequestedRef.current) return;
       const activeNonAbandoned = activeParticipantIds.filter(uid => !room.participants?.[uid]?.abandoned);
       if (activeNonAbandoned.length === 0) return;
 
@@ -415,7 +352,7 @@ export default function KanjiBattlePlayPage() {
     }
 
     finalizeIfReady();
-  }, [activeParticipantIds, finalizing, isCoordinator, nowMs, room, roomId, user]);
+  }, [activeParticipantIds, finalizing, nowMs, room, roomId, user]);
 
   const questionProgressPercent = (currentQuestionIndex / Math.max(1, questions.length)) * 100;
   const timerProgressPercent = room?.phase === 'countdown'
@@ -468,7 +405,7 @@ export default function KanjiBattlePlayPage() {
                   : 'border-primary/20 bg-primary/10 text-primary'
           }`}>
             <Clock className="w-5 h-5 mr-2" />
-            {room?.phase === 'loading'
+            {!synchronized ? '同期中' : room?.phase === 'loading'
               ? '準備中'
               : inBuffer
                 ? `スタート ${Math.ceil((questionStartedAtMs - nowMs) / 1000)}`
@@ -488,13 +425,20 @@ export default function KanjiBattlePlayPage() {
           </div>
         )}
 
+        {room && room.phase !== 'loading' && !answerWindow && (
+          <div role="status" className="rounded-2xl border border-amber-100 bg-white p-10 text-center">
+            {!synchronized ? '接続・時刻を確認しています…' : inBuffer
+              ? 'まもなく問題を表示します'
+              : room.phase === 'countdown' ? '次の問題を準備しています' : '回答受付を終了しました'}
+          </div>
+        )}
         {loading || !currentQuestion || room?.phase === 'loading' ? (
           <div className="flex justify-center py-20">
             <div className="flex flex-col items-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
               <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
               <div>
                 <h1 className="text-lg font-black text-gray-900">1問目を準備しています</h1>
-                <p className="mt-1 text-sm font-bold text-muted-foreground">全員の表示準備ができると30秒カウントが始まります。</p>
+                <p className="mt-1 text-sm font-bold text-muted-foreground">全員の準備後、3秒のカウントダウンで問題を表示します。</p>
               </div>
             </div>
           </div>
@@ -503,7 +447,7 @@ export default function KanjiBattlePlayPage() {
             ルームが見つかりません。
           </div>
         ) : (
-          <Card className="shadow-2xl border-0 overflow-hidden bg-white/95 backdrop-blur-sm">
+          <Card hidden={!answerWindow} style={!answerWindow ? { display: 'none' } : undefined} className="shadow-2xl border-0 overflow-hidden bg-white/95 backdrop-blur-sm">
             <div className="h-2 w-full bg-primary/80" />
             <CardHeader className="px-8 pt-8 pb-4">
               <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
@@ -532,6 +476,7 @@ export default function KanjiBattlePlayPage() {
             <CardContent className="px-8 pb-4">
               {currentQuestion.image_url && (
                 <div className="mb-6 bg-gray-50 p-6 rounded-xl flex justify-center border shadow-inner">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- worksheet images retain their original aspect ratio */}
                   <img src={currentQuestion.image_url} alt="問題画像" className="max-h-60 object-contain rounded-md shadow-sm mix-blend-multiply" />
                 </div>
               )}
@@ -559,7 +504,9 @@ export default function KanjiBattlePlayPage() {
                     })}
                   </div>
                   <HandwritingCanvas
+                    key={currentQuestion.id}
                     ref={canvasRef}
+                    readOnly={!inputEnabled}
                     onChange={setHasStrokes}
                     strokeWidth={8}
                     strokeColor="#1a1a1a"
@@ -578,7 +525,7 @@ export default function KanjiBattlePlayPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={!!myAnswer}
+                    disabled={!inputEnabled}
                     onClick={() => canvasRef.current?.undo()}
                     className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
                   >
@@ -588,7 +535,7 @@ export default function KanjiBattlePlayPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={!!myAnswer}
+                    disabled={!inputEnabled}
                     onClick={() => { canvasRef.current?.clear(); setHasStrokes(false); }}
                     className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
                   >
@@ -609,8 +556,8 @@ export default function KanjiBattlePlayPage() {
                   : '書き終えたら「回答する」を押してください。'}
               </div>
               <Button
-                onClick={() => writeAnswer(false)}
-                disabled={!hasStrokes || !!myAnswer || room.phase !== 'answering' || inBuffer || submitting}
+                onClick={() => writeAnswer()}
+                disabled={!hasStrokes || !inputEnabled}
                 size="lg"
                 className="h-14 px-10 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5"
               >

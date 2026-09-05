@@ -17,6 +17,8 @@
     "test:jest": "jest",
     "test:security": "node scripts/run-security-tests.js",
     "test:security:jest": "jest tests/firestore.rules.spec.ts",
+    "test:kanji-battle": "node scripts/run-kanji-battle-tests.js",
+    "test:kanji-battle:e2e": "node scripts/run-kanji-battle-tests.js --e2e",
     "test:e2e": "playwright test",
     "test:e2e:emu": "node scripts/run-e2e-emu.js",
     "backfill:kanji-battle-leaderboard": "node scripts/backfill-kanji-battle-leaderboard.js",
