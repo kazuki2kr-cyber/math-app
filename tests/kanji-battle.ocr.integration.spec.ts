@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { execFileSync } from 'child_process';
 
 // Vision itself is an external paid API. Everything after its response (layout,
 // grading, trusted response times, RTDB, Firestore and XP) runs for real locally.
@@ -88,6 +89,61 @@ test('OCR grading uses server answers, rejects unverified time, and finalizes XP
   expect(second?.kanjiBattleStats).toEqual(first?.kanjiBattleStats);
   expect((await rr.child('finalizedAt').get()).exists()).toBe(true);
   expect(Object.keys((await rr.child('results').get()).val())).toHaveLength(2);
+});
+
+test('all-unit pool pins ten unique copies across replacement, retries, participants and OCR', async () => {
+  const db = admin.firestore();
+  const sourceBefore = (await db.doc('units/ocr-battle-test').get()).data();
+  const version = randomUUID();
+  const batch = db.batch();
+  for (let i = 0; i < 25; i++) batch.set(db.doc(`kanji_battle_pools/${version}/questions/${i}`), {
+    question_text: `問題${i}`, answer: '山', sourceUnitId: 'original', sourceQuestionId: String(i),
+  });
+  batch.set(db.doc('kanji_battle_pools/active'), { version, count: 25 });
+  await batch.commit();
+  const requestId = randomUUID();
+  const id = (await run('createKanjiBattleRoom', { unitId: 'kanji-all-random', requestId }, uids[0])).roomId;
+  extraRooms.push(id);
+  const first = await run('getKanjiBattleQuestions', { roomId: id }, uids[0]);
+  expect(first.questions).toHaveLength(10);
+  expect(new Set(first.questions.map((q: any) => q.id)).size).toBe(10);
+  expect(first.questions.every((q: any) => q.answer === undefined && q.sourceUnitId === undefined)).toBe(true);
+  await expect(run('getKanjiBattleQuestions', { roomId: id }, uids[1])).rejects.toThrow();
+  await db.doc('kanji_battle_pools/active').set({ version: randomUUID(), count: 30 });
+  expect((await run('createKanjiBattleRoom', { unitId: 'kanji-all-random', requestId }, uids[0])).roomId).toBe(id);
+  await run('joinKanjiBattleRoom', { roomId: id }, uids[1]);
+  expect(await run('getKanjiBattleQuestions', { roomId: id }, uids[1])).toEqual(first);
+  const rr = admin.database().ref(`kanjiBattleRooms/${id}`);
+  const room = (await rr.get()).val();
+  expect(room.poolVersion).toBe(version);
+  const questionAnswers = Object.fromEntries(room.questionIds.map((questionId: string, i: number) => [i, {
+    [uids[0]]: { uid: uids[0], questionId, responseMs: 5000, serverVerified: true, submitted: true, timedOut: false, answeredAtMs: Date.now() },
+  }]));
+  await rr.update({ status: 'completed', phase: 'completed', completedAt: Date.now(), questionAnswers });
+  const layout = room.questionIds.map((questionId: string, i: number) => ({ questionId, x: 0, y: i / 10, width: 1, height: 0.1,
+    expectedCharCount: 1, slots: [{ index: 0, x: 0, y: i / 10, width: 1, height: 0.1 }],
+  }));
+  mockVision.mockResolvedValue([{ fullTextAnnotation: { pages: [] } }]);
+  const payload = { roomId: id, questionIds: room.questionIds, composedImageBase64: 'ZmFrZQ==', layout };
+  await expect(run('submitKanjiBattleOcr', { ...payload, questionIds: [...room.questionIds].reverse() }, uids[0])).rejects.toThrow();
+  await run('submitKanjiBattleOcr', payload, uids[0]);
+  expect((await rr.child(`playerScores/${uids[0]}`).get()).exists()).toBe(true);
+  expect((await db.doc('units/ocr-battle-test').get()).data()).toEqual(sourceBefore);
+  await db.doc('kanji_battle_pools/active').set({ version, count: 9 });
+  await expect(run('createKanjiBattleRoom', { unitId: 'kanji-all-random', requestId: randomUUID() }, uids[0])).rejects.toThrow();
+});
+
+test('pool publisher verifies all copies and leaves source units unchanged', async () => {
+  const { readSource } = require('../scripts/build-kanji-battle-pool');
+  const before = await readSource(admin.firestore());
+  execFileSync(process.execPath, ['scripts/build-kanji-battle-pool.js', '--apply'], { env: process.env });
+  const active = (await admin.firestore().doc('kanji_battle_pools/active').get()).data()!;
+  expect(active.count).toBe(before.questions.length);
+  expect(active.sourceFingerprint).toBe(before.hash);
+  expect((await readSource(admin.firestore())).hash).toBe(before.hash);
+  const copy = await admin.firestore().collection(`kanji_battle_pools/${active.version}/questions`).get();
+  expect(copy.size).toBe(before.questions.length);
+  for (const q of copy.docs) expect(q.data()).toEqual(before.questions[Number(q.id)]);
 });
 
 test('listing projection does not reopen a closed room when old events are replayed', async () => {

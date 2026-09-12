@@ -27,6 +27,14 @@ beforeEach(async () => {
 });
 
 describe('Firestore Security Rules', () => {
+  test('全単元セットの本文・正解と有効版はクライアントから読み書きできない', async () => {
+    for (const context of [testEnv.unauthenticatedContext(), testEnv.authenticatedContext('student', { email: 'student@shibaurafzk.com' }), testEnv.authenticatedContext('admin-pool', { admin: true })]) {
+      for (const path of ['kanji_battle_pools/active', 'kanji_battle_pools/version/questions/0']) {
+        await expect(getDoc(doc(context.firestore(), path))).rejects.toThrow();
+        await expect(setDoc(doc(context.firestore(), path), { answer: '山' })).rejects.toThrow();
+      }
+    }
+  });
   const aliceId = 'alice';
   const bobId = 'bob';
   const adminId = 'admin';

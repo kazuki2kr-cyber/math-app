@@ -2,6 +2,7 @@ import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { getFunctions } from 'firebase-admin/functions';
 import { createHash } from 'crypto';
+import { ALL_KANJI_UNIT_ID, selectPoolQuestions } from './kanjiBattlePool';
 import { answer, advance, BattleStateError, DISCONNECT_GRACE_MS, join, KanjiRoom, leave, member, members, ROOM_TTL_MS, start, touch } from './kanjiBattleState';
 
 type Room = KanjiRoom & { presence?: Record<string, Record<string, { connected: boolean; at: number }>> };
@@ -56,7 +57,9 @@ export const createKanjiBattleRoom = region.https.onCall(async (data, context) =
   if (typeof data?.requestId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(data.requestId) || typeof data?.unitId !== 'string' || !/^[^/.#$\[\]]{1,120}$/.test(data.unitId)) {
     throw new functions.https.HttpsError('invalid-argument', '作成情報が不正です。');
   }
-  const unit = (await admin.firestore().doc(`units/${data.unitId}`).get()).data();
+  const pool = data.unitId === ALL_KANJI_UNIT_ID ? await selectPoolQuestions() : undefined;
+  const unit = pool ? { title: '全単元出題（ランダム10問）', subject: 'kanji', baseSubject: '漢字', questions: Array(10) }
+    : (await admin.firestore().doc(`units/${data.unitId}`).get()).data();
   if (!unit || ![unit.subject, unit.baseSubject].some(s => s === 'kanji' || s === '漢字')) throw new functions.https.HttpsError('failed-precondition', '漢字単元を選択してください。');
   const questionCount = Array.isArray(unit.questions) && unit.questions.length
     ? unit.questions.length : (await admin.firestore().collection(`units/${data.unitId}/questions`).limit(10).get()).size;
@@ -74,6 +77,7 @@ export const createKanjiBattleRoom = region.https.onCall(async (data, context) =
       if (existing) return undefined;
       return {
         schemaVersion: 2, matchId, unitId: data.unitId, unitTitle: String(unit.title || '漢字').slice(0, 120),
+        ...(pool || {}),
         hostUid: uid, status: 'waiting', phase: 'waiting', version: 1,
         createdAt: now, updatedAt: now, expiresAt: now + ROOM_TTL_MS,
         minPlayers: 2, maxPlayers: 4, questionCount: 10, currentQuestionIndex: 0,

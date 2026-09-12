@@ -5,6 +5,7 @@ import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { ServerValue } from "firebase-admin/database";
 import { extractJsonObject } from "./writtenGradingJson";
 import { mutateKanjiRoom } from "./kanjiBattle";
+import { ALL_KANJI_UNIT_ID, loadPoolQuestions } from "./kanjiBattlePool";
 import { member as kanjiMember, touch as touchKanjiRoom } from "./kanjiBattleState";
 import {
   decideWrittenAttemptFinalization,
@@ -892,6 +893,16 @@ export const finalizeBattleRoom = functions.region("us-central1").https.onCall(a
   return { success: true, alreadyFinalized: finalizeResult.alreadyFinalized, playerCount: validParticipants.length };
 });
 
+async function loadKanjiRoomQuestions(room: any, roomId: string): Promise<any[]> {
+  if (room.unitId === ALL_KANJI_UNIT_ID) return loadPoolQuestions(room);
+  const unitId = clampString(room.unitId, 120);
+  if (!unitId) throw new functions.https.HttpsError('failed-precondition', 'Battle room has no unit id.');
+  const unitDoc = await db.doc(`units/${unitId}`).get();
+  const unitData = unitDoc.data();
+  if (!unitData || !isKanjiUnit(unitData)) throw new functions.https.HttpsError('failed-precondition', '漢字単元が見つかりません。');
+  return selectKanjiBattleQuestions(await loadUnitQuestions(unitId, unitData), roomId);
+}
+
 export const getKanjiBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
@@ -914,23 +925,7 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
     throw new functions.https.HttpsError("permission-denied", "Only room participants can load battle questions.");
   }
 
-  const unitId = clampString(room.unitId, 120);
-  if (!unitId) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
-  }
-
-  const unitDoc = await db.doc(`units/${unitId}`).get();
-  if (!unitDoc.exists) {
-    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
-  }
-
-  const unitData = unitDoc.data() || {};
-  if (!isKanjiUnit(unitData)) {
-    throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji battle mode.");
-  }
-
-  const unitQuestions = await loadUnitQuestions(unitId, unitData);
-  const selectedQuestions = selectKanjiBattleQuestions(unitQuestions, roomId);
+  const selectedQuestions = await loadKanjiRoomQuestions(room, roomId);
 
   if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
     throw new functions.https.HttpsError("failed-precondition", "Kanji battle unit does not have enough questions.");
@@ -1024,17 +1019,7 @@ export const submitKanjiBattleOcr = functions
     }
 
     // 3. 単元の問題データ取得（正解情報はサーバーのみ保持）
-    const unitId = clampString(room.unitId, 120);
-    if (!unitId) {
-      throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
-    }
-    const unitDoc = await db.doc(`units/${unitId}`).get();
-    if (!unitDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
-    }
-    const unitData = unitDoc.data() || {};
-    const unitQuestions = await loadUnitQuestions(unitId, unitData);
-    const battleQuestions = selectKanjiBattleQuestions(unitQuestions, roomId);
+    const battleQuestions = await loadKanjiRoomQuestions(room, roomId);
 
     // questionIds の検証（クライアント送信値が正しいルームの問題と一致するか）
     const expectedQuestionIds = battleQuestions.map((q) => String(q.id));

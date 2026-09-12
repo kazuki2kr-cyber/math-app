@@ -28,6 +28,8 @@ export interface KanjiRoom {
   hostUid: string;
   unitId: string;
   unitTitle: string;
+  poolVersion?: string;
+  poolSlots?: number[];
   status: 'waiting' | 'active' | 'completed' | 'cancelled';
   phase: 'waiting' | 'starting' | 'loading' | 'answering' | 'countdown' | 'completed';
   version: number;

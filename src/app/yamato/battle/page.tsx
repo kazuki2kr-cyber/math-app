@@ -545,6 +545,24 @@ export default function KanjiBattlePage() {
           </div>
         )}
 
+        {mode === 'create' && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardHeader>
+              <CardTitle>全単元出題（ランダム10問）</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-gray-700">
+              全単元をまとめた問題セットから、毎回ランダムに10問出題します。2〜4人で対戦できます。
+            </CardContent>
+            <CardFooter>
+              <Button className="bg-amber-500 font-bold text-white hover:bg-amber-600"
+                disabled={creatingUnitId !== null}
+                onClick={() => createRoom({ id: 'kanji-all-random', title: '全単元出題（ランダム10問）' })}>
+                {creatingUnitId === 'kanji-all-random' ? '作成中...' : '全単元でルーム作成'}
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
+
         {mode === 'create' && (loading ? (
           <div className="flex justify-center py-20">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
