@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp, increment } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare, Bell } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
@@ -119,6 +119,7 @@ export default function AdminPage() {
   const [importSubject, setImportSubject] = useState<string>('math');
   const [unitFilterSubject, setUnitFilterSubject] = useState<string>('all');
   const [unitFilterCategory, setUnitFilterCategory] = useState<string>('all');
+  const [updatingQuestionKeys, setUpdatingQuestionKeys] = useState<Set<string>>(new Set());
 
   // Role management state
   const [roleEmail, setRoleEmail] = useState('');
@@ -429,19 +430,32 @@ export default function AdminPage() {
     if (!window.confirm(`問題を削除しますか？`)) return;
     setLoading(true);
     try {
-      // サブコレクションからドキュメントを削除
-      await deleteDoc(doc(db, 'units', unitId, 'questions', qId));
-      
-      // 単元の totalQuestions をデクリメント
       const unitRef = doc(db, 'units', unitId);
       const unit = units.find(u => u.id === unitId);
       const newTotal = Math.max(0, (unit?.totalQuestions || 0) - 1);
-      await updateDoc(unitRef, { totalQuestions: newTotal });
+      const deletedQuestion = unit?.questions.find((question: any) => question.id === qId);
+      const currentActiveTotal = unit?.questions.filter((question: any) => question.active !== false).length || 0;
+      const newActiveTotal = Math.max(0, currentActiveTotal - (deletedQuestion?.active === false ? 0 : 1));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'units', unitId, 'questions', qId));
+      batch.update(unitRef, {
+        totalQuestions: newTotal,
+        activeQuestionCount: newActiveTotal,
+        questionAvailabilityRevision: increment(1),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
       
       // ローカルステートを更新
       setUnits(units.map(u => 
         u.id === unitId 
-          ? { ...u, totalQuestions: newTotal, questions: u.questions.filter((q: any) => q.id !== qId) } 
+          ? {
+              ...u,
+              totalQuestions: newTotal,
+              activeQuestionCount: newActiveTotal,
+              questionAvailabilityRevision: (Number(u.questionAvailabilityRevision) || 0) + 1,
+              questions: u.questions.filter((q: any) => q.id !== qId),
+            }
           : u
       ));
       
@@ -451,6 +465,53 @@ export default function AdminPage() {
       setMessage('削除エラーが発生しました。');
     }
     setLoading(false);
+  };
+
+  const handleToggleQuestionActive = async (unitId: string, qId: string, active: boolean) => {
+    const questionKey = `${unitId}/${qId}`;
+    setUpdatingQuestionKeys(current => new Set(current).add(questionKey));
+    setMessage('');
+
+    try {
+      const unit = units.find(candidate => candidate.id === unitId);
+      const activeQuestionCount = unit?.questions.filter((question: any) => (
+        question.id === qId ? active : question.active !== false
+      )).length || 0;
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'units', unitId, 'questions', qId), {
+        active,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'units', unitId), {
+        activeQuestionCount,
+        questionAvailabilityRevision: increment(1),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+
+      setUnits(current => current.map(unit => (
+        unit.id === unitId
+          ? {
+              ...unit,
+              activeQuestionCount,
+              questionAvailabilityRevision: (Number(unit.questionAvailabilityRevision) || 0) + 1,
+              questions: unit.questions.map((question: any) => (
+                question.id === qId ? { ...question, active } : question
+              )),
+            }
+          : unit
+      )));
+      setMessage(`問題を${active ? '公開' : '非公開'}にしました。`);
+    } catch (e: any) {
+      console.error(e);
+      setMessage(`公開状態の更新に失敗しました: ${e.message || e}`);
+    } finally {
+      setUpdatingQuestionKeys(current => {
+        const next = new Set(current);
+        next.delete(questionKey);
+        return next;
+      });
+    }
   };
 
   const handleDeleteScore = async (s: any) => {
@@ -1119,6 +1180,8 @@ export default function AdminPage() {
           setUnitFilterCategory={setUnitFilterCategory}
           onDeleteUnit={handleDeleteUnit}
           onDeleteQuestion={handleDeleteQuestion}
+          onToggleQuestionActive={handleToggleQuestionActive}
+          updatingQuestionKeys={updatingQuestionKeys}
           onRefresh={fetchUnits}
         />
       )}

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
 import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, RotateCcw, Trash2, CircleHelp } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
+import { filterActiveQuestions } from '@/lib/questionAvailability';
 import {
   cleanupScratchAttempts,
   deleteScratchAttempt,
@@ -56,6 +57,7 @@ interface RawQuestion {
   explanation?: string;
   image_url: string | null;
   questionType?: DrillType;
+  active?: boolean;
 }
 
 // 演習中に使う状態の型（answer_index を意図的に除外 → クライアントに正解位置を持たせない）
@@ -81,6 +83,7 @@ interface CachedDrillData {
   unit: {
     title: string;
     drillType?: DrillType;
+    questionAvailabilityRevision?: number;
   };
   questions: RawQuestion[];
 }
@@ -117,6 +120,7 @@ function writeCachedDrillData(unitId: string, rawUnit: any, questions: RawQuesti
     unit: {
       title: String(rawUnit.title || unitId),
       drillType: rawUnit.drillType === 'written' ? 'written' : 'multiple_choice',
+      questionAvailabilityRevision: Number(rawUnit.questionAvailabilityRevision) || 0,
     },
     questions: questions.map(({ answer_index, explanation, ...question }) => question),
   };
@@ -207,13 +211,15 @@ export default function DrillPage() {
         let rawUnit: any | null = null;
         let fetchedQuestions: RawQuestion[] = [];
 
-        if (cachedDrillData) {
-          rawUnit = cachedDrillData.unit;
-          fetchedQuestions = cachedDrillData.questions;
-        } else {
-          const snap = await getDoc(doc(db, 'units', unitId));
-          if (snap.exists()) {
-            rawUnit = snap.data();
+        const snap = await getDoc(doc(db, 'units', unitId));
+        if (snap.exists()) {
+          rawUnit = snap.data();
+          const currentRevision = Number(rawUnit.questionAvailabilityRevision) || 0;
+          const cachedRevision = Number(cachedDrillData?.unit.questionAvailabilityRevision) || 0;
+
+          if (cachedDrillData && cachedRevision === currentRevision) {
+            fetchedQuestions = cachedDrillData.questions;
+          } else {
             fetchedQuestions = (rawUnit.questions as RawQuestion[]) || [];
 
             if (!rawUnit.questions || rawUnit.questions.length === 0) {
@@ -226,7 +232,7 @@ export default function DrillPage() {
         }
 
         if (rawUnit) {
-          const parsedQuestions: ParsedRawQuestion[] = fetchedQuestions.map(q => ({
+          const parsedQuestions: ParsedRawQuestion[] = filterActiveQuestions(fetchedQuestions).map(q => ({
             ...q,
             options: parseOptions(q.options as unknown as string),
           }));

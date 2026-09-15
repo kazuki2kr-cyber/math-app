@@ -676,7 +676,9 @@ export default function Home() {
                     .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
                     .map((unit) => {
                       const myScore = scores[unit.id];
-                      const totalQ = unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
+                      const totalQ = unit.activeQuestionCount !== undefined
+                        ? unit.activeQuestionCount
+                        : unit.totalQuestions !== undefined ? unit.totalQuestions : (unit.questions?.length || 0);
                       const isWrittenUnit = unit.drillType === 'written';
                       const writtenStat = writtenStats[unit.id];
                       const writtenLimit = Math.max(2, Number(unit.writtenAttemptLimit) || 2);

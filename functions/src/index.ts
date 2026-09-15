@@ -12,6 +12,7 @@ import {
   decideWrittenAttemptReservation,
 } from "./writtenAttemptState";
 import { getEarnedWrittenIconReward } from "./iconRewards";
+import { filterActiveQuestionsServer } from "./questionAvailability";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -629,10 +630,14 @@ function selectKanjiBattleQuestions(unitQuestions: any[], roomId: string): any[]
 
 async function loadUnitQuestions(unitId: string, unitData: any): Promise<any[]> {
   const embeddedQuestions = Array.isArray(unitData.questions) ? unitData.questions : [];
-  if (embeddedQuestions.length > 0) return sortQuestionsServer(embeddedQuestions);
+  if (embeddedQuestions.length > 0) {
+    return sortQuestionsServer(filterActiveQuestionsServer(embeddedQuestions));
+  }
 
   const qSnap = await db.collection(`units/${unitId}/questions`).get();
-  return sortQuestionsServer(qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+  return sortQuestionsServer(filterActiveQuestionsServer(
+    qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+  ));
 }
 
 function buildKanjiBattleOptions(question: any, allQuestions: any[], roomId: string): { options: string[]; answerIndex: number } {
@@ -1413,12 +1418,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   const unitTitle: string = unitData.title || unitId;
   const unitSubject: string = unitData.subject || "数学";
   const unitCategory: string = unitData.category || "その他";
-  let unitQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
-  if (unitQuestions.length === 0) {
-    // 問題がサブコレクションに格納されている場合のフォールバック
-    const qSnap = await db.collection(`units/${unitId}/questions`).get();
-    unitQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }
+  const unitQuestions = await loadUnitQuestions(unitId, unitData);
   if (safeAnswers.length > unitQuestions.length) {
     throw new functions.https.HttpsError("invalid-argument", "回答数が問題数を超えています。");
   }

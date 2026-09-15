@@ -1,6 +1,13 @@
 import { getMathDashboardUnits, isMathSubjectValue } from '@/lib/dashboardUnits';
 
 describe('math dashboard unit filtering', () => {
+  test('公開中の問題が0問になった単元を非表示にする', () => {
+    expect(getMathDashboardUnits([
+      { id: 'empty', subject: '数学', activeQuestionCount: 0 },
+      { id: 'legacy', subject: '数学' },
+    ])).toEqual([{ id: 'legacy', subject: '数学' }]);
+  });
+
   test('数学の互換 subject 値だけを数学として扱う', () => {
     expect(isMathSubjectValue(undefined)).toBe(true);
     expect(isMathSubjectValue('math')).toBe(true);

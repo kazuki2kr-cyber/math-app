@@ -3,7 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Trash2, RefreshCw, Database } from 'lucide-react';
+import { Trash2, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 
@@ -16,6 +16,8 @@ interface UnitsTabProps {
   setUnitFilterCategory: (v: string) => void;
   onDeleteUnit: (unitId: string) => void;
   onDeleteQuestion: (unitId: string, qId: string) => void;
+  onToggleQuestionActive: (unitId: string, qId: string, active: boolean) => void;
+  updatingQuestionKeys: Set<string>;
   onRefresh: () => void;
 }
 
@@ -23,7 +25,7 @@ export default function UnitsTab({
   units, loading,
   unitFilterSubject, setUnitFilterSubject,
   unitFilterCategory, setUnitFilterCategory,
-  onDeleteUnit, onDeleteQuestion, onRefresh,
+  onDeleteUnit, onDeleteQuestion, onToggleQuestionActive, updatingQuestionKeys, onRefresh,
 }: UnitsTabProps) {
   const filteredUnits = units.filter(u => {
     const sMatch = unitFilterSubject === 'all' || u.subject === unitFilterSubject;
@@ -138,7 +140,9 @@ export default function UnitsTab({
                   </div>
                 </div>
               )}
-              <CardDescription>問題数: {unit.totalQuestions || 0}問</CardDescription>
+              <CardDescription>
+                問題数: {unit.totalQuestions || 0}問（公開中 {unit.questions?.filter((q: any) => q.active !== false).length || 0}問）
+              </CardDescription>
             </div>
             <Button variant="destructive" size="sm" onClick={() => onDeleteUnit(unit.id)}>
               <Trash2 className="w-4 h-4 mr-2" /> 単元を削除
@@ -146,9 +150,14 @@ export default function UnitsTab({
           </CardHeader>
           <CardContent className="p-0 divide-y max-h-[400px] overflow-y-auto">
             {unit.questions?.map((q: any, i: number) => (
-              <div key={q.id} className="p-4 hover:bg-gray-50/50 flex flex-col md:flex-row md:items-start justify-between gap-4">
+              <div key={q.id} className={`p-4 flex flex-col md:flex-row md:items-start justify-between gap-4 ${q.active === false ? 'bg-gray-100/80 opacity-70' : 'hover:bg-gray-50/50'}`}>
                 <div className="flex-1 space-y-2">
-                  <div className="font-semibold text-sm text-gray-500">Q{i + 1}</div>
+                  <div className="flex items-center gap-2 font-semibold text-sm text-gray-500">
+                    <span>Q{i + 1}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${q.active === false ? 'bg-gray-200 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {q.active === false ? '非公開' : '公開中'}
+                    </span>
+                  </div>
                   <div className="text-sm">
                     <MathDisplay math={q.question_text || '問題文なし'} />
                   </div>
@@ -184,9 +193,21 @@ export default function UnitsTab({
                     ))}
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => onDeleteQuestion(unit.id, q.id)}>
-                  削除
-                </Button>
+                <div className="flex shrink-0 gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={updatingQuestionKeys.has(`${unit.id}/${q.id}`)}
+                    aria-pressed={q.active !== false}
+                    onClick={() => onToggleQuestionActive(unit.id, q.id, q.active === false)}
+                  >
+                    {q.active === false ? <Eye className="mr-2 h-4 w-4" /> : <EyeOff className="mr-2 h-4 w-4" />}
+                    {q.active === false ? '公開する' : '非公開にする'}
+                  </Button>
+                  <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => onDeleteQuestion(unit.id, q.id)}>
+                    削除
+                  </Button>
+                </div>
               </div>
             ))}
           </CardContent>

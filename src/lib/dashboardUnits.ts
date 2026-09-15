@@ -5,6 +5,7 @@ export interface DashboardUnit {
   eventStatus?: string;
   eventStartsAt?: unknown;
   eventEndsAt?: unknown;
+  activeQuestionCount?: number;
 }
 
 export function isMathSubjectValue(value?: string) {
@@ -36,6 +37,7 @@ function parseEventDate(value: unknown): number | null {
 }
 
 function isVisibleUnit(unit: DashboardUnit) {
+  if (typeof unit.activeQuestionCount === 'number' && unit.activeQuestionCount <= 0) return false;
   if (unit.drillType !== 'written') return true;
   if ((unit.eventStatus || 'active') !== 'active') return false;
 

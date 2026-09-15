@@ -359,6 +359,32 @@ describe('Firestore Security Rules', () => {
     ).resolves.toBeUndefined();
   });
 
+  test('問題の公開状態は管理者だけが更新できる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'units', 'unit1'), {
+        title: 'テスト単元',
+        activeQuestionCount: 1,
+      });
+      await setDoc(doc(context.firestore(), 'units', 'unit1', 'questions', 'q1'), {
+        question_text: '1+1',
+        active: true,
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    await expect(
+      updateDoc(doc(aliceContext.firestore(), 'units', 'unit1', 'questions', 'q1'), { active: false })
+    ).rejects.toThrow();
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    await expect(
+      updateDoc(doc(adminContext.firestore(), 'units', 'unit1', 'questions', 'q1'), { active: false })
+    ).resolves.toBeUndefined();
+    await expect(
+      updateDoc(doc(adminContext.firestore(), 'units', 'unit1'), { activeQuestionCount: 0 })
+    ).resolves.toBeUndefined();
+  });
+
   // ─────────────────────────────────────────────────────
   // suspicious_activities
   // ─────────────────────────────────────────────────────
