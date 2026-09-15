@@ -1,5 +1,6 @@
 ---
-description: PDFから数学問題のCSVデータを生成し、画像を抽出・保存する（テキスト最適化対応版）
+name: pdf-to-math-csv
+description: PDFから数学問題のCSVデータを生成・検証し、必要な画像を抽出して本番公開まで行う（テキスト最適化対応版）
 ---
 
 # `pdf-to-math-csv` スキル
@@ -17,9 +18,10 @@ description: PDFから数学問題のCSVデータを生成し、画像を抽出�
 python .agents/skills/pdf-to-math-csv/scripts/extract_images.py <PDFの絶対パス> public/images/units/<unit_id>
 ```
 
-- `<unit_id>` はユーザーから指定された単元ID、もしくはPDF名などから推測して作成するディレクトリ名を利用します（確認してください）。
+- `<unit_id>` はユーザー指定の単元IDを優先し、未指定ならPDF名を利用します。
 - スクリプト実行後に出力された画像のファイルパス（例: `public/images/units/xxx/image_p1_1.png`）を記録し、対応する問題の `image_url` に紐づくよう準備します。
 - CSV上の `image_url` には公開パス（例: `/images/units/xxx/image_p1_1.png`）として記述します。
+- 埋め込み画像として抽出できない図はPDFをレンダリングして必要範囲を切り出します。図のラベルや条件を欠かさず、解答・解説や不要なページ全体を画像に含めないでください。
 
 ### 2. 問題・解答・解説データの抽出と「最適化」
 PDFのテキストを読み込み、データを抽出します。ただし、**ただそのまま抽出するのではなく、以下の【テキスト最適化のルール】に従って高品質なデータに編集・成形してください。**
@@ -75,6 +77,31 @@ PDFのテキストを読み込み、データを抽出します。ただし、**
 **注意事項:**
 - JSONのパースエラー（例えば `t.options?.map is not a function`）を防ぐため、`options` のJSON配列化は厳格に行ってください。
 - 最終的なCSVデータは指定の保存先にファイルとして書き出し、ユーザーに提供するか、コードブロックで出力してください。
+
+---
+
+### 4. 必要な画像の自動公開と確認（CSV提供前）
+
+ユーザーの継続的な設定（2026-09-12）として、数学問題CSVの作成依頼には、その問題に必要な画像の本番公開を含めます。画像がある場合は、抽出・ローカル保存だけで終えず、この手順をCSV提供前に実施してください。通常の画像追加について毎回確認を求める必要はありません。ユーザーが「公開しない」「ローカル作成のみ」などと指定した場合は、その指定を優先します。
+
+**公開の順序と範囲**
+
+- 画像は静的ファイルなので、問題データの登録前に公開できます。画像だけを公開しても問題はアプリに登録されません。CSVの管理画面へのアップロードは引き続きユーザーが手動で行います。
+- 先行公開した画像は公開URLから閲覧可能です。未公開試験など公開時期の制約が明示された素材は先行公開せず、公開時期を確認します。
+- 許可の範囲は今回のCSVに必要な画像の追加とその公開です。PDF全体、CSV、無関係な画像、作業中のアプリ変更を一緒に公開しないでください。
+
+**実施手順**
+
+1. CSVの数学的・形式的検証を終え、`image_url` ごとに画像と問題の対応、読みやすさ、ローカルファイルの存在を確認します。同じ公開パスで同じ画像がすでに取得できる場合は再利用し、再デプロイは不要です。
+2. 新規画像は `public/images/units/<unit_id>/` に保存します。同名の公開画像が異なる内容なら、既存問題の表示を変えないよう別名（内容ハッシュ等）で追加し、今回のCSVの参照先を更新します。既存画像を無断で上書き・削除しません。
+3. `AGENTS.md`、デプロイ用参照文書、`security-audit` に従って公開対象を確認します。`.vercel/project.json`、Gitリモート、本番デプロイのコミットを確認し、今回の画像だけを追加する差分を用意します。本番とmainに差分がある場合、その差分を無関係に本番へ流さないでください。
+4. 既存のGitHub main連携によるVercel本番デプロイを使用します。未コミット変更がある作業ディレクトリをそのままデプロイせず、クリーンな作業コピーまたはGitHub API等で画像だけをコミットします。既存のバージョン管理ルールを守り、`package.json` のversionを手動変更しません。接続先・本番構成が変わっていれば実態に合わせます。
+5. デプロイ完了（`READY` と本番ドメインへの反映）を確認します。CSVの各 `image_url` に対応する本番URLをGETし、HTTP 200、画像のContent-Type、公開画像とローカル画像の内容一致を確認します。日本語パスはHTTPリクエスト時に適切にURLエンコードします。HTMLのエラーページを画像取得成功として扱いません。
+6. CSV提供時に画像の公開・取得確認済みであることと、ユーザーがCSVをそのままアップロードできることを伝えます。CSVをすでにアップロード済みで参照先が同じなら、再アップロードは不要です。
+
+**失敗時**
+
+認証不足、権限不足、デプロイ失敗は原因を確認し、安全に解消できる範囲で対応します。同じ失敗を無条件に繰り返さず、ユーザーのログイン操作などが必要ならその箇所だけ依頼してください。公開確認が済まなければ「アップロード準備完了」とせず、CSVの作成状況と未公開画像・原因を明示します。失敗を隠すために画像問題を削除したり、`image_url` を空にしたりしてはいけません。
 
 ---
 
@@ -179,3 +206,19 @@ Written CSV header:
 ```csv
 unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at
 ```
+
+### Optional achievement icon reward
+
+Do not add an icon reward by default. Add one only when the user explicitly asks for an icon to unlock from a particular problem or condition. An ordinary request to create, extract, or upload questions is not permission to configure a reward.
+
+When explicitly requested, read [`docs/icon-rewards.md`](../../../docs/icon-rewards.md) and append these columns to the CSV:
+
+```csv
+reward_icon_id,reward_icon_name,reward_icon_image_url,reward_condition_type,reward_condition_value
+```
+
+- Reuse one stable `reward_icon_id` across multiple rows when completing any of those problems should unlock the same icon. Use different IDs when each problem has a separate reward.
+- If the user requests an original icon and does not supply an asset, use the available image-generation workflow. Generate a text-free transparent square icon, inspect it, crop transparent excess, resize to about 256×256px, and save an optimized PNG/WebP/AVIF under `public/images/reward-icons/`.
+- Keep the symbol recognizable at small avatar sizes. Do not use external image URLs or overwrite an existing reward asset.
+- Publish and verify a new reward asset using the same static-image deployment safeguards in section 4. The user still uploads the problem CSV at their chosen time.
+- Validate that every non-empty reward row has all five fields, the condition is supported, the value is in range, and the referenced local asset exists. Leave all five fields empty—or omit the optional columns—when no reward was explicitly requested.

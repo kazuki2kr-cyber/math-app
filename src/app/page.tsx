@@ -12,7 +12,6 @@ import { httpsCallable } from 'firebase/functions';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { setDoc } from 'firebase/firestore';
 import { PwaHeaderActions } from '@/components/PwaProvider';
 import { ThemeSettingsButton } from '@/components/ThemeSettingsButton';
 import {
@@ -21,6 +20,8 @@ import {
   type DashboardUnit,
 } from '@/lib/dashboardUnits';
 import { buildLearningProgressReport, getLearningProgressReadiness } from '@/lib/learningProgress';
+import { UserAvatarIcon } from '@/components/UserAvatarIcon';
+import { getUnlockedRewardIcons, type UnlockedRewardIcon } from '@/lib/rewardIcons';
 
 interface Unit extends DashboardUnit {
   id: string;
@@ -54,6 +55,15 @@ interface WrittenStat {
   limit?: number;
 }
 
+interface UserProfileData {
+  xp: number;
+  icon: string;
+  title: string;
+  level: number;
+  progress: number;
+  unlockedRewardIcons: UnlockedRewardIcon[];
+}
+
 const UNITS_CACHE_KEY = 'math_units_cache_v4';
 const UNITS_CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const DRILL_DATA_CACHE_PREFIX = 'math_drill_data_cache_v1:';
@@ -84,7 +94,7 @@ export default function Home() {
   const [drillCounts, setDrillCounts] = useState<Record<string, number>>({});
   const [writtenStats, setWrittenStats] = useState<Record<string, WrittenStat>>({});
   const [showXpInfo, setShowXpInfo] = useState(false);
-  const [userData, setUserData] = useState<{ xp: number; icon: string; title: string; level: number; progress: number } | null>(null);
+  const [userData, setUserData] = useState<UserProfileData | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsChecked, setTermsChecked] = useState(false);
@@ -194,7 +204,8 @@ export default function Home() {
             icon: ud.icon || '📐',
             title: ud.title || '算数卒業生',
             level: ud.level || 1,
-            progress: ud.progressPercent !== undefined ? ud.progressPercent : calculateLevelAndProgress(ud.xp || 0).progressPercent
+            progress: ud.progressPercent !== undefined ? ud.progressPercent : calculateLevelAndProgress(ud.xp || 0).progressPercent,
+            unlockedRewardIcons: getUnlockedRewardIcons(ud.unlockedIcons),
           });
           setLearningProgressReady(
             getLearningProgressReadiness(buildLearningProgressReport(soloUnitsData, ud)).ready,
@@ -319,7 +330,8 @@ export default function Home() {
   const handleIconChange = async (icon: string) => {
     if (!user) return;
     try {
-      await setDoc(doc(db, 'users', user.uid), { icon }, { merge: true });
+      const setIcon = httpsCallable<{ icon: string }, { success: boolean; icon: string }>(functions, 'setUserIcon');
+      await setIcon({ icon });
       setUserData(prev => prev ? { ...prev, icon } : null);
       setIsAvatarModalOpen(false);
     } catch (e) {
@@ -429,7 +441,7 @@ export default function Home() {
                   onClick={() => setIsAvatarModalOpen(true)}
                 >
                   <div className="w-24 h-24 bg-gradient-to-br from-[#F8FAEB] to-green-100 rounded-full border-4 border-white shadow-lg flex items-center justify-center text-5xl flex-shrink-0 z-10 relative">
-                    {userData.icon}
+                    <UserAvatarIcon icon={userData.icon} className="max-h-20 max-w-20" />
                     <div className="absolute -bottom-2 -right-2 bg-primary text-primary-foreground text-xs font-bold px-2 py-0.5 rounded-full border-2 border-white shadow-sm tracking-widest uppercase">
                       Lv.{userData.level}
                     </div>
@@ -846,10 +858,14 @@ export default function Home() {
                                       <span className="text-gray-400">{rank}</span>}
                               </div>
                               <div className="flex-1 min-w-0 flex items-center gap-3">
-                                <div className="text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:block">{rankUser.icon}</div>
+                                <div className="h-10 w-10 text-3xl filter drop-shadow hover:scale-110 transition-transform hidden sm:flex items-center justify-center">
+                                  <UserAvatarIcon icon={rankUser.icon} className="max-h-10 max-w-10" />
+                                </div>
                                 <div>
                                   <p className="font-bold text-gray-800 truncate text-sm flex items-center">
-                                    <span className="text-xl sm:hidden mr-1">{rankUser.icon}</span>
+                                    <span className="h-7 w-7 text-xl inline-flex sm:hidden mr-1 items-center justify-center">
+                                      <UserAvatarIcon icon={rankUser.icon} className="max-h-7 max-w-7" />
+                                    </span>
                                     {rankUser.name}
                                     {isCurrentUser && <span className="ml-2 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full uppercase">You</span>}
                                   </p>
@@ -921,7 +937,7 @@ export default function Home() {
             <div className="p-6 border-b bg-gray-50 flex justify-between items-center sticky top-0 z-10">
               <div>
                 <h3 className="text-xl font-bold text-gray-900">アバター設定</h3>
-                <p className="text-xs text-muted-foreground mt-1">現在のレベル (Lv.{userData.level}) で解放されているアバター</p>
+                <p className="text-xs text-muted-foreground mt-1">レベルや実績で解放されているアバター</p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setIsAvatarModalOpen(false)} className="hover:bg-gray-200">閉じる</Button>
             </div>
@@ -937,10 +953,30 @@ export default function Home() {
                         : 'bg-gray-50 hover:bg-gray-100 hover:scale-110 border border-gray-100'
                       }`}
                   >
-                    {icon}
+                    <UserAvatarIcon icon={icon} className="max-h-12 max-w-12" />
                   </button>
                 ))}
               </div>
+              {userData.unlockedRewardIcons.length > 0 && (
+                <div className="mt-7 border-t pt-6">
+                  <p className="mb-3 text-sm font-black text-amber-700">実績アイコン</p>
+                  <div className="grid grid-cols-5 sm:grid-cols-6 gap-3">
+                    {userData.unlockedRewardIcons.map((reward) => (
+                      <button
+                        key={reward.id}
+                        onClick={() => handleIconChange(reward.imageUrl)}
+                        title={reward.name}
+                        className={`aspect-square flex items-center justify-center rounded-xl p-1 transition-all ${userData.icon === reward.imageUrl
+                          ? 'bg-amber-100 ring-4 ring-amber-400 scale-110 shadow-md z-10'
+                          : 'bg-amber-50 hover:bg-amber-100 hover:scale-110 border border-amber-100'
+                        }`}
+                      >
+                        <UserAvatarIcon icon={reward.imageUrl} className="h-full w-full" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

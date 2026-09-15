@@ -34,3 +34,7 @@ data/csv/battle/<category>/<unit_id>.csv
 When importing these files in the admin screen, choose a battle subject such as `数学対戦`.
 
 Do not place battle-mode CSVs directly under the normal category folders.
+
+## Problem Icon Rewards
+
+Written questions can unlock original avatar icons through optional reward columns. See [問題別アイコン報酬](../../docs/icon-rewards.md) for the supported columns, image requirements, and security model.

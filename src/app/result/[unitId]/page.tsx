@@ -16,6 +16,7 @@ import {
 const fireConfetti = (opts: object) => import('canvas-confetti').then(m => m.default(opts));
 import { ArrowLeft, Trophy, CheckCircle2, XCircle, ArrowUpCircle, AlertCircle, RefreshCw, MessageSquare, Send, BookOpen } from 'lucide-react';
 import { getAvailableIcons, getTitleForLevel } from '@/lib/xp';
+import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 
 // Drill result data saved in sessionStorage. Correctness is recalculated server-side.
 interface StoredDrillData {
@@ -70,6 +71,13 @@ interface WrittenGrading {
   feedback: string;
   improvementPoints: string[];
   rubricScores: Array<{ label: string; score: number; maxScore: number; comment: string }>;
+}
+
+interface IconRewardResult {
+  id: string;
+  name: string;
+  imageUrl: string;
+  newlyUnlocked: boolean;
 }
 
 const WRITTEN_FEEDBACK_OPTIONS = {
@@ -148,6 +156,7 @@ export default function ResultPage() {
   const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null);
   const [writtenAttemptOrdinal, setWrittenAttemptOrdinal] = useState<number | null>(null);
   const [writtenAttemptLimit, setWrittenAttemptLimit] = useState<number | null>(null);
+  const [iconReward, setIconReward] = useState<IconRewardResult | null>(null);
   const [writtenFeedbackOpen, setWrittenFeedbackOpen] = useState(false);
   const [writtenFeedback, setWrittenFeedback] = useState({
     rating: 'helpful',
@@ -263,6 +272,7 @@ export default function ResultPage() {
         attemptOrdinal?: number | null;
         attemptLimit?: number | null;
         modelAnswer?: string;
+        iconReward?: IconRewardResult | null;
       };
 
       if (data.success) {
@@ -281,6 +291,7 @@ export default function ResultPage() {
         setRemainingAttempts(data.remainingAttempts ?? null);
         setWrittenAttemptOrdinal(data.attemptOrdinal ?? null);
         setWrittenAttemptLimit(data.attemptLimit ?? null);
+        setIconReward(data.iconReward || null);
         if (parsed.type === 'written') {
           sessionStorage.removeItem('drillResult');
         }
@@ -457,6 +468,23 @@ export default function ResultPage() {
             </div>
           </CardContent>
         </Card>
+
+        {iconReward?.newlyUnlocked && (
+          <Card className="overflow-hidden border-2 border-amber-300 bg-gradient-to-br from-amber-50 via-white to-cyan-50 shadow-xl">
+            <CardContent className="flex flex-col items-center gap-4 p-7 text-center sm:flex-row sm:text-left">
+              <div className="h-28 w-28 shrink-0 rounded-3xl bg-white p-2 shadow-lg ring-4 ring-amber-200">
+                <UserAvatarIcon icon={iconReward.imageUrl} className="h-full w-full" />
+              </div>
+              <div>
+                <p className="text-sm font-black uppercase tracking-widest text-amber-600">限定アイコン獲得</p>
+                <h3 className="mt-1 text-2xl font-black text-slate-900">{iconReward.name}</h3>
+                <p className="mt-2 text-sm font-medium text-slate-600">
+                  解放条件の達成おめでとうございます。ダッシュボードのアバター設定から選べます。
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {storedData.type === 'written' && writtenGrading && (
           <Card className="shadow-xl border-0 bg-white overflow-hidden">

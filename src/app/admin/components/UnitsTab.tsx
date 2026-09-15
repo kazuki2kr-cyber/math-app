@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Trash2, RefreshCw, Database } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
+import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 
 interface UnitsTabProps {
   units: any[];
@@ -162,6 +163,19 @@ export default function UnitsTab({
                           <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700">採点ルーブリック</p>
                           {renderRubric(q.gradingRubric || q.grading_rubric)}
                         </div>
+                        {q.iconReward && (
+                          <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                            <UserAvatarIcon icon={q.iconReward.imageUrl} className="h-12 w-12" />
+                            <div>
+                              <p className="font-black">{q.iconReward.name}</p>
+                              <p className="text-[11px]">
+                                {q.iconReward.condition?.type === 'written_score_at_least'
+                                  ? `${q.iconReward.condition.value}点以上で解放`
+                                  : '解放条件未対応'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : q.options?.map((opt: string, oi: number) => (
                       <span key={oi} className={`px-2 py-1 rounded border ${oi + 1 === q.answer_index ? 'bg-green-100 border-green-300 text-green-800 font-bold' : 'bg-white text-gray-500'}`}>

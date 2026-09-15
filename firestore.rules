@@ -36,18 +36,37 @@ service cloud.firestore {
       // 本人または管理者のみ読み取り可能
       allow read: if (isOwner(userId) && isAppUser()) || isAdmin();
 
-      // プロフィールの作成（新規登録時）
-      allow create: if (isOwner(userId) && isAppUser()) || isAdmin();
+      // プロフィールの作成（新規登録時）。実績や成績を初期データへ混入させない。
+      allow create: if isAdmin()
+        || (isOwner(userId)
+            && isAppUser()
+            && request.resource.data.keys().hasOnly([
+              'uid',
+              'email',
+              'displayName',
+              'lastLoginAt',
+              'createdAt',
+              'xp',
+              'icon',
+              'hasAgreedToTerms',
+              'termsVersion',
+              'privacyPolicyVersion',
+              'legalAgreedAt',
+              'isAdmin',
+            ])
+            && request.resource.data.uid == userId
+            && request.resource.data.xp == 0
+            && request.resource.data.icon == '📐'
+            && request.resource.data.isAdmin == false);
 
       // プロフィールの更新:
       //   管理者 → 全フィールド可
-      //   本人   → icon / 同意情報 / lastLoginAt のみ（スコア・XP 等はサーバー経由のみ）
+      //   本人   → 同意情報 / lastLoginAt のみ（icon・スコア・XP 等はサーバー経由のみ）
       allow update: if isAdmin()
         || (isOwner(userId)
             && isAppUser()
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly([
-                   'icon',
                    'hasAgreedToTerms',
                    'termsVersion',
                    'privacyPolicyVersion',

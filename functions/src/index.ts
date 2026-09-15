@@ -11,6 +11,7 @@ import {
   decideWrittenAttemptFinalization,
   decideWrittenAttemptReservation,
 } from "./writtenAttemptState";
+import { getEarnedWrittenIconReward } from "./iconRewards";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -28,6 +29,18 @@ const BATTLE_FAST_BONUS_MS = 3000;
 const KANJI_BATTLE_FINALIZE_TIMEOUT_MS = 90000;
 const MATH_MAX_LEVEL = 100;
 const MATH_LEVEL_XP_CAP_LEVEL = 40;
+const MATH_LEVEL_ICONS = [
+  "📐", "✏️", "📏", "📗", "📘", "🎒", "🧮", "🖋️", "🔍", "📖",
+  "🕰️", "🧭", "⚙️", "🔧", "💡", "🔋", "🖥️", "💻", "⌨️", "🖱️",
+  "📡", "🔭", "🔬", "🧪", "🧫", "🧬", "📊", "📉", "📈", "📅",
+  "🌱", "🌿", "🍀", "🍎", "🍏", "🌍", "🌎", "🌏", "🌑", "🌒",
+  "🌓", "🌔", "🌕", "🌖", "🌗", "🌘", "☀️", "🌤️", "⛅", "🌥️",
+  "🌩️", "⚡", "❄️", "🔥", "💧", "🌊", "🌬️", "🌀", "🌈", "☄️",
+  "⭐", "🌟", "✨", "💫", "🔮", "🪄", "🧿", "🪬", "🪙", "🪐",
+  "🛡️", "⚔️", "🗡️", "🏹", "👑", "🤴", "👸", "⚜️", "🔱", "💎",
+  "💍", "🔮", "🪨", "🏆", "🏅", "🥇", "🎖️", "🚀", "🛸", "🛰️",
+  "🐉", "🐲", "🦅", "🦁", "🦄", "🌋", "🌌", "🌠", "🎇", "🎆",
+] as const;
 const BATTLE_XP_TABLE: Record<number, number[]> = {
   2: [100, -20],
   3: [125, 0, -20],
@@ -1912,7 +1925,7 @@ async function gradeWrittenAnswerWithGemini(params: {
     throw new functions.https.HttpsError("failed-precondition", "Gemini API key is not configured.");
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
   const image = parseDataUrlImage(params.answerImageDataUrl);
   const rubricCriteria = normalizeWrittenRubric(params.gradingRubric);
   const prompt = [
@@ -1937,7 +1950,11 @@ async function gradeWrittenAnswerWithGemini(params: {
     "Deduct points when variables are introduced without definition, for example using r or h without stating what they represent.",
     "Deduct points for missing units, missing conclusion sentence, unclear comparison target, skipped justification, formula misuse, algebra mistakes, or ambiguous notation.",
     "If the rubric is vague, reserve 10 to 20 points for mathematical communication: variable definitions, readable steps, and answering the exact question.",
-    "Before grading, briefly transcribe the visible handwritten answer. Use the transcription only as a record of what you read from the image. If a part is unreadable, write [unclear].",
+    "Write all natural-language output in Japanese. Never add English explanations, labels, or parenthetical notes.",
+    "Before grading, transcribe only the writing that is actually visible in the answer image, line by line, preserving the original line breaks and order.",
+    "In transcription, never solve the problem, correct an equation, reorder steps, fill in omitted symbols, or infer reasoning that the student did not write. If a part is unreadable, write [判読不能].",
+    "For detectedAnswer, copy only the student's visibly written final answer. Do not add an omitted variable, equality sign, unit, conclusion, or explanation.",
+    "For example, if the visible final line is only -2, detectedAnswer must be \\(-2\\), not \\(x=-2\\), and must not include notes such as '(implied by final value)'.",
     "In feedback, improvementPoints, rubric comments, and detectedAnswer, wrap all mathematical expressions in LaTeX delimiters like \\( ... \\). Use \\times, \\div, \\frac{}, and \\pi instead of plain symbols where appropriate.",
     "",
     `Unit: ${params.unitTitle}`,
@@ -1979,10 +1996,14 @@ async function gradeWrittenAnswerWithGemini(params: {
   const json = await response.json() as any;
   const responseText = json?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || "").join("") || "";
   const parsed = extractJsonObject(responseText);
+  const detectedAnswer = clampString(parsed?.detectedAnswer, 300)
+    .replace(/\s*\((?:implied|inferred|based|from|because|therefore|answer|final)\b[^)]*\)\s*$/i, "")
+    .trim();
+
   return {
     score: clampScore(parsed?.score),
     transcription: clampString(parsed?.transcription, 2000),
-    detectedAnswer: clampString(parsed?.detectedAnswer, 300),
+    detectedAnswer,
     rubricScores: normalizeRubricScores(parsed?.rubricScores, rubricCriteria),
     feedback: clampString(parsed?.feedback, 1200),
     improvementPoints: Array.isArray(parsed?.improvementPoints)
@@ -2214,6 +2235,7 @@ export const submitWrittenDrillResult = functions
       throw gradingErr;
     }
     const finalXpGain = calculateWrittenXp(grading.score, Number(unitData.writtenXpBase) || 232);
+    const earnedIconReward = getEarnedWrittenIconReward(question.iconReward, grading.score);
 
     const result = await db.runTransaction(async (transaction) => {
       const userRef = db.doc(`users/${uid}`);
@@ -2248,6 +2270,9 @@ export const submitWrittenDrillResult = functions
           isFinalAllowedAttempt: attemptTxnData.isFinalAllowedAttempt || false,
           grading: attemptTxnData.grading || null,
           modelAnswer: modelAnswerText,
+          iconReward: attemptTxnData.iconReward
+            ? { ...attemptTxnData.iconReward, newlyUnlocked: false }
+            : null,
         };
       }
       if (finalization.kind === "invalid_status") {
@@ -2274,6 +2299,24 @@ export const submitWrittenDrillResult = functions
       const oldLevelData = calculateLevelAndProgressServer(currentXp);
       const newLevelData = calculateLevelAndProgressServer(newTotalXp);
       const isLevelUp = newLevelData.level > oldLevelData.level;
+      const existingUnlockedIcons = userData.unlockedIcons && typeof userData.unlockedIcons === "object"
+        ? userData.unlockedIcons
+        : {};
+      const isNewIconReward = Boolean(
+        earnedIconReward
+        && !Object.prototype.hasOwnProperty.call(existingUnlockedIcons, earnedIconReward.id)
+      );
+      const iconRewardRecord = earnedIconReward
+        ? {
+            id: earnedIconReward.id,
+            name: earnedIconReward.name,
+            imageUrl: earnedIconReward.imageUrl,
+            sourceUnitId: unitId,
+            sourceQuestionId: questionId,
+            sourceAttemptId: attemptDocId,
+            unlockedAt: now,
+          }
+        : null;
 
       transaction.set(userRef, {
         xp: newTotalXp,
@@ -2284,6 +2327,9 @@ export const submitWrittenDrillResult = functions
         nextLevelXp: newLevelData.nextLevelXp,
         updatedAt: dateStr,
         ...(currentIcon !== "📐" ? {} : { icon: "📐" }),
+        ...(isNewIconReward && iconRewardRecord
+          ? { unlockedIcons: { [iconRewardRecord.id]: iconRewardRecord } }
+          : {}),
       }, { merge: true });
       transaction.update(userRef, new FieldPath("writtenStats", unitId), {
         maxScore: isHighScore ? grading.score : previousMaxScore,
@@ -2322,6 +2368,13 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         remainingAttempts,
         grading,
+        ...(earnedIconReward ? {
+          iconReward: {
+            id: earnedIconReward.id,
+            name: earnedIconReward.name,
+            imageUrl: earnedIconReward.imageUrl,
+          },
+        } : {}),
         gradedAt: now,
         updatedAt: now,
       });
@@ -2375,6 +2428,14 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         grading,
         modelAnswer: modelAnswerText,
+        iconReward: earnedIconReward
+          ? {
+              id: earnedIconReward.id,
+              name: earnedIconReward.name,
+              imageUrl: earnedIconReward.imageUrl,
+              newlyUnlocked: isNewIconReward,
+            }
+          : null,
         _leaderboardUpdate: (
           isLevelUp
           || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)
@@ -2402,6 +2463,64 @@ export const submitWrittenDrillResult = functions
     }
     const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
     return { ...clientResult, score: grading.score };
+  });
+
+export const setUserIcon = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    assertAppAccess(context);
+    const uid = context.auth!.uid;
+    const requestedIcon = clampString((data as any)?.icon, 200);
+    if (!requestedIcon) {
+      throw new functions.https.HttpsError("invalid-argument", "アイコンを選択してください。");
+    }
+
+    const userRef = db.doc(`users/${uid}`);
+    const leaderboardRef = db.doc("leaderboards/overall");
+    await db.runTransaction(async (transaction) => {
+      const [userSnap, leaderboardSnap] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(leaderboardRef),
+      ]);
+      if (!userSnap.exists) {
+        throw new functions.https.HttpsError("not-found", "ユーザープロフィールが見つかりません。");
+      }
+
+      const userData = userSnap.data() || {};
+      const level = calculateLevelAndProgressServer(Number(userData.xp) || 0).level;
+      const isLevelIcon = MATH_LEVEL_ICONS.slice(0, level).includes(requestedIcon as typeof MATH_LEVEL_ICONS[number]);
+      const unlockedIcons = userData.unlockedIcons && typeof userData.unlockedIcons === "object"
+        ? Object.values(userData.unlockedIcons) as any[]
+        : [];
+      const isUnlockedRewardIcon = unlockedIcons.some((reward) => (
+        reward
+        && typeof reward === "object"
+        && reward.imageUrl === requestedIcon
+      ));
+      if (!isLevelIcon && !isUnlockedRewardIcon) {
+        throw new functions.https.HttpsError("permission-denied", "このアイコンはまだ解放されていません。");
+      }
+
+      transaction.update(userRef, {
+        icon: requestedIcon,
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (leaderboardSnap.exists) {
+        const leaderboardData = leaderboardSnap.data() || {};
+        const rankings = Array.isArray(leaderboardData.rankings)
+          ? leaderboardData.rankings.map((entry: any) => (
+              entry?.uid === uid ? { ...entry, icon: requestedIcon } : entry
+            ))
+          : [];
+        transaction.update(leaderboardRef, {
+          rankings,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    return { success: true, icon: requestedIcon };
   });
 
 export const resetWrittenEventData = functions.region("us-central1").https.onCall(async (data, context) => {

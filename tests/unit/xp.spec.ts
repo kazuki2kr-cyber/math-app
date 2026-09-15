@@ -152,6 +152,12 @@ describe('getAvailableIcons', () => {
     expect(LEVEL_ICONS).toHaveLength(100);
   });
 
+  test('レベル67と70の報酬アバターは重複しない', () => {
+    expect(LEVEL_ICONS[66]).toBe('🧿');
+    expect(LEVEL_ICONS[69]).toBe('🪐');
+    expect(LEVEL_ICONS[66]).not.toBe(LEVEL_ICONS[69]);
+  });
+
   test('返されるアイコンは LEVEL_ICONS の先頭 N 件', () => {
     const icons = getAvailableIcons(3);
     expect(icons).toEqual(LEVEL_ICONS.slice(0, 3));

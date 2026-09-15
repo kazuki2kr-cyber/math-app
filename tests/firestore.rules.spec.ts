@@ -87,7 +87,7 @@ describe('Firestore Security Rules', () => {
     await expect(getDoc(ref)).rejects.toThrow();
   });
 
-  test('ユーザーは icon / 同意情報 / lastLoginAt のみ更新できる', async () => {
+  test('ユーザーは同意情報 / lastLoginAt のみ更新できる', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'users', aliceId), {
         uid: aliceId,
@@ -108,12 +108,49 @@ describe('Firestore Security Rules', () => {
 
     // 許可フィールドのみ → 成功
     await expect(updateDoc(aliceRef, {
-      icon: '🚀',
       hasAgreedToTerms: true,
       termsVersion: '2026-06-06',
       privacyPolicyVersion: '2026-07-18',
       legalAgreedAt: new Date().toISOString(),
     })).resolves.toBeUndefined();
+  });
+
+  test('新規ユーザーは解放済みアイコンを自己申告できない', async () => {
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
+
+    await expect(setDoc(aliceRef, {
+      uid: aliceId,
+      email: 'alice@shibaurafzk.com',
+      displayName: 'Alice',
+      lastLoginAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      xp: 0,
+      icon: '📐',
+      hasAgreedToTerms: false,
+      termsVersion: null,
+      privacyPolicyVersion: null,
+      legalAgreedAt: null,
+      isAdmin: false,
+      unlockedIcons: {
+        forged: { imageUrl: '/images/reward-icons/equation-writing-master.webp' },
+      },
+    })).rejects.toThrow();
+  });
+
+  test('ユーザーは icon を直接更新できない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', aliceId), {
+        uid: aliceId,
+        displayName: 'Alice',
+        icon: '📐',
+        xp: 10,
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
+    await expect(updateDoc(aliceRef, { icon: '🚀' })).rejects.toThrow();
   });
 
   test('ユーザーは displayName を直接更新できない（許可フィールド外）', async () => {

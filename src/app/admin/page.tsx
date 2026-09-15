@@ -857,6 +857,11 @@ export default function AdminPage() {
               event_starts_at,
               event_ends_at,
               written_attempt_limit,
+              reward_icon_id,
+              reward_icon_name,
+              reward_icon_image_url,
+              reward_condition_type,
+              reward_condition_value,
             } = row;
             if (!unit_id) return;
             const rowDrillType = question_type === 'written' || subjectMetadata.drillType === 'written' ? 'written' : 'multiple_choice';
@@ -887,6 +892,36 @@ export default function AdminPage() {
             // IDは単元内の連番で生成（全体行番号を使うと他単元の問題数に依存し、
             // 再インポート時にIDがズレて wrongQuestionIds の追跡が壊れる）
             const localIndex = unitsMap[unit_id].questions.length;
+            let iconReward = null;
+            const hasRewardSetting = [
+              reward_icon_id,
+              reward_icon_name,
+              reward_icon_image_url,
+              reward_condition_type,
+              reward_condition_value,
+            ].some((value) => String(value ?? '').trim() !== '');
+            if (hasRewardSetting) {
+              const rewardValue = Number(reward_condition_value);
+              if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(reward_icon_id)
+                || !reward_icon_name
+                || !/^\/images\/reward-icons\/[A-Za-z0-9][A-Za-z0-9._/-]*\.(png|webp|avif)$/.test(reward_icon_image_url || '')
+                || (reward_icon_image_url || '').includes('..')
+                || reward_condition_type !== 'written_score_at_least'
+                || !Number.isFinite(rewardValue)
+                || rewardValue < 0
+                || rewardValue > 100) {
+                throw new Error(`${unit_id}: アイコン報酬の設定が不正です。`);
+              }
+              iconReward = {
+                id: reward_icon_id,
+                name: reward_icon_name.slice(0, 80),
+                imageUrl: reward_icon_image_url,
+                condition: {
+                  type: reward_condition_type,
+                  value: Math.round(rewardValue),
+                },
+              };
+            }
             unitsMap[unit_id].questions.push({
               id: `q_${localIndex}`,
               order: localIndex,
@@ -905,6 +940,7 @@ export default function AdminPage() {
                   return parseOptions(r); // 互換性のためフォールバック
                 }
               })(grading_rubric) : [],
+              iconReward,
             });
             unitsMap[unit_id].unitDoc.totalQuestions = unitsMap[unit_id].questions.length;
           });
@@ -953,7 +989,7 @@ export default function AdminPage() {
     // answer_index は選択肢の番号（1始まり）。options の2番目が正解なら 2 と記入
     // image_url は省略可（末尾のカンマだけ残して空欄にする）
     const csvContent =
-`unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at
+`unit_id,category,question_text,options,answer_index,explanation,image_url,question_type,model_answer,grading_rubric,written_attempt_limit,event_status,event_starts_at,event_ends_at,reward_icon_id,reward_icon_name,reward_icon_image_url,reward_condition_type,reward_condition_value
 1.正負の数の加減,1.正の数と負の数,$1+1$は？,"[""1"",""2"",""3"",""4""]",2,1足す1は2です。,
 1.正負の数の加減,1.正の数と負の数,$x^2=4$ を解け,"[""x=2"",""x=-2"",""x=\\pm 2"",""解なし""]",3,平方根をとります。,
 2.文字と式,2.文字と式,次の図形の面積を求めよ,"[""10"",""20"",""30"",""40""]",2,底辺×高さ÷2です。,https://example.com/image.png
