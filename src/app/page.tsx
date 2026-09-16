@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { calculateLevelAndProgress, getTitleForLevel, getAvailableIcons } from '@/lib/xp';
 import { hasAcceptedCurrentLegalDocs, PRIVACY_POLICY_EFFECTIVE_DATE_LABEL } from '@/lib/legal';
 import { Button } from '@/components/ui/button';
-import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download, BrainCircuit, ShieldCheck, BarChart3 } from 'lucide-react';
+import { LogOut, PlayCircle, Trophy, Clock, Medal, Database, RefreshCw, MessageSquare, Send, XCircle, Megaphone, Download, NotebookPen, BarChart3 } from 'lucide-react';
 import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -519,7 +519,7 @@ export default function Home() {
                   <Megaphone className="w-3.5 h-3.5 text-primary/60" />
                   <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground/60">最新のアップデート</span>
                 </div>
-                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年8月24日</span>
+                <span className="text-[10px] font-semibold text-muted-foreground/50">最終更新: 2026年9月16日</span>
               </div>
 
               <section
@@ -561,54 +561,50 @@ export default function Home() {
               </section>
 
               <section
-                aria-labelledby="ai-stability-update-title"
-                className="mt-4 overflow-hidden rounded-2xl border border-blue-200/80 bg-gradient-to-br from-blue-50 via-card to-emerald-50/50 p-4 md:p-5"
+                aria-labelledby="recent-update-title"
+                className="mt-4 overflow-hidden rounded-2xl border border-blue-200/80 bg-gradient-to-br from-blue-50 via-card to-amber-50/50 p-4 md:p-5"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-2.5 py-1 text-[10px] font-black tracking-wider text-white shadow-sm">
-                    <BrainCircuit className="h-3 w-3" />
-                    NEW・端末内AI
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-black tracking-wider text-emerald-700">
-                    <ShieldCheck className="h-3 w-3" />
-                    安定性改善
+                    <Megaphone className="h-3 w-3" />
+                    NEW・9月アップデート
                   </span>
                 </div>
 
-                <h3 id="ai-stability-update-title" className="mt-3 text-base font-black leading-relaxed text-foreground md:text-lg">
-                  演習後の復習を<span className="mx-1 text-blue-700">この端末のAI</span>がサポート。通知・同期も安定しました。
+                <h3 id="recent-update-title" className="mt-3 text-base font-black leading-relaxed text-foreground md:text-lg">
+                  振り返りや計算用紙、対戦後のごほうびを<span className="mx-1 text-blue-700">もっと使いやすく</span>しました。
                 </h3>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <article className="rounded-xl border border-blue-100 bg-white/80 p-4 shadow-sm">
                     <h4 className="flex items-center gap-2 text-sm font-black text-blue-900">
-                      <BrainCircuit className="h-4 w-4 text-blue-600" />
-                      Chrome内蔵AIで個別復習
+                      <BarChart3 className="h-4 w-4 text-blue-600" />
+                      学習の振り返り
                     </h4>
                     <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                      演習結果から強み・重点ポイント・復習手順を整理し、間違えた問題への追加質問や類題を生成できます。対応端末では学習データをクラウドAIへ送らず、端末内で処理します。
+                      画面上部の「学習状況」から、演習回数・正答率・分野別の定着度をまとめて確認し、次に取り組む単元を選べます。
                     </p>
                   </article>
                   <article className="rounded-xl border border-emerald-100 bg-white/80 p-4 shadow-sm">
                     <h4 className="flex items-center gap-2 text-sm font-black text-emerald-900">
-                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                      通知・バックグラウンド同期を改善
+                      <NotebookPen className="h-4 w-4 text-emerald-600" />
+                      計算用紙と復習を改善
                     </h4>
                     <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                      Service Workerの起動を待ってから通知を登録するようにし、プッシュ通知の登録失敗や重複した同期処理が起きにくい構成へ改善しました。
+                      計算用紙を問題ごとに最大10ページ保存し、間違えた問題と一緒に見返せます。ダーク表示の消しゴムと、端末内AIが使えない場合の復習案内も改善しました。
+                    </p>
+                  </article>
+                  <article className="rounded-xl border border-amber-100 bg-white/80 p-4 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-sm font-black text-amber-900">
+                      <Trophy className="h-4 w-4 text-amber-600" />
+                      新しい対戦とごほうび
+                    </h4>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                      漢字対戦に「全単元ランダム10問」を追加しました。対象の問題で条件を達成すると、特別なアバターも獲得できます。
                     </p>
                   </article>
                 </div>
               </section>
-
-              <ul className="mt-4 space-y-1 text-xs leading-relaxed text-gray-600">
-                <li>・ ダッシュボード上部の<span className="font-semibold text-primary">「表示設定」</span>から、ライト・ダーク・端末設定を選べるようになりました。</li>
-                <li>・ ダーク表示で<span className="font-semibold text-primary">「わからない」</span>などの注意・補助メッセージを読み取りやすい配色に改善しました。</li>
-                <li>・ 計算用紙を問題ごとに最大10ページまで追加でき、前のページや問題へ戻って見返せるようになりました。</li>
-                <li>・ 演習後、間違えた問題と一緒にその問題で書いた計算用紙を確認できるようになりました。</li>
-                <li>・ 答えが思いつかないときに<span className="font-semibold text-primary">「わからない」</span>を選び、正解と解説を確認できるようになりました。</li>
-                <li>・ 獲得した経験値が、これまでより細かい間隔でランキングへ反映されるようになりました。</li>
-              </ul>
             </div>
 
             {/* Units List (Left/Top) */}
