@@ -2503,11 +2503,17 @@ export const setUnitQuestionsActive = functions
     });
     await writer.close();
 
-    await unitRef.update({
+    const metadataBatch = db.batch();
+    metadataBatch.update(unitRef, {
       activeQuestionCount: active ? questionsSnap.size : 0,
       questionAvailabilityRevision: FieldValue.increment(1),
       updatedAt: now,
     });
+    metadataBatch.set(db.doc("config/unit_catalog"), {
+      revision: FieldValue.increment(1),
+      updatedAt: now,
+    }, { merge: true });
+    await metadataBatch.commit();
 
     return {
       success: true,

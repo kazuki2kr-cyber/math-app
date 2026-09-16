@@ -473,6 +473,17 @@ describe('Firestore Security Rules', () => {
     await expect(getDoc(ref)).resolves.toBeDefined();
   });
 
+  test('未認証ユーザーも単元一覧の改訂番号を読み取れるが書き込めない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'config', 'unit_catalog'), { revision: 1 });
+    });
+
+    const anonContext = testEnv.unauthenticatedContext();
+    const ref = doc(anonContext.firestore(), 'config', 'unit_catalog');
+    await expect(getDoc(ref)).resolves.toBeDefined();
+    await expect(setDoc(ref, { revision: 999 })).rejects.toThrow();
+  });
+
   test('一般ユーザーは config/maintenance に書き込めない', async () => {
     const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'config', 'maintenance');

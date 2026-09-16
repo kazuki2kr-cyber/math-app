@@ -124,13 +124,19 @@ export default function Home() {
       try {
         // 1. Fetch units with caching
         localStorage.removeItem('math_units_cache'); // v1 cleanup
+        const catalogSnap = await getDoc(doc(db, 'config', 'unit_catalog'));
+        const catalogRevision = catalogSnap.exists() ? Number(catalogSnap.data().revision) || 0 : 0;
         const cachedUnits = unitsRefreshToken > 0 ? null : localStorage.getItem(UNITS_CACHE_KEY);
         let unitsData: Unit[] = [];
         
         if (cachedUnits) {
           try {
             const parsed = JSON.parse(cachedUnits);
-            if (Date.now() - parsed.timestamp < UNITS_CACHE_EXPIRY_MS) {
+            if (
+              Date.now() - parsed.timestamp < UNITS_CACHE_EXPIRY_MS
+              && typeof parsed.revision === 'number'
+              && parsed.revision === catalogRevision
+            ) {
               unitsData = parsed.data;
             }
           } catch (e) {
@@ -141,7 +147,11 @@ export default function Home() {
         if (unitsData.length === 0) {
           const unitsSnap = await getDocs(collection(db, 'units'));
           unitsData = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
-          localStorage.setItem(UNITS_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: unitsData }));
+          localStorage.setItem(UNITS_CACHE_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            revision: catalogRevision,
+            data: unitsData,
+          }));
         }
 
         const soloUnitsData = getMathDashboardUnits(unitsData);

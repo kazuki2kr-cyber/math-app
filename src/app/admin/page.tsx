@@ -418,6 +418,10 @@ export default function AdminPage() {
     setLoading(true);
     try {
       await deleteDoc(doc(db, 'units', unitId));
+      await setDoc(doc(db, 'config', 'unit_catalog'), {
+        revision: increment(1),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
       setUnits(units.filter(u => u.id !== unitId));
       setMessage(`単元「${unitId}」を削除しました。`);
     } catch (e) {
@@ -445,6 +449,10 @@ export default function AdminPage() {
         questionAvailabilityRevision: increment(1),
         updatedAt: serverTimestamp(),
       });
+      batch.set(doc(db, 'config', 'unit_catalog'), {
+        revision: increment(1),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
       await batch.commit();
       
       // ローカルステートを更新
@@ -488,6 +496,10 @@ export default function AdminPage() {
         questionAvailabilityRevision: increment(1),
         updatedAt: serverTimestamp(),
       });
+      batch.set(doc(db, 'config', 'unit_catalog'), {
+        revision: increment(1),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
       await batch.commit();
 
       setUnits(current => current.map(unit => (
@@ -1056,6 +1068,11 @@ export default function AdminPage() {
             writes.slice(i, i + 400).forEach(w => batch.set(w.ref, w.data, { merge: true }));
             await batch.commit();
           }
+
+          await setDoc(doc(db, 'config', 'unit_catalog'), {
+            revision: increment(1),
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
 
           localStorage.removeItem('math_units_cache_v4');
           setMessage(`完了: ${Object.keys(unitsMap).length} 個の単元データと ${writes.length - Object.keys(unitsMap).length} 問の問題を保存しました。`);

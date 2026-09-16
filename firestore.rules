@@ -220,7 +220,7 @@ service cloud.firestore {
     match /config/{configId} {
       // メンテナンスモードなどのシステム設定
       // 全ユーザーが読み取り可能（非ログインユーザーもメンテナンス画面を見るため）
-      allow read: if configId == 'maintenance' || configId == 'maintenance_kanji';
+      allow read: if configId == 'maintenance' || configId == 'maintenance_kanji' || configId == 'unit_catalog';
       // 管理者のみ書き込み可能
       allow write: if isAdmin();
     }
