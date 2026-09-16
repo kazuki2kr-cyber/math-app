@@ -6,6 +6,7 @@ import {
   buildCompactAdvisorPrompt,
   buildCompactPracticePrompt,
   buildFollowUpPrompt,
+  buildLocalReviewFallback,
   buildPracticePrompt,
   getOnDeviceAiErrorMessage,
   groundAdvisorResult,
@@ -120,6 +121,23 @@ describe('on-device AI advisor', () => {
     expect(grounded.weaknesses[0].evidence).toBe('「2x + 3 = 9 を解きなさい。」で誤答がありました。');
     expect(JSON.stringify(grounded)).not.toMatch(/不足|計算力があります|混同|推測/);
     expect(grounded.reviewSteps).toEqual(['同類項をまとめる。', '答えを確認する。']);
+  });
+
+  it('builds an evidence-only review guide when Chrome built-in AI is unavailable', () => {
+    const result = buildLocalReviewFallback({
+      unitTitle: '方程式',
+      score: 50,
+      totalQuestions: 2,
+      correctQuestions: [{ id: 'q-2', questionText: 'x + 1 = 3' }],
+      wrongQuestions: [wrongQuestion],
+    });
+
+    expect(result.summary).toContain('2問中1問正解');
+    expect(result.weaknesses[0].evidence).toContain('2x + 3 = 9');
+    expect(result.reviewSteps).toEqual([
+      '「2x + 3 = 9 を解きなさい。」の元の解説を確認する。',
+      '正答を元の問題に当てはめて、計算が合うか確認する。',
+    ]);
   });
 
   it('removes HTML and replaces leaked internal field labels in generated advice', () => {

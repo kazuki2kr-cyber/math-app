@@ -172,14 +172,44 @@ test.describe('結果ページ', () => {
     });
 
     await page.getByRole('button', { name: 'この端末でAIアドバイスを生成' }).click();
-    await expect(page.getByText('たし算の意味をもう一度確認しましょう。')).toBeVisible();
+    await expect(page.getByText(/1問中0問正解/)).toBeVisible();
     await expect(page.getByText(/Unterminated string/)).toHaveCount(0);
-    await expect(page.getByText('根拠: 2+2の問題で3を選びました。')).toBeVisible();
+    await expect(page.getByText('根拠: 「2+2」で誤答がありました。')).toBeVisible();
     await expect(page.getByText('3+2はいくつですか。', { exact: false })).toBeVisible();
 
     await page.getByLabel('追加の質問').fill('なぜ答えが4になるの？');
     await page.getByRole('button', { name: '質問する' }).click();
     await expect(page.getByText('2を2回たすので4になります。')).toBeVisible();
+  });
+
+  test('Chrome内蔵AIが利用できないときも復習ガイドを表示する', async ({ page }) => {
+    const unitCard = page.locator('.group', { hasText: 'テスト単元2' }).first();
+    await unitCard.waitFor({ timeout: 10000 });
+    await unitCard.locator('button', { hasText: '演習開始' }).click();
+    await page.waitForURL(/\/drill\/test_unit_2/, { timeout: 15000 });
+    await page.getByText(/Question 1/).waitFor({ timeout: 15000 });
+
+    await page.locator('button', { hasText: '3' }).first().click();
+    await page.locator('button', { hasText: '演習を完了する' }).click();
+    await page.waitForURL(/\/result\/test_unit_2/, { timeout: 15000 });
+    await page.getByText('Result').waitFor({ timeout: 20000 });
+
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'LanguageModel', {
+        configurable: true,
+        value: {
+          availability: async () => 'unavailable',
+          create: async () => {
+            throw new Error('create should not be called');
+          },
+        },
+      });
+    });
+
+    await page.getByRole('button', { name: 'この端末でAIアドバイスを生成' }).click();
+    await expect(page.getByText(/AIは現在利用できないため/)).toBeVisible();
+    await expect(page.getByText(/1問中0問正解/)).toBeVisible();
+    await expect(page.getByText('間違えた問題を質問する')).toHaveCount(0);
   });
 
   test('XP の内訳が表示される', async ({ page }) => {

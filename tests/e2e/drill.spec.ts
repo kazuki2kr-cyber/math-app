@@ -80,6 +80,12 @@ test.describe('ドリル演習', () => {
   });
 
   test('計算用紙は問題ごとに保持され、結果送信データには含まれない', async ({ page }) => {
+    await page.evaluate(() => {
+      window.localStorage.setItem('formix:theme', 'dark');
+      window.dispatchEvent(new Event('formix-theme-change'));
+    });
+    await expect(page.locator('html')).toHaveClass(/dark/);
+
     const unitCard = page.locator('.group', { hasText: 'テスト複数問題単元' }).first();
     await unitCard.waitFor({ timeout: 10000 });
     await unitCard.locator('button', { hasText: '演習開始' }).click();
@@ -90,9 +96,10 @@ test.describe('ドリル演習', () => {
     const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
     const eraserButton = page.getByRole('button', { name: '消しゴムで消す' });
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
-    await expect(eraserButton).toBeDisabled({ timeout: 5000 });
+    await expect(eraserButton).toBeEnabled({ timeout: 5000 });
     await expect(page.locator('section[aria-hidden="false"]').getByText('Q1/3')).toBeVisible();
     await expect(page.getByRole('button', { name: 'ペンの太さ: 標準' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: '消しゴムのサイズ: 中' })).toHaveAttribute('aria-pressed', 'false');
 
     await page.getByRole('button', { name: 'ペンの太さ: かなり細い' }).click();
     await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
@@ -119,6 +126,21 @@ test.describe('ドリル演習', () => {
     await page.mouse.down();
     await page.mouse.move(box.x + 108, box.y + 84);
     await page.mouse.up();
+    const erasedPixel = await canvas.evaluate((element) => {
+      const scratchCanvas = element as HTMLCanvasElement;
+      const context = scratchCanvas.getContext('2d');
+      const rect = scratchCanvas.getBoundingClientRect();
+      if (!context) throw new Error('Scratch paper canvas context was unavailable');
+      const scaleX = scratchCanvas.width / rect.width;
+      const scaleY = scratchCanvas.height / rect.height;
+      return Array.from(context.getImageData(
+        Math.round(96 * scaleX),
+        Math.round(76 * scaleY),
+        1,
+        1,
+      ).data);
+    });
+    expect(erasedPixel).toEqual([255, 255, 255, 255]);
     await expect(page.getByRole('button', { name: 'ペンで書く' })).toHaveAttribute('aria-pressed', 'false');
     await page.getByRole('button', { name: 'ペンで書く' }).click();
     await expect(page.getByRole('button', { name: 'ペンで書く' })).toHaveAttribute('aria-pressed', 'true');

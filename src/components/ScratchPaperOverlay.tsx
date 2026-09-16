@@ -200,8 +200,8 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                   onClick={() => setActiveTool('pen')}
                   className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors ${
                     activeTool === 'pen'
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                      ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-200 dark:bg-blue-500 dark:ring-blue-800'
+                      : 'text-gray-600 hover:bg-blue-50 hover:text-blue-900 dark:text-gray-300 dark:hover:bg-blue-950 dark:hover:text-blue-100'
                   }`}
                 >
                   <PenLine className="h-4 w-4" />
@@ -209,14 +209,13 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 <button
                   type="button"
                   tabIndex={open ? 0 : -1}
-                 disabled={!currentPageHasStrokes}
                   aria-label="消しゴムで消す"
                   aria-pressed={activeTool === 'eraser'}
                   onClick={() => setActiveTool('eraser')}
-                  className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors ${
                     activeTool === 'eraser'
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                      ? 'bg-amber-400 text-slate-950 shadow-sm ring-2 ring-amber-200 dark:bg-amber-300 dark:ring-amber-800'
+                      : 'text-gray-600 hover:bg-amber-50 hover:text-amber-900 dark:text-gray-300 dark:hover:bg-amber-950 dark:hover:text-amber-100'
                   }`}
                 >
                   <Eraser className="h-4 w-4" />
@@ -227,24 +226,23 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 aria-label="消しゴムのサイズ"
               >
                 {ERASER_SIZE_OPTIONS.map((option) => {
-                  const isSelected = eraserSizeId === option.id;
+                  const isSelected = activeTool === 'eraser' && eraserSizeId === option.id;
 
                   return (
                     <button
                       key={option.id}
                       type="button"
                       tabIndex={open ? 0 : -1}
-                 disabled={!currentPageHasStrokes}
                       aria-label={`消しゴムのサイズ: ${option.label}`}
                       aria-pressed={isSelected}
                       onClick={() => {
                         setEraserSizeId(option.id);
                         setActiveTool('eraser');
                       }}
-                      className={`h-8 min-w-8 rounded-md px-2 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      className={`h-8 min-w-8 rounded-md px-2 text-xs font-bold transition-colors ${
                         isSelected
-                          ? 'bg-primary text-white shadow-sm'
-                          : 'text-gray-600 hover:bg-white hover:text-gray-950'
+                          ? 'bg-amber-400 text-slate-950 shadow-sm ring-2 ring-amber-200 dark:bg-amber-300 dark:ring-amber-800'
+                          : 'text-gray-600 hover:bg-amber-50 hover:text-amber-900 dark:text-gray-300 dark:hover:bg-amber-950 dark:hover:text-amber-100'
                       }`}
                     >
                       {option.label}

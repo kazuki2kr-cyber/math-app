@@ -26,6 +26,8 @@ interface PreviewPoint {
   y: number;
 }
 
+const PAPER_COLOR = '#FFFFFF';
+
 export interface HandwritingCanvasRef {
   undo: () => void;
   clear: () => void;
@@ -93,7 +95,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, rect.width, rect.height);
-      ctx.fillStyle = '#FFFFFF';
+      ctx.fillStyle = PAPER_COLOR;
       ctx.fillRect(0, 0, rect.width, rect.height);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -107,8 +109,10 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
         if (stroke.points.length === 0) return;
 
         ctx.beginPath();
-        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
-        ctx.strokeStyle = stroke.color;
+        // 消しゴムで透明化すると、ダークテーマの親背景が透けて黒く見える。
+        // 計算用紙は常に白い紙面として書き出すため、白で上書きする。
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = stroke.tool === 'eraser' ? PAPER_COLOR : stroke.color;
         ctx.lineWidth = stroke.width;
         ctx.moveTo(stroke.points[0].x * rect.width, stroke.points[0].y * rect.height);
         for (let index = 1; index < stroke.points.length; index += 1) {
@@ -177,7 +181,7 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
       setIsDrawing(true);
       setCurrentStroke({
         points: [getPointerPosition(event)],
-        color: tool === 'eraser' ? '#000000' : strokeColor,
+        color: tool === 'eraser' ? PAPER_COLOR : strokeColor,
         width: tool === 'eraser' ? eraserWidth : strokeWidth,
         tool,
       });

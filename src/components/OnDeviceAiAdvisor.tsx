@@ -15,6 +15,7 @@ import {
   buildCompactAdvisorPrompt,
   buildCompactPracticePrompt,
   buildFollowUpPrompt,
+  buildLocalReviewFallback,
   buildPracticePrompt,
   createOnDeviceAiSession,
   getOnDeviceAiErrorMessage,
@@ -68,6 +69,7 @@ export function OnDeviceAiAdvisor({
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
   const [error, setError] = useState('');
+  const [fallbackMode, setFallbackMode] = useState(false);
   const sessionRef = useRef<OnDeviceAiSession | null>(null);
   const followUpSessionRef = useRef<OnDeviceAiSession | null>(null);
   const followUpQuestionIdRef = useRef('');
@@ -150,17 +152,18 @@ export function OnDeviceAiAdvisor({
     setDownloadProgress(0);
     setError('');
     setPracticeProblems([]);
+    setFallbackMode(false);
     let adviceGenerated = false;
+    const input = {
+      unitTitle,
+      score,
+      totalQuestions,
+      correctQuestions,
+      wrongQuestions,
+    };
     try {
       const baseSession = await getSession(controller);
       setStatusText('演習結果を分析しています…');
-      const input = {
-        unitTitle,
-        score,
-        totalQuestions,
-        correctQuestions,
-        wrongQuestions,
-      };
       let advisorResult: AdvisorResult;
       try {
         const advisorTask = await createIsolatedSession(baseSession, controller, true);
@@ -230,6 +233,12 @@ export function OnDeviceAiAdvisor({
       const message = getOnDeviceAiErrorMessage(generationError);
       if (message && adviceGenerated) {
         setError(`アドバイスは生成できましたが、類題を生成できませんでした。${message}`);
+        resetSessionsAfterError();
+      } else if (message) {
+        setAdvice(buildLocalReviewFallback(input));
+        setFallbackMode(true);
+        setStatusText('');
+        setError(`Chrome内蔵AIは現在利用できないため、演習結果と元の解説だけを使った復習ガイドを表示しました。AI類題と追加質問は利用できません。${message}`);
         resetSessionsAfterError();
       } else {
         finishWithError(generationError);
@@ -412,7 +421,7 @@ export function OnDeviceAiAdvisor({
           </div>
         )}
 
-        {advice && wrongQuestions.length > 0 && (
+        {advice && !fallbackMode && wrongQuestions.length > 0 && (
           <section className="rounded-xl border border-blue-100 bg-white p-5">
             <h3 className="flex items-center font-black text-blue-950">
               <Send className="mr-2 h-4 w-4" />間違えた問題を質問する

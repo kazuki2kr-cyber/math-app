@@ -441,6 +441,27 @@ export function groundAdvisorResult(result: AdvisorResult, input: AdvisorInput):
   };
 }
 
+export function buildLocalReviewFallback(input: AdvisorInput): AdvisorResult {
+  const reviewSteps = input.wrongQuestions.length > 0
+    ? [
+        ...input.wrongQuestions.slice(0, 2).map((question) => (
+          `「${clampText(question.questionText, 120)}」の元の解説を確認する。`
+        )),
+        '正答を元の問題に当てはめて、計算が合うか確認する。',
+      ].slice(0, 3)
+    : [
+        '正解した問題から1問選び、途中式をもう一度書く。',
+        '元の解説と自分の解き方を見比べる。',
+      ];
+
+  return groundAdvisorResult({
+    summary: '',
+    strengths: [],
+    weaknesses: [],
+    reviewSteps,
+  }, input);
+}
+
 export function parsePracticeResult(text: string): PracticeResult {
   const parsed = parseJsonObject(text);
   const practiceProblems = Array.isArray(parsed.practiceProblems)
@@ -635,11 +656,13 @@ export async function createOnDeviceAiSession(
   onDownloadProgress: (progress: number) => void,
 ) {
   const api = getOnDeviceLanguageModelApi();
-  if (!api) throw new Error('このChromeでは端末内AIを利用できません。');
+  if (!api) {
+    throw new Error('Chrome内蔵AIを現在利用できません。Chromeを最新版に更新して再起動後にもう一度お試しください。');
+  }
 
   const availability = await api.availability(SESSION_OPTIONS);
   if (availability === 'unavailable') {
-    throw new Error('この端末はChrome内蔵AIの動作要件を満たしていません。');
+    throw new Error('Chrome内蔵AIのモデルまたはこの設定を現在利用できません。Chromeを最新版に更新し、10GB以上の空き容量を確保して再起動後にもう一度お試しください。');
   }
 
   const session = await api.create({
