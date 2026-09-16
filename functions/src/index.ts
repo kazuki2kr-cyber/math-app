@@ -13,6 +13,11 @@ import {
 } from "./writtenAttemptState";
 import { getEarnedWrittenIconReward } from "./iconRewards";
 import { filterActiveQuestionsServer } from "./questionAvailability";
+import {
+  preserveTotalScoreForWrittenAttempt,
+  WRITTEN_INCLUDE_IN_TOTAL_SCORE,
+} from "./writtenRankingPolicy";
+import { canManageUnitQuestionAvailability } from "./unitQuestionAvailability";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -2168,7 +2173,7 @@ export const submitWrittenDrillResult = functions
         time,
         date: dateStr,
         xpGain: 0,
-        includeInTotalScore: false,
+        includeInTotalScore: WRITTEN_INCLUDE_IN_TOTAL_SCORE,
         attemptOrdinal,
         attemptLimit: limit,
         attemptGroupId,
@@ -2360,7 +2365,7 @@ export const submitWrittenDrillResult = functions
         time,
         date: dateStr,
         xpGain: finalXpGain,
-        includeInTotalScore: false,
+        includeInTotalScore: WRITTEN_INCLUDE_IN_TOTAL_SCORE,
         attemptOrdinal,
         attemptLimit: limit,
         attemptGroupId,
@@ -2399,7 +2404,7 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         remainingAttempts,
         source: "submitWrittenDrillResult",
-        includeInTotalScore: false,
+        includeInTotalScore: WRITTEN_INCLUDE_IN_TOTAL_SCORE,
         questionResults: [{
           questionId,
           questionOrder: Number(question.order || 1),
@@ -2446,7 +2451,7 @@ export const submitWrittenDrillResult = functions
               icon: currentIcon,
               level: newLevelData.level,
               xp: newTotalXp,
-              totalScore: Number(userData.totalScore) || 0,
+              totalScore: preserveTotalScoreForWrittenAttempt(userData.totalScore),
               incrementParticipantCount: false,
             }
           : null,
@@ -2463,6 +2468,54 @@ export const submitWrittenDrillResult = functions
     }
     const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
     return { ...clientResult, score: grading.score };
+  });
+
+export const setUnitQuestionsActive = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    if (!canManageUnitQuestionAvailability(context.auth?.token)) {
+      throw new functions.https.HttpsError("permission-denied", "管理者のみが問題の公開状態を変更できます。");
+    }
+
+    const unitId = clampString((data as any)?.unitId, 120);
+    const active = (data as any)?.active;
+    if (!unitId || unitId.includes("/") || typeof active !== "boolean") {
+      throw new functions.https.HttpsError("invalid-argument", "unitId と active を正しく指定してください。");
+    }
+
+    const unitRef = db.doc(`units/${unitId}`);
+    const [unitSnap, questionsSnap] = await Promise.all([
+      unitRef.get(),
+      unitRef.collection("questions").get(),
+    ]);
+    if (!unitSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "指定された単元が見つかりません。");
+    }
+    if (questionsSnap.empty) {
+      throw new functions.https.HttpsError("failed-precondition", "この単元には切り替え可能な問題がありません。");
+    }
+
+    const now = Timestamp.now();
+    const writer = db.bulkWriter();
+    writer.onWriteError((error) => error.failedAttempts < 3);
+    questionsSnap.docs.forEach((questionDoc) => {
+      writer.update(questionDoc.ref, { active, updatedAt: now });
+    });
+    await writer.close();
+
+    await unitRef.update({
+      activeQuestionCount: active ? questionsSnap.size : 0,
+      questionAvailabilityRevision: FieldValue.increment(1),
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      unitId,
+      active,
+      questionCount: questionsSnap.size,
+      activeQuestionCount: active ? questionsSnap.size : 0,
+    };
   });
 
 export const setUserIcon = functions

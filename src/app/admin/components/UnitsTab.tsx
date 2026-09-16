@@ -17,7 +17,9 @@ interface UnitsTabProps {
   onDeleteUnit: (unitId: string) => void;
   onDeleteQuestion: (unitId: string, qId: string) => void;
   onToggleQuestionActive: (unitId: string, qId: string, active: boolean) => void;
+  onToggleUnitQuestionsActive: (unitId: string, active: boolean) => void;
   updatingQuestionKeys: Set<string>;
+  updatingUnitIds: Set<string>;
   onRefresh: () => void;
 }
 
@@ -25,7 +27,8 @@ export default function UnitsTab({
   units, loading,
   unitFilterSubject, setUnitFilterSubject,
   unitFilterCategory, setUnitFilterCategory,
-  onDeleteUnit, onDeleteQuestion, onToggleQuestionActive, updatingQuestionKeys, onRefresh,
+  onDeleteUnit, onDeleteQuestion, onToggleQuestionActive, onToggleUnitQuestionsActive,
+  updatingQuestionKeys, updatingUnitIds, onRefresh,
 }: UnitsTabProps) {
   const filteredUnits = units.filter(u => {
     const sMatch = unitFilterSubject === 'all' || u.subject === unitFilterSubject;
@@ -102,9 +105,15 @@ export default function UnitsTab({
         </div>
       </div>
 
-      {filteredUnits.map(unit => (
-        <Card key={unit.id} className="shadow-sm">
-          <CardHeader className="bg-gray-50 border-b flex flex-row items-center justify-between py-4">
+      {filteredUnits.map(unit => {
+        const questionCount = unit.questions?.length || 0;
+        const activeQuestionCount = unit.questions?.filter((q: any) => q.active !== false).length || 0;
+        const isUpdatingUnit = updatingUnitIds.has(unit.id);
+        const isUpdatingQuestionInUnit = Array.from(updatingQuestionKeys).some(key => key.startsWith(`${unit.id}/`));
+        const isUnitBusy = isUpdatingUnit || isUpdatingQuestionInUnit;
+        return (
+          <Card key={unit.id} className="shadow-sm">
+          <CardHeader className="flex flex-col gap-4 border-b bg-gray-50 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded uppercase">
@@ -136,17 +145,35 @@ export default function UnitsTab({
                     <span className="font-bold text-gray-700">終了:</span> {formatEventDate(unit.eventEndsAt)}
                   </div>
                   <div className="rounded border bg-blue-50 px-3 py-2 text-blue-700 sm:col-span-2">
-                    総合ランキング対象外。1問構成で運用してください。
+                    総合ランキングの得点対象外（獲得XPは同点時の順位に影響）。1問構成で運用してください。
                   </div>
                 </div>
               )}
               <CardDescription>
-                問題数: {unit.totalQuestions || 0}問（公開中 {unit.questions?.filter((q: any) => q.active !== false).length || 0}問）
+                問題数: {unit.totalQuestions || 0}問（公開中 {activeQuestionCount}問）
               </CardDescription>
             </div>
-            <Button variant="destructive" size="sm" onClick={() => onDeleteUnit(unit.id)}>
-              <Trash2 className="w-4 h-4 mr-2" /> 単元を削除
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isUnitBusy || questionCount === 0 || activeQuestionCount === questionCount}
+                onClick={() => onToggleUnitQuestionsActive(unit.id, true)}
+              >
+                <Eye className="mr-2 h-4 w-4" /> 全問公開
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isUnitBusy || questionCount === 0 || activeQuestionCount === 0}
+                onClick={() => onToggleUnitQuestionsActive(unit.id, false)}
+              >
+                <EyeOff className="mr-2 h-4 w-4" /> 全問非公開
+              </Button>
+              <Button variant="destructive" size="sm" disabled={isUnitBusy} onClick={() => onDeleteUnit(unit.id)}>
+                <Trash2 className="w-4 h-4 mr-2" /> 単元を削除
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0 divide-y max-h-[400px] overflow-y-auto">
             {unit.questions?.map((q: any, i: number) => (
@@ -197,22 +224,23 @@ export default function UnitsTab({
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={updatingQuestionKeys.has(`${unit.id}/${q.id}`)}
+                    disabled={isUnitBusy}
                     aria-pressed={q.active !== false}
                     onClick={() => onToggleQuestionActive(unit.id, q.id, q.active === false)}
                   >
                     {q.active === false ? <Eye className="mr-2 h-4 w-4" /> : <EyeOff className="mr-2 h-4 w-4" />}
                     {q.active === false ? '公開する' : '非公開にする'}
                   </Button>
-                  <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => onDeleteQuestion(unit.id, q.id)}>
+                  <Button variant="ghost" size="sm" disabled={isUnitBusy} className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => onDeleteQuestion(unit.id, q.id)}>
                     削除
                   </Button>
                 </div>
               </div>
             ))}
           </CardContent>
-        </Card>
-      ))}
+          </Card>
+        );
+      })}
     </div>
   );
 }

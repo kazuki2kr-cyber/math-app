@@ -120,6 +120,7 @@ export default function AdminPage() {
   const [unitFilterSubject, setUnitFilterSubject] = useState<string>('all');
   const [unitFilterCategory, setUnitFilterCategory] = useState<string>('all');
   const [updatingQuestionKeys, setUpdatingQuestionKeys] = useState<Set<string>>(new Set());
+  const [updatingUnitIds, setUpdatingUnitIds] = useState<Set<string>>(new Set());
 
   // Role management state
   const [roleEmail, setRoleEmail] = useState('');
@@ -509,6 +510,42 @@ export default function AdminPage() {
       setUpdatingQuestionKeys(current => {
         const next = new Set(current);
         next.delete(questionKey);
+        return next;
+      });
+    }
+  };
+
+  const handleToggleUnitQuestionsActive = async (unitId: string, active: boolean) => {
+    setUpdatingUnitIds(current => new Set(current).add(unitId));
+    setMessage('');
+
+    try {
+      const functions = getFunctions(undefined, 'us-central1');
+      const setUnitQuestionsActive = httpsCallable<
+        { unitId: string; active: boolean },
+        { questionCount: number; activeQuestionCount: number }
+      >(functions, 'setUnitQuestionsActive');
+      const response = await setUnitQuestionsActive({ unitId, active });
+
+      setUnits(current => current.map(unit => (
+        unit.id === unitId
+          ? {
+              ...unit,
+              activeQuestionCount: response.data.activeQuestionCount,
+              questionAvailabilityRevision: (Number(unit.questionAvailabilityRevision) || 0) + 1,
+              questions: unit.questions.map((question: any) => ({ ...question, active })),
+            }
+          : unit
+      )));
+      setMessage(`単元内の${response.data.questionCount}問をすべて${active ? '公開' : '非公開'}にしました。`);
+    } catch (e: any) {
+      console.error(e);
+      await fetchUnits();
+      setMessage(`単元の公開状態更新に失敗しました: ${e.message || e}`);
+    } finally {
+      setUpdatingUnitIds(current => {
+        const next = new Set(current);
+        next.delete(unitId);
         return next;
       });
     }
@@ -1181,7 +1218,9 @@ export default function AdminPage() {
           onDeleteUnit={handleDeleteUnit}
           onDeleteQuestion={handleDeleteQuestion}
           onToggleQuestionActive={handleToggleQuestionActive}
+          onToggleUnitQuestionsActive={handleToggleUnitQuestionsActive}
           updatingQuestionKeys={updatingQuestionKeys}
+          updatingUnitIds={updatingUnitIds}
           onRefresh={fetchUnits}
         />
       )}
