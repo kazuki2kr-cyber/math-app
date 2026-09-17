@@ -1,1 +1,12 @@
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+if [ "$BRANCH" = "main" ]; then
+    echo "==========================================="
+    echo "🚀 Auto-bumping app version before commit..."
+    echo "==========================================="
+
+    node scripts/bump-version-for-main.mjs || exit 1
+    git add package.json package-lock.json
+fi
+
 node scripts/check-staged-files.mjs
