@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { updateLearningReviewStats } from "./learningReview";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { ServerValue } from "firebase-admin/database";
@@ -18,6 +19,13 @@ import {
   WRITTEN_INCLUDE_IN_TOTAL_SCORE,
 } from "./writtenRankingPolicy";
 import { canManageUnitQuestionAvailability } from "./unitQuestionAvailability";
+import {
+  extractRecognizedCharacters,
+  KanjiOcrQuestionResult,
+  normalizeKanjiText,
+  OcrQuestionLayout,
+  processKanjiOcrResult,
+} from "./kanjiOcrCore";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -955,7 +963,6 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
   }
 
   // 正解（answer/answer_index）はクライアントに送らない。問題文・画像・文字数のみ返す
-  const { normalizeKanjiText } = require("./kanjiOcrCore");
   const includeAnswerForAdmin = context.auth.token?.admin === true;
   const questions = selectedQuestions.map((question) => {
     let resolvedAnswer = "";
@@ -1009,7 +1016,7 @@ export const submitKanjiBattleOcr = functions
     const { roomId: rawRoomId, composedImageBase64, layout, questionIds } = data as {
       roomId: string;
       composedImageBase64: string;
-      layout: import("./kanjiOcrCore").OcrQuestionLayout[];
+      layout: OcrQuestionLayout[];
       questionIds: string[];
     };
 
@@ -1059,7 +1066,7 @@ export const submitKanjiBattleOcr = functions
       .filter(Boolean) as typeof battleQuestions;
 
     // 4. Vision API 呼び出し（recognizeKanjiBatch と同一の設定）
-    const visionClient = new (require("@google-cloud/vision").ImageAnnotatorClient)();
+    const visionClient = new ImageAnnotatorClient();
     const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
     let visionResult: any;
     try {
@@ -1074,13 +1081,8 @@ export const submitKanjiBattleOcr = functions
     }
 
     // 5. 文字抽出 → 正誤判定（kanjiOcrCore の共通関数を使用）
-    const {
-      extractRecognizedCharacters,
-      processKanjiOcrResult,
-    } = require("./kanjiOcrCore");
-
     const recognizedCharacters = extractRecognizedCharacters(visionResult);
-    const ocrResults: import("./kanjiOcrCore").KanjiOcrQuestionResult[] =
+    const ocrResults: KanjiOcrQuestionResult[] =
       processKanjiOcrResult(recognizedCharacters, orderedQuestions, layout);
 
     // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）

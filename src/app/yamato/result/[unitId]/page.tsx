@@ -28,21 +28,25 @@ export default function KanjiResultPage({ params }: { params: Promise<{ unitId: 
   const [composedImage, setComposedImage] = useState<string | null>(null);
 
   useEffect(() => {
-    // SessionStorageから結果を復元
-    const dataStr = sessionStorage.getItem('kanji_last_result');
-    const imageStr = sessionStorage.getItem('kanji_composed_image');
-    
-    if (dataStr) {
-      setResult(JSON.parse(dataStr));
-    } else {
-      // 結果がない場合はトップへ戻す
-      alert('結果データが見つかりません');
-      router.replace('/yamato');
-    }
+    const restoreTimer = window.setTimeout(() => {
+      // SessionStorageから結果を復元
+      const dataStr = sessionStorage.getItem('kanji_last_result');
+      const imageStr = sessionStorage.getItem('kanji_composed_image');
 
-    if (imageStr) {
-      setComposedImage(imageStr);
-    }
+      if (dataStr) {
+        setResult(JSON.parse(dataStr));
+      } else {
+        // 結果がない場合はトップへ戻す
+        alert('結果データが見つかりません');
+        router.replace('/yamato');
+      }
+
+      if (imageStr) {
+        setComposedImage(imageStr);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(restoreTimer);
   }, [router]);
 
   if (!result) {
