@@ -4,7 +4,12 @@ const { buildFirebaseEnv } = require('./firebase-emulator-env');
 
 const projectRoot = path.join(__dirname, '..');
 
-const firebaseBin = path.join(projectRoot, 'node_modules', '.bin', 'firebase.cmd');
+const firebaseBin = path.join(
+  projectRoot,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'firebase.cmd' : 'firebase'
+);
 let env;
 try {
   env = buildFirebaseEnv(projectRoot);

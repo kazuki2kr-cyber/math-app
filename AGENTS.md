@@ -93,6 +93,7 @@ Codex は Claude のスラッシュコマンドをそのまま実行するわけ
 |------------|---------------------|
 | `*.csv` ファイルを読み込んで数学問題データをチェック・修正する操作 | `.agents/skills/math-csv-check` および `.codex/commands/tools/math-csv-check.md` |
 | Firebase / Firestore / Cloud Functions の設計・変更 | `.agents/skills/firebase-best-practices` |
+| Gemini記述式採点のモデル・API・Schema・応答解析の変更 | `docs/written-grading-architecture.md` および `.codex/commands/tools/deploy-checklist.md` |
 | セキュリティレビュー、権限、脆弱性確認 | `.agents/skills/security-audit` および `.codex/commands/tools/security-scan.md` |
 
 ---
@@ -161,10 +162,12 @@ math.app は Firebase / Google Cloud / BigQuery などを扱うため、該当�
 
 ```bash
 npm run dev           # 開発サーバー
-npm test              # ユニットテスト
-npm run test:security # セキュリティテスト
-npm run test:e2e      # E2E テスト
-cd functions && npx tsc --noEmit
+npm run test:unit     # エミュレータ不要のユニットテスト
+npm run test:security # Firestore ルールテスト
+npm test              # 上記2種類を順番に実行
+npm run test:e2e:emu  # Firebase Emulator 付き E2E テスト
+npm run build         # Next.js 本番ビルド
+npm --prefix functions run build # Functions 型チェック・ビルド
 ```
 
 Windows PowerShell で `npm.ps1` の実行ポリシーに当たる場合は `npm.cmd` を使う。
@@ -175,7 +178,7 @@ Firebase CLI は `.firebaserc` に既定プロジェクトが入っていない�
 
 ## 8. 注意事項
 
-- `package.json` の version は pre-push フックが自動管理。手動で変更しない
+- `package.json` の version は main ブランチ上の pre-commit フックが自動管理。手動で変更しない
 - ソース、Markdown、CSV、設定ファイルは原則 UTF-8 で保存する。Shift_JIS / CP932 由来の文字化けを防ぐため、日本語・絵文字を含む編集後は必要に応じて `npm run check:mojibake` を手動実行する
 - 成績・XP・ランキング・分析イベントなど信頼境界内の書き込みは原則 Cloud Functions 経由
 - 数学ドリルのスコアは Functions 側で再計算する。`standard` / `wrong` は正解1問あたり10点、`all` は正答率ベース。復習モードも解いた問題数ぶんだけスコア・XP・集計に反映する

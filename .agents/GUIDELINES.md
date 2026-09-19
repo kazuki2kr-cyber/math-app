@@ -50,10 +50,9 @@ math.app/
 - `user_feedback`: アプリ内フィードバック
 - `analytics_events`: BigQuery 連携用の演習イベントログ
 - `analytics_serving/*`: 管理画面向けの集計済み分析データ
-- `battle_results`, `kanji_battle_results`, `kanji_battle_ocr`: 対戦・漢字対戦の確定結果や冪等性管理
+- `kanji_battle_results`, `kanji_battle_ocr`: 漢字対戦の確定結果や冪等性管理
 
 ### 主要 Realtime Database パス
-- `battleRooms/{roomId}`: 数学対戦ルーム
 - `kanjiBattleRooms/{roomId}`: 漢字対戦ルーム
 
 ---
@@ -64,7 +63,7 @@ math.app/
 > [!IMPORTANT]
 > **Firestore セキュリティルール** は生命線です。学生によるデータの直接書き換えを厳格に防ぎます。
 - **直接書き込み禁止**: `users` のXP・スコア・統計、`stats`、`analytics_events` など信頼境界内のデータをクライアントから直接書き換えない。旧 `scores` コレクションは互換・参照用途が残るが、新規の成績更新は `users/{uid}/unitStats` と `users/{uid}/attempts` を中心に扱う。
-- **Functions 経由**: 数学ドリルの成績更新は `processDrillResult`、漢字ドリルは `submitKanjiDrillResult`、対戦の確定処理は `finalizeBattleRoom` / `finalizeKanjiBattleRoom` を経由させる。
+- **Functions 経由**: 数学ドリルの成績更新は `processDrillResult`、漢字ドリルは `submitKanjiDrillResult`、漢字対戦の確定処理は `finalizeKanjiBattleRoom` を経由させる。
 - **ルール変更時の義務**: `firestore.rules` を変更した場合は、必ず `tests/firestore.rules.spec.ts` にテストを追加し、`npm run test:security` を実行すること。
 
 ### 信頼境界
@@ -79,18 +78,22 @@ math.app/
 ### 主要コマンド
 ```bash
 npm run dev           # 開発サーバー
-npm test              # ユニットテスト
+npm run test:unit     # エミュレータ不要のユニットテスト
 npm run test:security # Firestore ルールテスト
-npm run test:e2e      # Playwright E2Eテスト
-cd functions && npx tsc --noEmit # Functions 型チェック
+npm test              # ユニット + Firestore ルールテスト
+npm run test:e2e:emu  # Firebase Emulator 付き Playwright E2Eテスト
+npm run build         # Next.js 本番ビルド
+npm --prefix functions run build # Functions 型チェック・ビルド
 ```
 
 Windows PowerShell で `npm.ps1` の実行ポリシーに当たる場合は `npm.cmd` を使う。
 
 ### デプロイフロー
-1. **GitHub push (main)** → Vercel 自動デプロイ（フロントエンド）。
-   - `pre-push` フックが自動でパッチバージョンを上げます。
-2. **Firebase deploy** (Functions / ルールは手動実施)
+1. **Pull Request / GitHub push** → `.github/workflows/quality.yml` で lint、ビルド、ユニットテスト、Firestore ルールテストを実行する。
+   - main へ反映する前に Quality workflow の成功を必須とする。
+2. **GitHub push (main)** → Vercel 自動デプロイ（フロントエンド）。
+   - main 上の `pre-commit` フックがパッチバージョンを自動更新する。手動変更はしない。
+3. **Firebase deploy** (Functions / ルールは手動実施)
    - `.firebaserc` に既定プロジェクトが入っていない環境では `--project math-app-26c77` を付ける
    - `firebase deploy --project math-app-26c77 --only functions`
    - `firebase deploy --project math-app-26c77 --only firestore:rules,database`
@@ -117,7 +120,9 @@ Windows PowerShell で `npm.ps1` の実行ポリシーに当たる場合は `npm
 ---
 
 ## 7. デプロイ前チェックリスト
-デプロイ前にはエミュレータまたはステージングで以下を確認すること。
-1. 生徒アカウントでログインし、自分のXP・ランキングが正常に表示されるか。
-2. ドリル完了後にスコアとXPが正しく保存され、ランキングに反映されるか。
-3. 他人のプロフィール読み取りで権限エラー（暗黙の保護）が正しく機能しているか。
+
+- 通常変更は Quality workflow の lint、フロント/Functions build、ユニット、Firestore ルールテストを必須とする。
+- 動的なFirebaseデータ境界に残る `any` は警告として可視化し、新規追加を最小限にする。
+- ブラウザのクリティカルパスに影響する変更では `npm run test:e2e:emu` を追加する。
+- 漢字対戦や記述式採点など専用ゲートがある機能は、対応する専用コマンドを一度だけ実行する。
+- デプロイ後の手動確認は、本番設定・外部API・新規クリティカルパスなど自動テストで覆えない箇所に限定する。

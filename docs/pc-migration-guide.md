@@ -123,8 +123,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-new-pc.ps1 -Mo
 3. 文字化けチェック
 4. Next.js 本番ビルド
 5. Cloud Functions TypeScript ビルド
-6. Firebase Emulator を使うユニットテスト
-7. Firestore セキュリティルールテスト
+6. エミュレータ不要のユニットテスト
+7. Firebase Emulator を使う Firestore セキュリティルールテスト
 
 依存関係の導入が済んでおり検証だけを再実行する場合は `-Mode verify` を使います。緊急時には `-SkipTests` も指定できますが、移行完了条件を満たすには後でテストを実行してください。
 

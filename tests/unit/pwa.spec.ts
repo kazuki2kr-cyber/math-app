@@ -11,7 +11,7 @@ import {
   canReadNotificationSummaryItem,
   normalizeNotificationCampaignId,
   normalizeNotificationLink,
-} from '../../functions/src/pushNotifications';
+} from '../../functions/src/pushNotificationUtils';
 import {
   addNotificationId,
   getUnreadNotificationIds,

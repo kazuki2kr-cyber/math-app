@@ -27,8 +27,11 @@ npm install
 # 開発サーバーの起動
 npm run dev
 
-# テストの実行
+# ユニット + Firestoreルールテストの実行
 npm test
+
+# ブラウザE2E（Firebase Emulatorを自動起動）
+npm run test:e2e:emu
 ```
 
 ## デプロイ

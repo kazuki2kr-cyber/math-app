@@ -6,6 +6,19 @@ import {
   normalizePushNotificationPayload,
   type PushNotificationPayload,
 } from './pushNotificationPayload';
+import {
+  canReadNotificationCampaign,
+  canReadNotificationSummaryItem,
+  normalizeNotificationCampaignId,
+  normalizeNotificationLink,
+} from './pushNotificationUtils';
+
+export {
+  canReadNotificationCampaign,
+  canReadNotificationSummaryItem,
+  normalizeNotificationCampaignId,
+  normalizeNotificationLink,
+} from './pushNotificationUtils';
 
 const PUSH_SUBSCRIPTIONS_COLLECTION = 'push_subscriptions';
 const NOTIFICATION_CAMPAIGNS_COLLECTION = 'notification_campaigns';
@@ -61,23 +74,6 @@ function isValidFcmToken(token: string) {
 
 function subscriptionIdForToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
-}
-
-export function canReadNotificationCampaign(
-  campaign: Record<string, unknown>,
-  uid: string,
-) {
-  return campaign.deletedAt == null && (
-    campaign.target === 'all'
-    || (campaign.target === 'self' && campaign.sentByUid === uid)
-  );
-}
-
-export function canReadNotificationSummaryItem(
-  item: Pick<NotificationSummaryItem, 'target' | 'sentByUid'>,
-  uid: string,
-) {
-  return item.target === 'all' || (item.target === 'self' && item.sentByUid === uid);
 }
 
 function parseNotificationSummaryItems(value: unknown): NotificationSummaryItem[] {
@@ -165,19 +161,6 @@ async function getNotificationSummaryItems(db: admin.firestore.Firestore) {
     }, { merge: true });
     return mergedItems;
   });
-}
-
-export function normalizeNotificationCampaignId(value: unknown) {
-  const campaignId = clampString(value, 128);
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(campaignId)) {
-    throw new Error('削除対象のお知らせIDが不正です。');
-  }
-  return campaignId;
-}
-
-export function normalizeNotificationLink(value: unknown) {
-  const link = clampString(value, 200);
-  return link.startsWith('/') && !link.startsWith('//') ? link : '/notifications';
 }
 
 function normalizeCallablePushPayload(data: unknown): PushNotificationPayload {

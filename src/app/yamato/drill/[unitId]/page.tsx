@@ -58,6 +58,7 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
   const mode = searchParams.get('mode');
   const { unitId } = React.use(params);
   const canvasRef = useRef<HandwritingCanvasRef>(null);
+  const attemptIdRef = useRef<string | null>(null);
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [unitTitle, setUnitTitle] = useState('');
@@ -221,11 +222,13 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
         };
       } else {
         const recognizeFn = httpsCallable<
-          { unitId: string; composedImageBase64: string; questionIds: string[]; layout: OcrQuestionLayout[] },
+          { attemptId: string; unitId: string; composedImageBase64: string; questionIds: string[]; layout: OcrQuestionLayout[] },
           KanjiBatchResponse
         >(functions, 'recognizeKanjiBatch');
         const decodedUnitId = decodeURIComponent(unitId);
+        attemptIdRef.current ??= globalThis.crypto.randomUUID();
         const response = await recognizeFn({
+          attemptId: attemptIdRef.current,
           unitId: decodedUnitId,
           composedImageBase64: composedImageBase64,
           questionIds: questions.map(q => q.id),
