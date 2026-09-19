@@ -8,7 +8,7 @@ import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy, XCircle } from '
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
-import { BattleResultEntry, getBattleXpDelta, sortBattleResults } from '@/lib/battle';
+import { BattleResultEntry, getBattleXpDelta, sortBattleResults } from '@/lib/kanjiBattle';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 const FINALIZE_TIMEOUT_MS = 90000;

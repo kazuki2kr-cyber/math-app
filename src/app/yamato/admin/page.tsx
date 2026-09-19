@@ -164,7 +164,7 @@ export default function KanjiAdminPage() {
             qs.forEach((qData, qIndex) => {
               const qId = `${unitId}-q${qIndex + 1}`;
               const qRef = doc(db, 'units', unitId, 'questions', qId);
-              let answer = String(qData.answer || '').trim();
+              const answer = String(qData.answer || '').trim();
               
               // optionsがなくともanswerを直接使用（複数文字にも対応可能）
               batch.set(qRef, {

@@ -14,9 +14,11 @@ import {
   BATTLE_ANSWER_LIMIT_MS,
   BATTLE_NEXT_QUESTION_COUNTDOWN_MS,
   BATTLE_QUESTION_COUNT,
-} from '@/lib/battle';
+  canAnswerKanji,
+  kanjiBattleCall,
+  kanjiBattleError,
+} from '@/lib/kanjiBattle';
 import { useBattleClock } from '@/hooks/useBattleClock';
-import { canAnswerKanji, kanjiBattleCall, kanjiBattleError } from '@/lib/kanjiBattle';
 import { buildOcrPayload, getExpectedCharCount, OcrQuestionLayout } from '@/lib/kanjiOcr';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';

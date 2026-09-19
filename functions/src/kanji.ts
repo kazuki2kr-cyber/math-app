@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { randomUUID } from "node:crypto";
 import { Timestamp } from "firebase-admin/firestore";
 import vision from "@google-cloud/vision";
 import {
@@ -153,14 +154,15 @@ export const recognizeKanjiBatch = functions
       throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
     }
 
-    const { unitId, composedImageBase64, questionIds, layout } = data as {
+    const { attemptId, unitId, composedImageBase64, questionIds, layout } = data as {
+      attemptId: string;
       unitId: string;
       composedImageBase64: string;
       questionIds?: string[];
       layout?: OcrQuestionLayout[];
     };
-    if (!unitId || !composedImageBase64) {
-      throw new functions.https.HttpsError("invalid-argument", "unitId と画像のBase64データが必要です。");
+    if (!/^[A-Za-z0-9_-]{16,80}$/.test(String(attemptId || "")) || !unitId || !composedImageBase64) {
+      throw new functions.https.HttpsError("invalid-argument", "attemptId、unitId と画像のBase64データが必要です。");
     }
 
     const uid = context.auth.uid;
@@ -172,6 +174,37 @@ export const recognizeKanjiBatch = functions
         "permission-denied",
         "このユーザーは漢字モードを利用できません。"
       );
+    }
+
+    const idempotencyRef = db.doc(`kanji_ocr_attempts/${uid}_${attemptId}`);
+    const claimId = randomUUID();
+    const claimResult = await db.runTransaction(async (transaction) => {
+      const markerSnap = await transaction.get(idempotencyRef);
+      const marker = markerSnap.exists ? markerSnap.data() || {} : {};
+      if (marker.status === "completed" && marker.response) {
+        return { kind: "completed" as const, response: marker.response };
+      }
+
+      const startedAtMs = marker.startedAt instanceof Timestamp
+        ? marker.startedAt.toMillis()
+        : 0;
+      if (marker.status === "processing" && Date.now() - startedAtMs < 3 * 60 * 1000) {
+        return { kind: "processing" as const };
+      }
+
+      transaction.set(idempotencyRef, {
+        attemptId,
+        uid,
+        unitId,
+        claimId,
+        status: "processing",
+        startedAt: Timestamp.now(),
+      });
+      return { kind: "claimed" as const };
+    });
+    if (claimResult.kind === "completed") return claimResult.response;
+    if (claimResult.kind === "processing") {
+      throw new functions.https.HttpsError("aborted", "この提出は現在処理中です。しばらく待ってから再試行してください。");
     }
 
     // base64のプレフィックスを取り除く
@@ -189,6 +222,12 @@ export const recognizeKanjiBatch = functions
       visionResult = result;
     } catch (e: any) {
       console.error("Vision API Error:", e);
+      await db.runTransaction(async (transaction) => {
+        const markerSnap = await transaction.get(idempotencyRef);
+        if (markerSnap.data()?.claimId === claimId && markerSnap.data()?.status === "processing") {
+          transaction.delete(idempotencyRef);
+        }
+      });
       throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
     }
 
@@ -322,21 +361,27 @@ export const recognizeKanjiBatch = functions
     let xpDetailsResult: any;
     let isLevelUp = false;
     let isHighScore = false;
+    let completedResponse: Record<string, unknown> | null = null;
 
-    await db.runTransaction(async (transaction) => {
-      const userRef = db.doc(`users/${uid}`);
-      const userSnap = await transaction.get(userRef);
+    try {
+      await db.runTransaction(async (transaction) => {
+        const userRef = db.doc(`users/${uid}`);
+        const [userSnap, markerSnap] = await Promise.all([
+          transaction.get(userRef),
+          transaction.get(idempotencyRef),
+        ]);
+        if (markerSnap.data()?.claimId !== claimId || markerSnap.data()?.status !== "processing") {
+          throw new functions.https.HttpsError("aborted", "この提出の処理権を確認できませんでした。再試行してください。");
+        }
 
-      let currentKanjiXp = 0;
-      let currentKanjiTotalScore = 0;
-      let existingKanjiStats: any = {};
+        let currentKanjiXp = 0;
+        let existingKanjiStats: any = {};
 
-      if (userSnap.exists) {
-        const u = userSnap.data()!;
-        currentKanjiXp = u.kanjiXp || 0;
-        currentKanjiTotalScore = u.kanjiTotalScore || 0;
-        existingKanjiStats = u.kanjiUnitStats ? (u.kanjiUnitStats[unitId] || {}) : {};
-      }
+        if (userSnap.exists) {
+          const u = userSnap.data()!;
+          currentKanjiXp = u.kanjiXp || 0;
+          existingKanjiStats = u.kanjiUnitStats ? (u.kanjiUnitStats[unitId] || {}) : {};
+        }
 
       const existingMaxScore = existingKanjiStats.maxScore || 0;
       isHighScore = existingMaxScore === undefined || serverScore > existingMaxScore;
@@ -392,10 +437,41 @@ export const recognizeKanjiBatch = functions
         }
       };
 
-      transaction.set(userRef, userUpdate, { merge: true });
+        completedResponse = {
+          success: true,
+          score: serverScore,
+          isHighScore,
+          isLevelUp,
+          oldLevel,
+          newLevel,
+          xpGain: finalXpGain,
+          newTotalXp,
+          xpDetails: xpDetailsResult,
+          correctQuestions,
+          wrongQuestions,
+          recognizedChars: sortedChars,
+        };
 
-      return { success: true };
-    });
+        transaction.set(userRef, userUpdate, { merge: true });
+        transaction.set(idempotencyRef, {
+          attemptId,
+          uid,
+          unitId,
+          status: "completed",
+          response: completedResponse,
+          completedAt: Timestamp.now(),
+          expireAt: Timestamp.fromDate(new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)),
+        });
+      });
+    } catch (error) {
+      await db.runTransaction(async (transaction) => {
+        const markerSnap = await transaction.get(idempotencyRef);
+        if (markerSnap.data()?.claimId === claimId && markerSnap.data()?.status === "processing") {
+          transaction.delete(idempotencyRef);
+        }
+      });
+      throw error;
+    }
 
     // 7. リーダーボード
     try {
@@ -404,20 +480,7 @@ export const recognizeKanjiBatch = functions
       console.error("Kanji Leaderboard Update Error:", e);
     }
 
-    return {
-      success: true,
-      score: serverScore,
-      isHighScore,
-      isLevelUp,
-      oldLevel,
-      newLevel,
-      xpGain: finalXpGain,
-      newTotalXp,
-      xpDetails: xpDetailsResult,
-      correctQuestions,
-      wrongQuestions,
-      recognizedChars: sortedChars
-    };
+    return completedResponse;
   });
 
 // ==========================================

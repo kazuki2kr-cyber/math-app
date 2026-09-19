@@ -30,12 +30,8 @@ function getImportSubjectMetadata(importSubject: string) {
       return { subject: '数学', baseSubject: '数学', mode: 'solo', drillType: 'written' };
     case 'english':
       return { subject: '英語', baseSubject: '英語', mode: 'solo' };
-    case 'math_battle':
-      return { subject: '数学対戦', baseSubject: '数学', mode: 'battle' };
-    case 'english_battle':
-      return { subject: '英語対戦', baseSubject: '英語', mode: 'battle' };
     default:
-      return { subject: importSubject, baseSubject: importSubject.replace(/対戦$/, ''), mode: importSubject.endsWith('対戦') ? 'battle' : 'solo' };
+      return { subject: importSubject, baseSubject: importSubject, mode: 'solo' };
   }
 }
 

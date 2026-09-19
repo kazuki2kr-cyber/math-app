@@ -7,52 +7,40 @@
  */
 const { spawnSync } = require('child_process');
 const path = require('path');
-const fs = require('fs');
+const { buildFirebaseEnv } = require('./firebase-emulator-env');
 
-// --- Java 自動検出 ---
-const JAVA_CANDIDATES = [
-  process.env.JAVA_HOME,
-  'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot',
-  'C:\\Program Files\\Microsoft\\jdk-17.0.18.8-hotspot',
-  'C:\\Program Files\\Eclipse Adoptium\\jdk-21',
-  'C:\\Program Files\\Eclipse Adoptium\\jdk-17',
-  'C:\\Program Files\\Java\\jdk-21',
-  'C:\\Program Files\\Java\\jdk-17',
-];
-
-let javaHome = 'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot';
-for (const candidate of JAVA_CANDIDATES) {
-  if (candidate && fs.existsSync(path.join(candidate, 'bin', 'java.exe')) && candidate.includes('21')) {
-    javaHome = candidate;
-    break;
-  }
-}
-
-if (!javaHome) {
-  console.error('❌ Java が見つかりません。Java 21以上をインストールしてください。');
+const projectRoot = path.join(__dirname, '..');
+let env;
+try {
+  env = buildFirebaseEnv(projectRoot);
+} catch (error) {
+  console.error(error.message);
   process.exit(1);
 }
+env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR = 'true';
 
-console.log(`☕ JAVA_HOME: ${javaHome}`);
+console.log(`☕ JAVA_HOME: ${env.JAVA_HOME}`);
 
 // --- Java バージョン確認 ---
-const javaVersion = spawnSync(path.join(javaHome, 'bin', 'java.exe'), ['--version'], {
+const javaExecutable = path.join(
+  env.JAVA_HOME,
+  'bin',
+  process.platform === 'win32' ? 'java.exe' : 'java'
+);
+const javaVersion = spawnSync(javaExecutable, ['--version'], {
   encoding: 'utf8',
 });
 console.log(`☕ Java version: ${(javaVersion.stdout || javaVersion.stderr || '').split('\n')[0]}`);
 
-// --- 環境変数を構築 ---
-const env = Object.assign({}, process.env, {
-  JAVA_HOME: javaHome,
-  PATH: path.join(javaHome, 'bin') + path.delimiter + process.env.PATH,
-  NEXT_PUBLIC_USE_FIREBASE_EMULATOR: 'true',
-});
-
 // --- firebase emulators:exec を実行 ---
 console.log('🔥 Firebase Emulators + Playwright テストを起動中...');
 
-const projectRoot = path.join(__dirname, '..');
-const firebaseBin = path.join(projectRoot, 'node_modules', '.bin', 'firebase.cmd');
+const firebaseBin = path.join(
+  projectRoot,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'firebase.cmd' : 'firebase'
+);
 const testTargets = process.argv.slice(2);
 const playwrightCommand = ['npx playwright test', ...testTargets].join(' ');
 const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -76,7 +64,14 @@ if (functionsBuild.status !== 0) {
 
 const result = spawnSync(
   `"${firebaseBin}"`,
-  ['emulators:exec', `"${playwrightCommand}"`, '--project', 'math-app-26c77'],
+  [
+    'emulators:exec',
+    '--project',
+    'math-app-26c77',
+    '--only',
+    'auth,functions,firestore,database',
+    `"${playwrightCommand}"`,
+  ],
   {
     cwd: projectRoot,
     env: env,

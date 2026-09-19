@@ -173,7 +173,6 @@ function Test-RepositoryState {
     'NEXT_PUBLIC_FIREBASE_VAPID_KEY',
     'TEST_USER_EMAIL',
     'TEST_USER_PASSWORD',
-    'NEXT_PUBLIC_BATTLE_ACCESS_PASSWORD',
     'NEXT_PUBLIC_KANJI_BATTLE_ACCESS_PASSWORD'
   )
 
@@ -280,10 +279,9 @@ try {
   Invoke-Checked 'Cloud Functions TypeScript build' 'npm.cmd' @('--prefix', 'functions', 'run', 'build')
 
   if (-not $SkipTests) {
-    Invoke-Checked 'Unit tests with Firebase Emulator' 'npm.cmd' @('test')
-    Invoke-Checked 'Firestore security rules tests' 'npm.cmd' @('run', 'test:security')
+    Invoke-Checked 'Unit and Firestore security tests' 'npm.cmd' @('test')
   } else {
-    Add-Warning 'Tests were skipped. Run npm.cmd test and npm.cmd run test:security before declaring migration complete.'
+    Add-Warning 'Tests were skipped. Run npm.cmd test before declaring migration complete.'
   }
 
   Write-AuthChecklist

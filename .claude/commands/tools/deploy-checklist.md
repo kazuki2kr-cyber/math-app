@@ -1,75 +1,27 @@
----
-model: claude-sonnet-4-0
----
+# Deployment Checklist — math.app
 
-# Deployment Checklist and Configuration
+デプロイ対象の差分を確認し、変更範囲に応じて必要なゲートだけを一度ずつ実行する。
 
-Generate deployment configuration and checklist for: $ARGUMENTS
+## 標準ゲート
 
-Create comprehensive deployment artifacts:
+```bash
+npm test
+npm run lint
+npm run build
+npm --prefix functions run build
+```
 
-1. **Pre-Deployment Checklist**:
-   - [ ] All tests passing
-   - [ ] Security scan completed
-   - [ ] Performance benchmarks met
-   - [ ] Documentation updated
-   - [ ] Database migrations tested
-   - [ ] Rollback plan documented
-   - [ ] Monitoring alerts configured
-   - [ ] Load testing completed
+- `npm test` はエミュレータ不要のユニットテストと Firestore ルールテストを順番に実行する。
+- `npm run lint` はエラー0を必須とし、動的なFirebaseデータ境界に残る `any` は警告として継続管理する。
+- ブラウザのクリティカルパスに影響する場合だけ `npm run test:e2e:emu` を追加する。
+- `firestore.rules` 変更時は対応するルールテスト追加を必須とする。
+- Functions、Firestoreルール、Realtime Databaseルールは `--project math-app-26c77` と `--only` で対象を明示する。
 
-2. **Infrastructure Configuration**:
-   - Docker/containerization setup
-   - Kubernetes manifests
-   - Terraform/IaC scripts
-   - Environment variables
-   - Secrets management
-   - Network policies
-   - Auto-scaling rules
+## 機能固有ゲート
 
-3. **CI/CD Pipeline**:
-   - GitHub Actions/GitLab CI
-   - Build optimization
-   - Test parallelization
-   - Security scanning
-   - Image building
-   - Deployment stages
-   - Rollback automation
+- 漢字対戦: `npm run test:kanji-battle`。ブラウザフロー変更時は `npm run test:kanji-battle:e2e` も実行する。
+- Gemini記述式採点: `docs/written-grading-architecture.md` を読み、`npm run deploy:written-grading` を唯一の入口とする。内部テストを事前に重複実行しない。
 
-4. **Database Deployment**:
-   - Migration scripts
-   - Backup procedures
-   - Connection pooling
-   - Read replica setup
-   - Failover configuration
-   - Data seeding
-   - Version compatibility
+## デプロイ後
 
-5. **Monitoring Setup**:
-   - Application metrics
-   - Infrastructure metrics
-   - Log aggregation
-   - Error tracking
-   - Uptime monitoring
-   - Custom dashboards
-   - Alert channels
-
-6. **Security Configuration**:
-   - SSL/TLS setup
-   - API key rotation
-   - CORS policies
-   - Rate limiting
-   - WAF rules
-   - Security headers
-   - Vulnerability scanning
-
-7. **Post-Deployment**:
-   - [ ] Smoke tests
-   - [ ] Performance validation
-   - [ ] Monitoring verification
-   - [ ] Documentation published
-   - [ ] Team notification
-   - [ ] Customer communication
-   - [ ] Metrics baseline
-
-Include environment-specific configurations (dev, staging, prod) and disaster recovery procedures.
+自動テストで覆えない本番設定、外部API、新規クリティカルパスだけを短く確認する。異常時は Functions ログと外部APIのステータスを分けて調査する。

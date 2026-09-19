@@ -64,6 +64,8 @@ test('simultaneous admission, reentry and direct writes cannot exceed four seats
   await database.ref(`kanjiBattleRooms/${roomId}/participants/old-user`).set({ uid: 'old-user', abandoned: true });
   const hostDb = env.authenticatedContext(actors[0].uid, { email: 'host@shibaurafzk.com' }).database(databaseURL);
   const outsiderDb = env.authenticatedContext('old-user', { email: 'old@shibaurafzk.com' }).database(databaseURL);
+  await assertFails(hostDb.ref('battleRooms/retired-math-battle').set({ hostUid: actors[0].uid }));
+  await assertFails(hostDb.ref('battleRooms/retired-math-battle').get());
   await assertFails(hostDb.ref(`kanjiBattleRooms/${roomId}/maxPlayers`).set(9));
   await assertFails(outsiderDb.ref(`kanjiBattleRooms/${roomId}/participants/old-user`).set({ uid: 'old-user', abandoned: false }));
   await assertFails(hostDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/0/${actors[0].uid}`).set({ responseMs: 0 }));

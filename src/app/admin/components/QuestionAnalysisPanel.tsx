@@ -21,6 +21,10 @@ export default function QuestionAnalysisPanel({
   suggestions,
   rankings,
 }: QuestionAnalysisPanelProps) {
+  const [topQLimit, setTopQLimit] = useState(5);
+  const [worstQLimit, setWorstQLimit] = useState(5);
+  const [topRankLimit, setTopRankLimit] = useState(5);
+  const [worstRankLimit, setWorstRankLimit] = useState(3);
   const attempted = questionStats.filter((q) => q.total > 0);
 
   if (attempted.length === 0) {
@@ -34,11 +38,6 @@ export default function QuestionAnalysisPanel({
       </div>
     );
   }
-
-  const [topQLimit, setTopQLimit] = useState(5);
-  const [worstQLimit, setWorstQLimit] = useState(5);
-  const [topRankLimit, setTopRankLimit] = useState(5);
-  const [worstRankLimit, setWorstRankLimit] = useState(3);
 
   const sortedByRate = [...attempted].sort((a, b) => b.rate - a.rate);
   const topQ = sortedByRate;

@@ -186,7 +186,7 @@ export default function OverviewPanel({ metrics, scoresCount, currentSubject = '
                   <Tooltip
                     cursor={{ fill: '#F3F4F6' }}
                     formatter={(value: any, name: any, props: any) => [
-                      <span className="font-bold text-gray-900">{value.toFixed(1)}%</span>,
+                      <span key="accuracy" className="font-bold text-gray-900">{value.toFixed(1)}%</span>,
                       '正答率'
                     ]}
                     labelStyle={{ fontWeight: 'bold', color: '#1F2937', marginBottom: '4px' }}

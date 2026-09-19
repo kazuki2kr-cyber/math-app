@@ -59,12 +59,14 @@
 詳細は `GUIDELINES.md` を参照。
 ```bash
 npm run dev           # 開発サーバー
-npm test              # ユニットテスト
-npm run test:security # セキュリティテスト
+npm run test:unit     # エミュレータ不要のユニットテスト
+npm run test:security # Firestore ルールテスト
+npm test              # 上記2種類を順番に実行
+npm run test:e2e:emu  # Firebase Emulator 付き E2E テスト
 ```
 
 ---
 
 ## 5. 注意事項
-- `package.json` の version は pre-push フックが自動管理。手動で変更しない。
+- `package.json` の version は main ブランチ上の pre-commit フックが自動管理。手動で変更しない。
 - Firestore への書き込みは原則 Cloud Functions 経由。

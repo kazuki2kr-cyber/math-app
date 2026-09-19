@@ -5,21 +5,23 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { limitToLast, onValue, orderByChild, query as realtimeQuery, ref, startAt } from 'firebase/database';
-import { kanjiBattleCall, kanjiBattleError, KanjiRoomListing } from '@/lib/kanjiBattle';
+import {
+  BATTLE_RANKS,
+  BATTLE_XP_PER_RANK,
+  getBattleRank,
+  getNextBattleRank,
+  KANJI_BATTLE_ACCESS_PASSWORD,
+  KANJI_BATTLE_ACCESS_STORAGE_KEY,
+  kanjiBattleCall,
+  kanjiBattleError,
+  KanjiRoomListing,
+} from '@/lib/kanjiBattle';
 import { useBattleClock } from '@/hooks/useBattleClock';
 import { ArrowLeft, Lock, Medal, Swords, Trophy, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  BATTLE_RANKS,
-  BATTLE_XP_PER_RANK,
-  KANJI_BATTLE_ACCESS_PASSWORD,
-  KANJI_BATTLE_ACCESS_STORAGE_KEY,
-  getBattleRank,
-  getNextBattleRank,
-} from '@/lib/battle';
 import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
 
 

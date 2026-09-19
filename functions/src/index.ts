@@ -1,9 +1,19 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { randomUUID } from "node:crypto";
+import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { updateLearningReviewStats } from "./learningReview";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { ServerValue } from "firebase-admin/database";
 import { extractJsonObject } from "./writtenGradingJson";
+import {
+  buildWrittenGradingGenerationConfig,
+  requestGeminiWithSchemaFallback,
+} from "./writtenGradingRequest";
+import {
+  normalizeRubricScores,
+  WrittenRubricCriterion,
+} from "./writtenRubricScoring";
 import { mutateKanjiRoom } from "./kanjiBattle";
 import { ALL_KANJI_UNIT_ID, loadPoolQuestions } from "./kanjiBattlePool";
 import { member as kanjiMember, touch as touchKanjiRoom } from "./kanjiBattleState";
@@ -18,6 +28,13 @@ import {
   WRITTEN_INCLUDE_IN_TOTAL_SCORE,
 } from "./writtenRankingPolicy";
 import { canManageUnitQuestionAvailability } from "./unitQuestionAvailability";
+import {
+  extractRecognizedCharacters,
+  KanjiOcrQuestionResult,
+  normalizeKanjiText,
+  OcrQuestionLayout,
+  processKanjiOcrResult,
+} from "./kanjiOcrCore";
 
 admin.initializeApp({
   databaseURL: "https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -56,22 +73,6 @@ const BATTLE_XP_TABLE: Record<number, number[]> = {
 const KANJI_BATTLE_LEADERBOARD_LIMIT = 40;
 
 type DrillMode = "standard" | "wrong" | "all";
-type WrittenRubricScore = {
-  criterionIndex: number;
-  label: string;
-  description: string;
-  score: number;
-  maxScore: number;
-  comment: string;
-};
-
-type WrittenRubricCriterion = {
-  criterionIndex: number;
-  label: string;
-  description: string;
-  maxScore: number;
-};
-
 function calculateMathXpForNextLevel(level: number): number {
   const cappedLevel = Math.min(level, MATH_LEVEL_XP_CAP_LEVEL);
   return Math.floor(2.2 * Math.pow(cappedLevel, 2)) + 50;
@@ -198,11 +199,6 @@ function calculateBattleSpeedBonus(responseMs: number): number {
   if (safeResponseMs >= BATTLE_ANSWER_LIMIT_MS) return 0;
   const ratio = (BATTLE_ANSWER_LIMIT_MS - safeResponseMs) / (BATTLE_ANSWER_LIMIT_MS - BATTLE_FAST_BONUS_MS);
   return Math.max(0, Math.round(BATTLE_MAX_SPEED_BONUS * ratio));
-}
-
-function calculateBattleQuestionScore(correct: boolean, responseMs: number): number {
-  if (!correct) return 0;
-  return BATTLE_BASE_SCORE + calculateBattleSpeedBonus(responseMs);
 }
 
 function getBattleXpDelta(playerCount: number, rankIndex: number): number {
@@ -673,249 +669,6 @@ function isKanjiUnit(unitData: any): boolean {
   return unitData.subject === "kanji" || unitData.subject === "漢字" || unitData.baseSubject === "漢字";
 }
 
-export const getBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
-  }
-  const callerUid = context.auth.uid;
-
-  const roomId = clampString((data as any)?.roomId, 12);
-  if (!/^\d{4,8}$/.test(roomId)) {
-    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
-  }
-
-  const roomSnap = await realtimeDb.ref(`battleRooms/${roomId}`).get();
-  if (!roomSnap.exists()) {
-    throw new functions.https.HttpsError("not-found", "Battle room was not found.");
-  }
-
-  const room = roomSnap.val() || {};
-  if (!room.participants?.[context.auth.uid]) {
-    throw new functions.https.HttpsError("permission-denied", "Only room participants can load battle questions.");
-  }
-
-  const unitId = clampString(room.unitId, 120);
-  if (!unitId) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
-  }
-
-  const unitDoc = await db.doc(`units/${unitId}`).get();
-  if (!unitDoc.exists) {
-    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
-  }
-
-  const unitData = unitDoc.data() || {};
-  const unitQuestions = await loadUnitQuestions(unitId, unitData);
-
-  const questions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
-    id: String(question.id),
-    question_text: String(question.question_text || ""),
-    options: parseOptionsServer(question.options),
-    image_url: question.image_url || null,
-  }));
-
-  if (questions.length < BATTLE_QUESTION_COUNT) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle unit does not have enough questions.");
-  }
-
-  return { questions };
-});
-
-export const finalizeBattleRoom = functions.region("us-central1").https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
-  }
-  const callerUid = context.auth.uid;
-
-  const roomId = clampString((data as any)?.roomId, 12);
-  if (!/^\d{4,8}$/.test(roomId)) {
-    throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
-  }
-
-  const roomRef = realtimeDb.ref(`battleRooms/${roomId}`);
-  const roomSnap = await roomRef.get();
-  if (!roomSnap.exists()) {
-    throw new functions.https.HttpsError("not-found", "Battle room was not found.");
-  }
-
-  const room = roomSnap.val() || {};
-  if (!room.participants?.[callerUid]) {
-    throw new functions.https.HttpsError("permission-denied", "Only room participants can finalize this battle.");
-  }
-  if (room.status !== "completed") {
-    throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
-  }
-  if (room.finalizedAt && room.results) {
-    return { success: true, alreadyFinalized: true };
-  }
-
-  const unitId = clampString(room.unitId, 120);
-  if (!unitId) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle room has no unit id.");
-  }
-
-  const participants = Object.values(room.participants || {}) as Array<{ uid?: string; name?: string; abandoned?: boolean }>;
-  const validParticipants = participants
-    .filter((participant) => participant.uid)
-    .slice(0, 4)
-    .map((participant) => ({
-      uid: String(participant.uid),
-      name: clampString(participant.name, 80) || "Player",
-      abandoned: participant.abandoned === true,
-    }));
-
-  if (validParticipants.length < 2) {
-    await roomRef.update({
-      status: "cancelled",
-      phase: "completed",
-      cancellationReason: "not-enough-participants",
-      cancelledAt: admin.database.ServerValue.TIMESTAMP,
-      updatedAt: admin.database.ServerValue.TIMESTAMP,
-    });
-    return { success: true, cancelled: true, reason: "not-enough-participants" };
-  }
-
-  if (validParticipants.length > 4) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle requires up to 4 participants.");
-  }
-
-  const unitDoc = await db.doc(`units/${unitId}`).get();
-  if (!unitDoc.exists) {
-    throw new functions.https.HttpsError("not-found", "Battle unit was not found.");
-  }
-
-  const unitData = unitDoc.data() || {};
-  const unitQuestions = await loadUnitQuestions(unitId, unitData);
-
-  const selectedQuestions = unitQuestions.slice(0, BATTLE_QUESTION_COUNT).map((question) => ({
-    id: String(question.id),
-    parsedOptions: parseOptionsServer(question.options),
-    answerIndex: Number(question.answer_index) - 1,
-  }));
-
-  if (selectedQuestions.length < BATTLE_QUESTION_COUNT) {
-    throw new functions.https.HttpsError("failed-precondition", "Battle unit does not have enough questions.");
-  }
-
-  const questionAnswers = room.questionAnswers || {};
-  const resultEntries = validParticipants.map((participant) => {
-    if (participant.abandoned) {
-      return {
-        uid: participant.uid,
-        name: participant.name,
-        totalScore: 0,
-        correctCount: 0,
-        totalQuestions: selectedQuestions.length,
-        totalTimeMs: BATTLE_ANSWER_LIMIT_MS * selectedQuestions.length,
-        abandoned: true,
-        finishedAt: admin.database.ServerValue.TIMESTAMP,
-      };
-    }
-
-    let totalScore = 0;
-    let correctCount = 0;
-    let totalTimeMs = 0;
-
-    selectedQuestions.forEach((question, questionIndex) => {
-      const answer = questionAnswers[String(questionIndex)]?.[participant.uid] || null;
-      const responseMs = clampBattleResponseMs(answer?.responseMs);
-      const selectedIndex = answer?.selectedIndex === null || answer?.selectedIndex === undefined
-        ? null
-        : Number(answer.selectedIndex);
-      const isCorrect = selectedIndex !== null
-        && Number.isInteger(selectedIndex)
-        && selectedIndex === question.answerIndex
-        && selectedIndex >= 0
-        && selectedIndex < question.parsedOptions.length;
-
-      totalTimeMs += responseMs;
-      if (isCorrect) correctCount += 1;
-      totalScore += calculateBattleQuestionScore(isCorrect, responseMs);
-    });
-
-    return {
-      uid: participant.uid,
-      name: participant.name,
-      totalScore,
-      correctCount,
-      totalQuestions: selectedQuestions.length,
-      totalTimeMs,
-      abandoned: false,
-      finishedAt: admin.database.ServerValue.TIMESTAMP,
-    };
-  }).sort((a, b) => {
-    if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
-    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-    if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
-    return a.uid.localeCompare(b.uid);
-  });
-
-  const results: Record<string, any> = {};
-  resultEntries.forEach((entry, index) => {
-    const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
-    results[entry.uid] = {
-      ...entry,
-      rank: entry.abandoned ? validParticipants.length : index + 1,
-      xpDelta: getBattleXpDelta(validParticipants.length, rankIndex),
-    };
-  });
-
-  const finalizeResult = await db.runTransaction(async (transaction) => {
-    const markerRef = db.collection("battle_results").doc(roomId);
-    const markerSnap = await transaction.get(markerRef);
-    if (markerSnap.exists) {
-      const markerData = markerSnap.data() || {};
-      return {
-        alreadyFinalized: true,
-        results: markerData.results || results,
-        finalizedAt: markerData.finalizedAt || Timestamp.now(),
-      };
-    }
-
-    const now = Timestamp.now();
-    const userSnapshots = await Promise.all(
-      resultEntries.map((entry) => transaction.get(db.doc(`users/${entry.uid}`)))
-    );
-    resultEntries.forEach((entry, index) => {
-      const rankIndex = entry.abandoned ? validParticipants.length - 1 : index;
-      const xpDelta = getBattleXpDelta(validParticipants.length, rankIndex);
-      const userRef = db.doc(`users/${entry.uid}`);
-      const userData = userSnapshots[index].exists ? userSnapshots[index].data() || {} : {};
-      const currentStats = userData.battleStats || {};
-      transaction.set(userRef, {
-        battleStats: {
-          xp: applyNonNegativeBattleXp(currentStats.xp, xpDelta),
-          wins: FieldValue.increment(index === 0 ? 1 : 0),
-          totalBattles: FieldValue.increment(1),
-          lastBattleAt: now,
-        },
-      }, { merge: true });
-    });
-    transaction.set(markerRef, {
-      roomId,
-      unitId,
-      hostUid: room.hostUid,
-      playerCount: validParticipants.length,
-      results,
-      finalizedAt: now,
-      finalizedBy: callerUid,
-    });
-    return {
-      alreadyFinalized: false,
-      results,
-      finalizedAt: now,
-    };
-  });
-
-  await roomRef.update({
-    results: finalizeResult.results,
-    finalizedAt: admin.database.ServerValue.TIMESTAMP,
-    finalizedBy: callerUid,
-  });
-
-  return { success: true, alreadyFinalized: finalizeResult.alreadyFinalized, playerCount: validParticipants.length };
-});
-
 async function loadKanjiRoomQuestions(room: any, roomId: string): Promise<any[]> {
   if (room.unitId === ALL_KANJI_UNIT_ID) return loadPoolQuestions(room);
   const unitId = clampString(room.unitId, 120);
@@ -955,7 +708,6 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
   }
 
   // 正解（answer/answer_index）はクライアントに送らない。問題文・画像・文字数のみ返す
-  const { normalizeKanjiText } = require("./kanjiOcrCore");
   const includeAnswerForAdmin = context.auth.token?.admin === true;
   const questions = selectedQuestions.map((question) => {
     let resolvedAnswer = "";
@@ -1009,7 +761,7 @@ export const submitKanjiBattleOcr = functions
     const { roomId: rawRoomId, composedImageBase64, layout, questionIds } = data as {
       roomId: string;
       composedImageBase64: string;
-      layout: import("./kanjiOcrCore").OcrQuestionLayout[];
+      layout: OcrQuestionLayout[];
       questionIds: string[];
     };
 
@@ -1034,14 +786,7 @@ export const submitKanjiBattleOcr = functions
       throw new functions.https.HttpsError("failed-precondition", "Battle is not completed yet.");
     }
 
-    // 2. べき等チェック（同じルーム・ユーザーで二重送信しない）
-    const idempotencyRef = db.doc(`kanji_battle_ocr/${roomId}_${callerUid}`);
-    const idempotencySnap = await idempotencyRef.get();
-    if (idempotencySnap.exists) {
-      return { success: true, alreadySubmitted: true };
-    }
-
-    // 3. 単元の問題データ取得（正解情報はサーバーのみ保持）
+    // 2. 単元の問題データ取得（正解情報はサーバーのみ保持）
     const battleQuestions = await loadKanjiRoomQuestions(room, roomId);
 
     // questionIds の検証（クライアント送信値が正しいルームの問題と一致するか）
@@ -1058,8 +803,39 @@ export const submitKanjiBattleOcr = functions
       .map((id) => questionMap.get(String(id)))
       .filter(Boolean) as typeof battleQuestions;
 
+    // 3. 入力検証後、Vision API の前に処理権をトランザクションで確保する。
+    const idempotencyRef = db.doc(`kanji_battle_ocr/${roomId}_${callerUid}`);
+    const claimId = randomUUID();
+    const claimResult = await db.runTransaction(async (transaction) => {
+      const markerSnap = await transaction.get(idempotencyRef);
+      const marker = markerSnap.exists ? markerSnap.data() || {} : {};
+      if (marker.status === "completed") return "completed" as const;
+
+      const startedAtMs = marker.startedAt instanceof Timestamp
+        ? marker.startedAt.toMillis()
+        : 0;
+      if (marker.status === "processing" && Date.now() - startedAtMs < 3 * 60 * 1000) {
+        return "processing" as const;
+      }
+
+      transaction.set(idempotencyRef, {
+        roomId,
+        uid: callerUid,
+        claimId,
+        status: "processing",
+        startedAt: Timestamp.now(),
+      });
+      return "claimed" as const;
+    });
+    if (claimResult === "completed") {
+      return { success: true, alreadySubmitted: true };
+    }
+    if (claimResult === "processing") {
+      throw new functions.https.HttpsError("aborted", "OCR submission is already being processed.");
+    }
+
     // 4. Vision API 呼び出し（recognizeKanjiBatch と同一の設定）
-    const visionClient = new (require("@google-cloud/vision").ImageAnnotatorClient)();
+    const visionClient = new ImageAnnotatorClient();
     const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
     let visionResult: any;
     try {
@@ -1070,17 +846,18 @@ export const submitKanjiBattleOcr = functions
       visionResult = result;
     } catch (e: any) {
       console.error("Vision API Error (battle OCR):", e);
+      await db.runTransaction(async (transaction) => {
+        const markerSnap = await transaction.get(idempotencyRef);
+        if (markerSnap.data()?.claimId === claimId && markerSnap.data()?.status === "processing") {
+          transaction.delete(idempotencyRef);
+        }
+      });
       throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
     }
 
     // 5. 文字抽出 → 正誤判定（kanjiOcrCore の共通関数を使用）
-    const {
-      extractRecognizedCharacters,
-      processKanjiOcrResult,
-    } = require("./kanjiOcrCore");
-
     const recognizedCharacters = extractRecognizedCharacters(visionResult);
-    const ocrResults: import("./kanjiOcrCore").KanjiOcrQuestionResult[] =
+    const ocrResults: KanjiOcrQuestionResult[] =
       processKanjiOcrResult(recognizedCharacters, orderedQuestions, layout);
 
     // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）
@@ -1135,6 +912,7 @@ export const submitKanjiBattleOcr = functions
     await idempotencyRef.set({
       roomId,
       uid: callerUid,
+      status: "completed",
       score: totalScore,
       correctCount,
       submittedAt: Timestamp.now(),
@@ -1732,12 +1510,18 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const statsPath = new FieldPath("unitStats", unitId);
     const lastAttemptPath = new FieldPath("lastAttemptTimes", unitId);
 
-    // 修正: この SDK バージョンの Transaction.update () は引数を最大3つまでしか受け取らない
-    //（docRef, data オブジェクト）または（docRef, fieldPath, value）形式。
-    // そのため、複数の FieldPath を更新する場合は個別に呼び出す必要がある。
-    transaction.update(userRef, baseUpdates);
-    transaction.update(userRef, statsPath, statsPathValue);
-    transaction.update(userRef, lastAttemptPath, dateStr);
+    // Firestore のコミットは同一ドキュメントへの複数 write を受け付けないため、
+    // 動的な FieldPath と通常フィールドを単一の update にまとめる。
+    const baseUpdateFields = Object.entries(baseUpdates)
+      .flatMap(([field, value]) => [field, value]);
+    transaction.update(
+      userRef,
+      statsPath,
+      statsPathValue,
+      lastAttemptPath,
+      dateStr,
+      ...baseUpdateFields
+    );
 
     // Attempts (Subcollection) - トランザクション内で事前作成した attemptRef を使用
     // TTL用 expireAt: 90日後に自動削除対象
@@ -1898,26 +1682,6 @@ function normalizeWrittenRubric(value: unknown): WrittenRubricCriterion[] {
   });
 }
 
-function normalizeRubricScores(value: unknown, rubricCriteria: WrittenRubricCriterion[] = []): WrittenRubricScore[] {
-  if (!Array.isArray(value)) return [];
-  const maxItems = rubricCriteria.length > 0 ? rubricCriteria.length : Math.min(value.length, 8);
-
-  return Array.from({ length: maxItems }).map((_, index) => {
-    const item = (value as any[])[index] || {};
-    const criterion = rubricCriteria[index];
-    const maxScore = criterion?.maxScore ?? Math.max(1, Math.min(100, Math.round(Number(item?.maxScore) || 100)));
-
-    return {
-      criterionIndex: criterion?.criterionIndex ?? index + 1,
-      label: criterion?.label || clampString(item?.label, 80) || "評価項目",
-      description: criterion?.description || clampString(item?.description ?? item?.criterionText, 800),
-      score: Math.max(0, Math.min(maxScore, Math.round(Number(item?.score) || 0))),
-      maxScore,
-      comment: clampString(item?.comment, 500),
-    };
-  });
-}
-
 async function gradeWrittenAnswerWithGemini(params: {
   unitTitle: string;
   questionText: string;
@@ -1938,7 +1702,8 @@ async function gradeWrittenAnswerWithGemini(params: {
     "Return only strict JSON. Do not include markdown.",
     "Score the full handwritten work, including intermediate steps, out of 100.",
     "Use the provided model answer and rubric. Grade strictly, but keep feedback concise and age-appropriate.",
-    "Return rubricScores in the exact same order as the provided rubric. Each rubric score must be between 0 and that criterion's maxScore.",
+    "Return rubricScores in the exact same order as the provided rubric. Each rubric score must be an integer between 0 and that criterion's maxScore.",
+    "The top-level score must equal the exact sum of all rubricScores[].score values.",
     "Default scoring policy: process/reasoning is 60 points, final answer/conclusion is 40 points. Follow a more specific rubric only if it is stricter.",
     "If the final answer or required conclusion is mathematically wrong, the total score must be at most 60, even if the process is mostly correct.",
     "If the final answer is correct but there is no meaningful reasoning, setup, proof, or calculation process, the total score must be at most 40.",
@@ -1971,29 +1736,33 @@ async function gradeWrittenAnswerWithGemini(params: {
     '{"score":number,"transcription":string,"detectedAnswer":string,"rubricScores":[{"score":number,"comment":string}],"feedback":string,"improvementPoints":[string]}',
   ].join("\n");
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const contents = [{
+    role: "user",
+    parts: [
+      { text: prompt },
+      { inlineData: { mimeType: image.mimeType, data: image.data } },
+    ],
+  }];
+  const requestGemini = (includeJsonSchema: boolean) => fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: image.mimeType, data: image.data } },
-          ],
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: "application/json",
-        },
+        contents,
+        generationConfig: buildWrittenGradingGenerationConfig(rubricCriteria.length, includeJsonSchema),
       }),
-    }
-  );
+    });
+
+  const requestResult = await requestGeminiWithSchemaFallback(requestGemini);
+  const { response, errorText } = requestResult;
+  if (requestResult.usedFallback) {
+    console.warn("[submitWrittenDrillResult] Gemini rejected responseJsonSchema; retried with JSON mode only", {
+      status: response.status,
+      model,
+    });
+  }
 
   if (!response.ok) {
-    const errorText = await response.text();
     console.error("[submitWrittenDrillResult] Gemini error:", response.status, errorText.slice(0, 1000));
     throw new functions.https.HttpsError("internal", "AI採点に失敗しました。");
   }
@@ -2005,11 +1774,24 @@ async function gradeWrittenAnswerWithGemini(params: {
     .replace(/\s*\((?:implied|inferred|based|from|because|therefore|answer|final)\b[^)]*\)\s*$/i, "")
     .trim();
 
+  const parsedScore = clampScore(parsed?.score);
+  const rubricScores = normalizeRubricScores(parsed?.rubricScores, rubricCriteria, parsedScore);
+  const reconciledScore = rubricScores.length > 0
+    ? clampScore(rubricScores.reduce((sum, item) => sum + item.score, 0))
+    : parsedScore;
+  if (rubricScores.length > 0 && reconciledScore !== parsedScore) {
+    console.warn("[submitWrittenDrillResult] Reconciled inconsistent rubric total", {
+      parsedScore,
+      reconciledScore,
+      rubricCount: rubricScores.length,
+    });
+  }
+
   return {
-    score: clampScore(parsed?.score),
+    score: reconciledScore,
     transcription: clampString(parsed?.transcription, 2000),
     detectedAnswer,
-    rubricScores: normalizeRubricScores(parsed?.rubricScores, rubricCriteria),
+    rubricScores,
     feedback: clampString(parsed?.feedback, 1200),
     improvementPoints: Array.isArray(parsed?.improvementPoints)
       ? parsed.improvementPoints.slice(0, 5).map((point: unknown) => clampString(point, 300)).filter(Boolean)
@@ -2142,16 +1924,20 @@ export const submitWrittenDrillResult = functions
       } = decision.metadata;
       const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
 
-      transaction.set(userRef, { updatedAt: dateStr }, { merge: true });
-      transaction.update(userRef, new FieldPath("writtenStats", unitId), {
-        maxScore: Number(existingWrittenStats.maxScore) || 0,
-        bestAttemptId: existingWrittenStats.bestAttemptId || null,
-        attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
-        totalXpEarned: Number(existingWrittenStats.totalXpEarned) || 0,
-        remainingAttempts,
-        limit,
+      transaction.set(userRef, {
         updatedAt: dateStr,
-      });
+        writtenStats: {
+          [unitId]: {
+            maxScore: Number(existingWrittenStats.maxScore) || 0,
+            bestAttemptId: existingWrittenStats.bestAttemptId || null,
+            attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
+            totalXpEarned: Number(existingWrittenStats.totalXpEarned) || 0,
+            remainingAttempts,
+            limit,
+            updatedAt: dateStr,
+          },
+        },
+      }, { merge: true });
       transaction.set(limitRef, {
         unitId,
         usedAttempts: attemptOrdinal,
@@ -2335,15 +2121,17 @@ export const submitWrittenDrillResult = functions
         ...(isNewIconReward && iconRewardRecord
           ? { unlockedIcons: { [iconRewardRecord.id]: iconRewardRecord } }
           : {}),
+        writtenStats: {
+          [unitId]: {
+            maxScore: isHighScore ? grading.score : previousMaxScore,
+            bestAttemptId: isHighScore ? attemptDocId : (existingWrittenStats.bestAttemptId || null),
+            totalXpEarned: (existingWrittenStats.totalXpEarned || 0) + finalXpGain,
+            remainingAttempts,
+            limit,
+            updatedAt: dateStr,
+          },
+        },
       }, { merge: true });
-      transaction.update(userRef, new FieldPath("writtenStats", unitId), {
-        maxScore: isHighScore ? grading.score : previousMaxScore,
-        bestAttemptId: isHighScore ? attemptDocId : (existingWrittenStats.bestAttemptId || null),
-        totalXpEarned: (existingWrittenStats.totalXpEarned || 0) + finalXpGain,
-        remainingAttempts,
-        limit,
-        updatedAt: dateStr,
-      });
       transaction.set(limitRef, {
         unitId,
         usedAttempts: attemptOrdinal,

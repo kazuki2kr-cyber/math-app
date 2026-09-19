@@ -91,9 +91,8 @@ export const cleanupRetentionData = functions
       "suspicious_activities"
     );
 
-    const [deletedKanjiBattleRooms, deletedBattleRooms, deletedKanjiBattleListings] = await Promise.all([
+    const [deletedKanjiBattleRooms, deletedKanjiBattleListings] = await Promise.all([
       deleteExpiredRtdbRooms("kanjiBattleRooms"),
-      deleteExpiredRtdbRooms("battleRooms"),
       deleteExpiredRtdbRooms("kanjiBattleRoomListings"),
     ]);
 
@@ -102,7 +101,6 @@ export const cleanupRetentionData = functions
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
       deletedKanjiBattleRooms,
-      deletedBattleRooms,
       deletedKanjiBattleListings,
       retention: RETENTION,
     });
@@ -112,6 +110,5 @@ export const cleanupRetentionData = functions
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
       deletedKanjiBattleRooms,
-      deletedBattleRooms,
     };
   });
