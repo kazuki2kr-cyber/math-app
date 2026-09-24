@@ -20,6 +20,8 @@ Current analytics data flows through these layers.
 | Live unit counters | `units/{unitId}/stats/questions` | Incremental question counters | No direct PII | Updated by `processDrillResult`. Used by older admin unit views, not by current analytics tab. |
 | Live global counters | `stats/global` | Incremental global counters | No direct PII | Updated by `processDrillResult`, and manually reset/decremented by admin operations. |
 | Analytics event log | `analytics_events/submit_{attemptId}` | Event source for BigQuery analytics | Yes | Contains `uid`, `unitId`, score, time, and `questionResults`. |
+| Integrity user summary | `integrity_user_summaries/{uid}` | Admin-only review queue grouped by user | Yes | Written only for flagged attempts. Stores a display name, pseudonymous actor key, counters, latest risk, and review status; never exposed to students. |
+| Integrity event | `integrity_events/{uid}_{15-minute-window}` | Admin-only sampled detail for suspicious or rejected submissions | Yes | At most one sample per user per 15-minute window. Retained for 30 days by the existing scheduled cleanup. |
 | BigQuery raw latest | `analytics.analytics_events_raw_latest` | Firestore extension synced source | Yes | Expected by `analyticsAggregation.ts`. |
 | BigQuery facts | `analytics.fact_attempts`, `analytics.fact_attempt_question_results` | Derived normalized tables | Yes | Excludes reset/deleted events only if those events exist. |
 | BigQuery aggregates | `analytics.agg_unit_daily`, `analytics.agg_question_daily`, `analytics.agg_question_pair_current` | Aggregate tables for serving docs | Mixed | Pair/current tables are aggregated but still based on uid-level joins. |
@@ -28,13 +30,14 @@ Current analytics data flows through these layers.
 
 ## Event Contract
 
-The current SQL already expects reset/delete events, but admin operations do not emit them yet.
+The event stream records attempt deletion and both global and per-user reset boundaries so BigQuery facts can exclude invalidated history.
 
 | Event type | Current writer | Required writer | Purpose | Status |
 | --- | --- | --- | --- | --- |
 | `ATTEMPT_SUBMITTED` | `processDrillResult` | `processDrillResult` | Include a submitted attempt in analytics. | Implemented |
-| `ATTEMPT_DELETED` | Admin attempt deletion flows | Admin single, batch, and user reset flows | Exclude a deleted attempt from BigQuery facts. | Implemented in admin UI |
+| `ATTEMPT_DELETED` | Admin attempt deletion flows | Admin single and batch deletion flows | Exclude a deleted attempt from BigQuery facts. | Implemented in admin UI |
 | `ALL_DATA_RESET` | Admin full reset flow | Admin full reset flow | Exclude all submissions before reset time. | Implemented in admin UI |
+| `USER_DATA_RESET` | `resetUserLearningData` | Per-user learning reset callable | Exclude that user's submissions at or before the reset boundary while retaining raw audit history. | Implemented in Cloud Functions |
 
 ## Admin Analytics Screen Catalog
 
@@ -113,8 +116,7 @@ Current status: global rankings now come from `overview/current`, selected-unit 
 
 | Risk | Impact | Fix stage |
 | --- | --- | --- |
-| Admin attempt deletion does not emit `ATTEMPT_DELETED`. | Deleted attempts can remain in BigQuery-derived analytics. | Stage 2 |
-| Full reset does not emit `ALL_DATA_RESET`. | Analytics can include pre-reset attempts. | Stage 2 |
+| Firestore-to-BigQuery event synchronization is asynchronous. | Reset/deletion effects appear after the extension sync and the next aggregation run. | Operational |
 | Unit summary `uniqueUsers` is `SUM(unique_users)` over daily rows. | Users active on multiple days are over-counted. | Stage 3 |
 | Unit average time and improvement metrics average daily averages. | Low-volume days receive the same weight as high-volume days. | Stage 3 |
 | Subject/category filters only filter unit summaries in React. | Overview totals and rankings can appear filtered while still global. | Stage 3 |
@@ -179,7 +181,7 @@ These can be calculated from the existing `analytics_events.questionResults` dat
 
 ## Implementation Order
 
-1. Emit deletion/reset analytics events so BigQuery facts can match admin operations.
+1. Emit deletion/reset analytics events so BigQuery facts can match admin operations. Implemented, including per-user reset boundaries.
 2. Recompute unit summaries directly from facts or carry aggregate numerators/denominators to avoid averaging daily averages.
 3. Add filtered admin serving docs: `overview_by_subject`, `overview_by_category`, `unit_rankings`. Implemented with bulk scoped SQL for subject/category overviews.
 4. Add report-safe serving docs under `public_analytics_serving/current` with k-anonymity thresholds. Implemented.

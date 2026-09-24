@@ -3,7 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Trash2, RefreshCw, Save, X } from 'lucide-react';
+import { Trash2, RefreshCw, Save, X, Lock, LockOpen } from 'lucide-react';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 
 interface XpTabProps {
@@ -15,6 +15,7 @@ interface XpTabProps {
   setEditingXp: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onUpdateXp: (uid: string, xp: string) => void;
   onResetUserData: (uid: string, displayName: string) => void;
+  onToggleXpEarningLock: (uid: string, displayName: string, locked: boolean) => void;
   onRefresh: () => void;
 }
 
@@ -22,7 +23,7 @@ export default function XpTab({
   users, loading,
   displayUsersCount, setDisplayUsersCount,
   editingXp, setEditingXp,
-  onUpdateXp, onResetUserData, onRefresh,
+  onUpdateXp, onResetUserData, onToggleXpEarningLock, onRefresh,
 }: XpTabProps) {
   return (
     <div className="space-y-4 mt-4">
@@ -89,6 +90,25 @@ export default function XpTab({
                       </div>
                     ) : (
                       <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={u.xpEarningLocked
+                            ? 'text-amber-700 hover:bg-amber-50'
+                            : 'text-slate-500 hover:bg-slate-100'}
+                          onClick={() => onToggleXpEarningLock(
+                            u.docId,
+                            u.displayName,
+                            !u.xpEarningLocked,
+                          )}
+                          disabled={loading}
+                          aria-label={u.xpEarningLocked ? 'XP獲得を再開' : 'XP獲得を停止'}
+                          title={u.xpEarningLocked ? 'XP獲得を再開' : 'XP獲得を停止'}
+                        >
+                          {u.xpEarningLocked
+                            ? <LockOpen className="w-4 h-4" />
+                            : <Lock className="w-4 h-4" />}
+                        </Button>
                         <Button variant="ghost" size="sm" className="text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setEditingXp(prev => ({ ...prev, [u.docId]: String(u.xp || 0) }))}>
                           編集
                         </Button>
@@ -97,6 +117,8 @@ export default function XpTab({
                           size="sm"
                           className="text-red-500 hover:text-white hover:bg-red-500 transition-colors"
                           onClick={() => onResetUserData(u.docId, u.displayName)}
+                          disabled={loading}
+                          aria-label={`${u.displayName || u.docId}の学習データをリセット`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>

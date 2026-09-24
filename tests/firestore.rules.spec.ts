@@ -359,6 +359,51 @@ describe('Firestore Security Rules', () => {
     ).resolves.toBeUndefined();
   });
 
+  test('ユーザーは不正対策のロック・世代・判定状態を改変できない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', aliceId), {
+        uid: aliceId,
+        xp: 10,
+        xpEarningLocked: false,
+        learningGeneration: 1,
+        integrityGuardV1: {
+          logicalDate: '2026-09-24',
+          acceptedAttempts: 1,
+          earnedXp: 10,
+        },
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    const aliceRef = doc(aliceContext.firestore(), 'users', aliceId);
+
+    await expect(updateDoc(aliceRef, { xpEarningLocked: true })).rejects.toThrow();
+    await expect(updateDoc(aliceRef, { learningGeneration: 999 })).rejects.toThrow();
+    await expect(updateDoc(aliceRef, {
+      integrityGuardV1: {
+        logicalDate: '2026-09-24',
+        acceptedAttempts: 0,
+        earnedXp: 0,
+      },
+    })).rejects.toThrow();
+  });
+
+  test('管理者は不正対策のロックと世代を更新できる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', aliceId), {
+        uid: aliceId,
+        xpEarningLocked: false,
+        learningGeneration: 1,
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    await expect(updateDoc(doc(adminContext.firestore(), 'users', aliceId), {
+      xpEarningLocked: true,
+      learningGeneration: 2,
+    })).resolves.toBeUndefined();
+  });
+
   test('問題の公開状態は管理者だけが更新できる', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'units', 'unit1'), {
@@ -419,6 +464,89 @@ describe('Firestore Security Rules', () => {
     const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
     const ref = doc(aliceContext.firestore(), 'suspicious_activities', 'act1');
     await expect(setDoc(ref, { uid: aliceId })).rejects.toThrow();
+  });
+
+  test('一般ユーザーはインテグリティサマリーと詳細イベントを読み取れない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'integrity_user_summaries', aliceId), {
+        uid: aliceId,
+        riskScore: 80,
+      });
+      await setDoc(doc(context.firestore(), 'integrity_events', 'event1'), {
+        uid: aliceId,
+        reasons: ['高速回答'],
+      });
+    });
+
+    const aliceContext = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    await expect(
+      getDoc(doc(aliceContext.firestore(), 'integrity_user_summaries', aliceId))
+    ).rejects.toThrow();
+    await expect(
+      getDoc(doc(aliceContext.firestore(), 'integrity_events', 'event1'))
+    ).rejects.toThrow();
+  });
+
+  test('管理者はインテグリティデータを読み取れる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'integrity_user_summaries', aliceId), {
+        uid: aliceId,
+        riskScore: 80,
+      });
+      await setDoc(doc(context.firestore(), 'integrity_events', 'event1'), {
+        uid: aliceId,
+        reasons: ['高速回答'],
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    await expect(
+      getDoc(doc(adminContext.firestore(), 'integrity_user_summaries', aliceId))
+    ).resolves.toBeDefined();
+    await expect(
+      getDoc(doc(adminContext.firestore(), 'integrity_events', 'event1'))
+    ).resolves.toBeDefined();
+  });
+
+  test('管理者はレビュー状態だけを更新でき、検知値は変更できない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'integrity_user_summaries', aliceId), {
+        uid: aliceId,
+        riskScore: 80,
+        newEventCount: 3,
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const summaryRef = doc(adminContext.firestore(), 'integrity_user_summaries', aliceId);
+
+    await expect(updateDoc(summaryRef, {
+      reviewStatus: 'monitoring',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: adminId,
+      newEventCount: 0,
+    })).resolves.toBeUndefined();
+
+    await expect(updateDoc(summaryRef, {
+      riskScore: 0,
+    })).rejects.toThrow();
+  });
+
+  test('管理者を含むクライアントはインテグリティデータを作成・削除できない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'integrity_events', 'event1'), {
+        uid: aliceId,
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    await expect(setDoc(
+      doc(adminContext.firestore(), 'integrity_user_summaries', 'new-user'),
+      { uid: 'new-user' }
+    )).rejects.toThrow();
+    await expect(deleteDoc(
+      doc(adminContext.firestore(), 'integrity_events', 'event1')
+    )).rejects.toThrow();
   });
 
   // ─────────────────────────────────────────────────────

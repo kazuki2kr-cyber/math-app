@@ -4,6 +4,7 @@ import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
 const fallbackRealtimeDatabaseUrl = 'https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app';
 
@@ -20,6 +21,25 @@ const firebaseConfig = {
 
 // Next.js (SSR) / React Native のため、二重初期化を防ぐ
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+const appCheckSiteKey = process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY;
+if (
+  typeof window !== 'undefined'
+  && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true'
+  && appCheckSiteKey
+) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (error) {
+    // Next.js のHMRで同一App Checkインスタンスが初期化済みの場合は継続する。
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('Firebase App Check is already initialized.', error);
+    }
+  }
+}
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);

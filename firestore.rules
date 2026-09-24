@@ -163,6 +163,33 @@ service cloud.firestore {
       allow create: if false;
     }
 
+    match /integrity_user_summaries/{userId} {
+      // 検知値は Cloud Functions のみが作成・更新する。管理者はレビュー状態だけ変更できる。
+      allow read: if isAdmin();
+      allow create, delete: if false;
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'reviewStatus',
+          'reviewedAt',
+          'reviewedBy',
+          'newEventCount'
+        ])
+        && request.resource.data.reviewStatus in [
+          'unreviewed',
+          'monitoring',
+          'dismissed',
+          'confirmed'
+        ]
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.newEventCount == 0;
+    }
+
+    match /integrity_events/{id} {
+      // 詳細イベントは管理者による参照のみ。書き込みは Admin SDK に限定する。
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /user_feedback/{id} {
       // 生徒からの投稿は Cloud Functions (Admin SDK) 経由のみ。閲覧は管理者に限定。
       allow read, update, delete: if isAdmin();

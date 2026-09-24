@@ -28,6 +28,14 @@ import {
   WRITTEN_INCLUDE_IN_TOTAL_SCORE,
 } from "./writtenRankingPolicy";
 import { canManageUnitQuestionAvailability } from "./unitQuestionAvailability";
+import { assessDrillIntegrity } from "./integrityRisk";
+import {
+  applyDailyXpCap,
+  evaluateDrillGuard,
+  getRepeatedUnitXpRate,
+  normalizeDrillGuardState,
+  shouldSampleIntegrityEvent,
+} from "./drillAbuseGuard";
 import {
   extractRecognizedCharacters,
   KanjiOcrQuestionResult,
@@ -44,6 +52,8 @@ const db = admin.firestore();
 const auth = admin.auth();
 const realtimeDb = admin.database();
 const STANDARD_XP_QUESTION_COUNT = 10;
+const INTEGRITY_EVENT_RETENTION_DAYS = 30;
+const ENFORCE_APP_CHECK = process.env.ENFORCE_APP_CHECK === "true";
 const BATTLE_QUESTION_COUNT = 10;
 const BATTLE_BASE_SCORE = 100;
 const BATTLE_ANSWER_LIMIT_MS = 30000;
@@ -88,8 +98,42 @@ function clampString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function parseUserDocumentId(value: unknown): string {
+  const uid = clampString(value, 128);
+  if (!uid || uid.includes("/") || /[\u0000-\u001f\u007f]/.test(uid)) {
+    throw new functions.https.HttpsError("invalid-argument", "A valid uid is required.");
+  }
+  return uid;
+}
+
 function buildLogicalDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function buildTokyoLogicalDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function timestampLikeToMillis(value: unknown): number | null {
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === "object" && "toMillis" in value) {
+    const toMillis = (value as { toMillis?: unknown }).toMillis;
+    if (typeof toMillis === "function") {
+      const parsed = Number(toMillis.call(value));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+  return null;
 }
 
 function safeAnalyticsEventIdPart(value: string): string {
@@ -227,6 +271,7 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
   answeredCount: number;
   mode: DrillMode;
   questionResults: AttemptSubmittedQuestionResult[];
+  generation: number;
 }) {
   return {
     eventType: "ATTEMPT_SUBMITTED",
@@ -247,7 +292,76 @@ function buildAttemptSubmittedAnalyticsEvent(params: {
     mode: params.mode,
     source: "processDrillResult",
     questionResults: params.questionResults,
+    generation: params.generation,
   };
+}
+
+function queueIntegritySample(
+  transaction: FirebaseFirestore.Transaction,
+  params: {
+    uid: string;
+    displayName: string;
+    attemptId: string;
+    unitId: string;
+    unitTitle: string;
+    riskScore: number;
+    severity: "low" | "medium" | "high";
+    signalCodes: string[];
+    reasons: string[];
+    metrics: Record<string, unknown>;
+    now: FirebaseFirestore.Timestamp;
+    totalAttemptsAtLastFlag?: number;
+  },
+) {
+  const safeUidPart = safeAnalyticsEventIdPart(params.uid);
+  const sampleWindow = Math.floor(params.now.toMillis() / (15 * 60 * 1000));
+  const eventRef = db.doc(`integrity_events/${safeUidPart}_${sampleWindow}`);
+  const summaryRef = db.doc(`integrity_user_summaries/${params.uid}`);
+  const expireAt = Timestamp.fromDate(
+    new Date(params.now.toMillis() + INTEGRITY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000),
+  );
+  const signalCounts = Object.fromEntries(
+    params.signalCodes.map((code) => [code, FieldValue.increment(1)]),
+  );
+
+  transaction.set(eventRef, {
+    schemaVersion: 2,
+    uid: params.uid,
+    actorKey: `usr_${params.uid.slice(0, 8)}`,
+    displayName: params.displayName,
+    attemptId: params.attemptId,
+    unitId: params.unitId,
+    unitTitle: params.unitTitle,
+    riskScore: params.riskScore,
+    severity: params.severity,
+    signalCodes: params.signalCodes,
+    reasons: params.reasons,
+    metrics: params.metrics,
+    createdAt: params.now,
+    expireAt,
+  }, { merge: true });
+
+  transaction.set(summaryRef, {
+    schemaVersion: 2,
+    uid: params.uid,
+    actorKey: `usr_${params.uid.slice(0, 8)}`,
+    displayName: params.displayName,
+    flaggedAttemptCount: FieldValue.increment(1),
+    newEventCount: FieldValue.increment(1),
+    riskPointsTotal: FieldValue.increment(params.riskScore),
+    signalCounts,
+    lastRiskScore: params.riskScore,
+    lastSeverity: params.severity,
+    lastReasons: params.reasons,
+    lastUnitId: params.unitId,
+    lastUnitTitle: params.unitTitle,
+    lastFlaggedAt: params.now,
+    ...(params.totalAttemptsAtLastFlag === undefined
+      ? {}
+      : { totalAttemptsAtLastFlag: params.totalAttemptsAtLastFlag }),
+    reviewStatus: "unreviewed",
+    updatedAt: params.now,
+  }, { merge: true });
 }
 
 // ==========================================
@@ -1131,7 +1245,10 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
   return { success: true, alreadyFinalized: finalizeResult.alreadyFinalized, playerCount: validParticipants.length };
 });
 
-export const processDrillResult = functions.region("us-central1").https.onCall(async (data, context) => {
+export const processDrillResult = functions
+  .region("us-central1")
+  .runWith({ enforceAppCheck: ENFORCE_APP_CHECK })
+  .https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
   }
@@ -1218,11 +1335,45 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     .filter(id => !unitQuestionMap.has(id));
   if (invalidIds.length > 0) {
     console.warn(`[processDrillResult] Invalid question IDs from uid=${uid}:`, invalidIds);
-    await db.collection("suspicious_activities").add({
-      uid, userName, unitId,
-      reasons: [`不正な問題ID ${invalidIds.length}件`],
-      timestamp: now,
-      details: { time, invalidIds },
+    const invalidDisplayName = clampString(context.auth.token?.name, 80)
+      || `利用者 ${uid.slice(0, 8)}`;
+    await db.runTransaction(async (transaction) => {
+      const userRef = db.doc(`users/${uid}`);
+      const userSnap = await transaction.get(userRef);
+      const userData = userSnap.data() || {};
+      const logicalDate = buildTokyoLogicalDate(now.toDate());
+      const guard = normalizeDrillGuardState(
+        userData.integrityGuardV1,
+        logicalDate,
+        timestampLikeToMillis,
+      );
+      if (!shouldSampleIntegrityEvent(guard.lastSampledAtMs, now.toMillis())) return;
+
+      transaction.set(userRef, {
+        integrityGuardV1: {
+          logicalDate,
+          acceptedAttempts: guard.acceptedAttempts,
+          earnedXp: guard.earnedXp,
+          consecutiveBurstCount: guard.consecutiveBurstCount,
+          lastAcceptedAt: guard.lastAcceptedAtMs === null
+            ? null
+            : Timestamp.fromMillis(guard.lastAcceptedAtMs),
+          lastSampledAt: now,
+        },
+      }, { merge: true });
+      queueIntegritySample(transaction, {
+        uid,
+        displayName: invalidDisplayName,
+        attemptId: typeof attemptId === "string" ? attemptId.slice(0, 120) : "invalid",
+        unitId,
+        unitTitle,
+        riskScore: 100,
+        severity: "high",
+        signalCodes: ["invalid_question_ids"],
+        reasons: [`存在しない問題IDを${invalidIds.length}件送信`],
+        metrics: { timeSec: time, invalidQuestionIdCount: invalidIds.length },
+        now,
+      });
     });
     throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
   }
@@ -1323,6 +1474,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     correctQuestions: safeCorrectQuestions,
     wrongQuestions: safeWrongQuestions,
   };
+  const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
 
   try {
     // --- 2. トランザクションによるデータ更新 ---
@@ -1330,7 +1482,6 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const userRef = db.doc(`users/${uid}`);
     
     // Idempotency: attemptIdを使ってすでに記録が存在するか確認
-    const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
     const analyticsEventRef = db.collection("analytics_events").doc(`submit_${attemptDocId}`);
 
@@ -1352,33 +1503,90 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       };
     }
 
-    // ③: lastAttemptTimes からインターバルチェック（subcollection クエリ不要・1読み取り削減）
-    let _rapidSubmissionSec: number | null = null;
-    const lastAttemptTimeStr: string | null = userSnap.exists
-      ? (userSnap.data()?.lastAttemptTimes?.[unitId] || null)
-      : null;
-    if (lastAttemptTimeStr) {
-      const lastDateTime = new Date(lastAttemptTimeStr).getTime();
-      const diffSec = (now.toMillis() - lastDateTime) / 1000;
-      if (diffSec < 30 && totalAnswered >= 10) {
-        _rapidSubmissionSec = Math.round(diffSec);
-        console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${_rapidSubmissionSec}s`);
+    const userData = userSnap.data() || {};
+    const logicalDate = buildTokyoLogicalDate(now.toDate());
+    const guard = normalizeDrillGuardState(
+      userData.integrityGuardV1,
+      logicalDate,
+      timestampLikeToMillis,
+    );
+    const guardDecision = evaluateDrillGuard({
+      state: guard,
+      nowMs: now.toMillis(),
+      timeSec: time,
+      answeredCount: totalAnswered,
+    });
+    const integrityDisplayName = clampString(
+      userData.displayName || context.auth?.token?.name,
+      80,
+    ) || `利用者 ${uid.slice(0, 8)}`;
+
+    if (guardDecision.blocked) {
+      if (shouldSampleIntegrityEvent(guard.lastSampledAtMs, now.toMillis())) {
+        transaction.set(userRef, {
+          integrityGuardV1: {
+            logicalDate,
+            acceptedAttempts: guard.acceptedAttempts,
+            earnedXp: guard.earnedXp,
+            consecutiveBurstCount: guard.consecutiveBurstCount,
+            lastAcceptedAt: guard.lastAcceptedAtMs === null
+              ? null
+              : Timestamp.fromMillis(guard.lastAcceptedAtMs),
+            lastSampledAt: now,
+          },
+        }, { merge: true });
+        queueIntegritySample(transaction, {
+          uid,
+          displayName: integrityDisplayName,
+          attemptId: attemptDocId,
+          unitId,
+          unitTitle,
+          riskScore: 100,
+          severity: "high",
+          signalCodes: [guardDecision.blockCode || "submission_blocked"],
+          reasons: [guardDecision.reason || "演習結果を拒否しました"],
+          metrics: {
+            timeSec: time,
+            answeredCount: totalAnswered,
+            intervalSec: guardDecision.intervalSec,
+            dailyAcceptedAttempts: guard.acceptedAttempts,
+          },
+          now,
+        });
       }
+
+      return {
+        _blocked: true,
+        blockCode: guardDecision.blockCode,
+        retryAfterSeconds: guardDecision.retryAfterSeconds,
+      };
     }
 
-    let currentXp = 0;
-    let currentIcon = "📐";
-    if (userSnap.exists) {
-      const uData = userSnap.data();
-      currentXp = uData?.xp || 0;
-      currentIcon = uData?.icon || "📐";
+    // ③: lastAttemptTimes からインターバルチェック（subcollection クエリ不要・1読み取り削減）
+    const _rapidSubmissionSec = guardDecision.intervalSec !== null
+      && guardDecision.intervalSec < 30
+      && totalAnswered >= 10
+      ? Math.round(guardDecision.intervalSec)
+      : null;
+    if (_rapidSubmissionSec !== null) {
+      console.warn(`[processDrillResult] Rapid submission uid=${uid}: ${_rapidSubmissionSec}s`);
     }
+
+    const integrityAssessment = assessDrillIntegrity({
+      timeSec: time,
+      answeredCount: totalAnswered,
+      correctCount: safeCorrectQuestions.length,
+      rapidSubmissionSec: _rapidSubmissionSec,
+    });
+
+    const currentXp = Number(userData.xp) || 0;
+    const currentIcon = userData.icon || "📐";
 
     // 2-1. スコア更新判定 (High Score) と unitStats マージ
     // unitStats マップ全体を取得してマージ（ドット記法ではなくリテラルキーで保存するため）
-    const existingUnitStats = userSnap.exists ? (userSnap.data()?.unitStats || {}) : {};
-    const isFirstParticipation = Object.keys(existingUnitStats).length === 0;
-    const existingLastAttemptTimes = userSnap.exists ? (userSnap.data()?.lastAttemptTimes || {}) : {};
+    const existingUnitStats = userData.unitStats || {};
+    const isFirstParticipation = userData.hasParticipated !== true
+      && Object.keys(existingUnitStats).length === 0;
     const existingUnitData = existingUnitStats[unitId] || {};
     const existingMaxScore = existingUnitData.maxScore || 0;
     const existingBestTime = existingUnitData.bestTime || Infinity;
@@ -1395,19 +1603,22 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     // 2-2. drillCount ベースの XP 逓減レート計算
     const drillCount = existingUnitData.drillCount || 0;
     const attemptNumber = drillCount + 1; // 1始まり
-    let xpRateMultiplier: number;
-    if (attemptNumber <= 3) xpRateMultiplier = 1.0;                          // 1〜3回目:  100%
-    else if (attemptNumber <= 5) xpRateMultiplier = 0.7;                     // 4〜5回目:   70%
-    else if (attemptNumber <= 10) xpRateMultiplier = 0.3;                    // 6〜10回目:  30%
-    else xpRateMultiplier = multiplier === 1.5 ? 0.2 : 0.1;                 // 11回目以降: 全問正解20%, それ以外10%
-
-    const finalXpGain = Math.floor(preMultiplierXp * multiplier * xpRateMultiplier);
+    const xpRateMultiplier = getRepeatedUnitXpRate(attemptNumber);
+    const proposedXpGain = Math.floor(preMultiplierXp * multiplier * xpRateMultiplier);
+    const xpCapResult = applyDailyXpCap(
+      proposedXpGain,
+      guard.earnedXp,
+      userData.xpEarningLocked === true,
+    );
+    const finalXpGain = xpCapResult.awardedXp;
     const xpDetailsResult = {
       base: normalizedBaseTotal,
       combo: normalizedComboTotal,
       multiplier,
-      multiplierBonus: finalXpGain - preMultiplierXp,
+      multiplierBonus: proposedXpGain - preMultiplierXp,
       finalXp: finalXpGain,
+      xpCapped: xpCapResult.capped,
+      xpEarningLocked: userData.xpEarningLocked === true,
     };
 
     // 2-3. XP / レベル計算
@@ -1461,6 +1672,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       currentLevelXp: newLevelData.currentLevelXp,
       nextLevelXp: newLevelData.nextLevelXp,
       updatedAt: dateStr,
+      learningGeneration: Math.max(1, Number(userData.learningGeneration) || 1),
+      hasParticipated: true,
       ...(userSnap.exists && currentIcon !== "📐" ? {} : { icon: "📐" })
     };
     
@@ -1474,7 +1687,7 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
 
     const learningReviewUpdate = updateLearningReviewStats({
       existingReview: existingUnitData.reviewV1,
-      existingDaily: userSnap.exists ? userSnap.data()?.learningDailyV1 : null,
+      existingDaily: userData.learningDailyV1 || null,
       correctCount: safeCorrectQuestions.length,
       answeredCount: totalAnswered,
       studyTimeSec: time,
@@ -1499,7 +1712,23 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
     const recalculatedTotalScore = Object.values(updatedStatsForTotal).reduce((acc: number, stat: any) => {
       return acc + (stat.maxScore || 0);
     }, 0);
+    const totalAttemptsAtLastFlag = Object.values(updatedStatsForTotal).reduce((acc: number, stat: any) => {
+      return acc + Number(stat.drillCount || 0);
+    }, 0);
     userUpdate.totalScore = recalculatedTotalScore;
+
+    const shouldSampleIntegrity = integrityAssessment.flagged
+      && shouldSampleIntegrityEvent(guard.lastSampledAtMs, now.toMillis());
+    userUpdate.integrityGuardV1 = {
+      logicalDate,
+      acceptedAttempts: guard.acceptedAttempts + 1,
+      earnedXp: guard.earnedXp + finalXpGain,
+      consecutiveBurstCount: guardDecision.nextBurstCount,
+      lastAcceptedAt: now,
+      lastSampledAt: shouldSampleIntegrity ? now : (
+        guard.lastSampledAtMs === null ? null : Timestamp.fromMillis(guard.lastSampledAtMs)
+      ),
+    };
 
     // 他の基本フィールドの更新
     const baseUpdates: any = { ...userUpdate };
@@ -1532,6 +1761,8 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       mode: drillMode,
       xpGain: finalXpGain,
       answeredCount: totalAnswered,
+      generation: Math.max(1, Number(userData.learningGeneration) || 1),
+      submittedAt: now,
       expireAt: Timestamp.fromDate(expireAt),
       details: [
         ...safeCorrectQuestions.map((q: any) => ({ qId: q.id, isCorrect: true })),
@@ -1562,7 +1793,32 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
       answeredCount: safeCorrectQuestions.length + safeWrongQuestions.length,
       mode: drillMode,
       questionResults: questionResultsForAnalytics,
+      generation: Math.max(1, Number(userData.learningGeneration) || 1),
     }));
+
+    if (shouldSampleIntegrity) {
+      queueIntegritySample(transaction, {
+        uid,
+        displayName: integrityDisplayName,
+        attemptId: attemptDocId,
+        unitId,
+        unitTitle,
+        riskScore: integrityAssessment.riskScore,
+        severity: integrityAssessment.severity,
+        signalCodes: integrityAssessment.signals.map((signal) => signal.code),
+        reasons: integrityAssessment.reasons,
+        metrics: {
+          timeSec: time,
+          answeredCount: totalAnswered,
+          correctCount: safeCorrectQuestions.length,
+          accuracy: integrityAssessment.accuracy,
+          averageSecondsPerQuestion: integrityAssessment.averageSecondsPerQuestion,
+          rapidSubmissionSec: _rapidSubmissionSec,
+        },
+        now,
+        totalAttemptsAtLastFlag,
+      });
+    }
 
     return {
       success: true,
@@ -1598,18 +1854,15 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   // --- 3. トランザクション後の非クリティカル処理 ---
   const resultAny = result as any;
 
-  // 不審アクティビティ（短時間の連続演習）をログ記録
-  if (resultAny._rapidSubmission !== null && resultAny._rapidSubmission !== undefined) {
-    try {
-      await db.collection("suspicious_activities").add({
-        uid, userName, unitId,
-        reasons: [`異常に短い演習間隔: ${resultAny._rapidSubmission}秒`],
-        timestamp: now,
-        details: { score: serverScore, time, correctCount: safeCorrectQuestions.length },
-      });
-    } catch (e) {
-      console.error("[processDrillResult] Suspicious activity log error (non-critical):", e);
-    }
+  if (resultAny._blocked) {
+    throw new functions.https.HttpsError(
+      "resource-exhausted",
+      "演習結果の送信間隔または1日の利用上限を確認してください。",
+      {
+        code: resultAny.blockCode,
+        retryAfterSeconds: resultAny.retryAfterSeconds,
+      },
+    );
   }
 
   // リーダーボード更新（ハイスコア・レベルアップ・100XP境界到達時）
@@ -1622,7 +1875,10 @@ export const processDrillResult = functions.region("us-central1").https.onCall(a
   }
 
   // 内部フィールドはクライアントに返さない
-  const { _leaderboardUpdate: _lb, _rapidSubmission: _rs, ...clientResult } = resultAny;
+  const clientResult = { ...resultAny };
+  delete clientResult._leaderboardUpdate;
+  delete clientResult._rapidSubmission;
+  delete clientResult._blocked;
   return clientResult;
 
 } catch (error: any) {
@@ -2309,6 +2565,151 @@ export const setUnitQuestionsActive = functions
       active,
       questionCount: questionsSnap.size,
       activeQuestionCount: active ? questionsSnap.size : 0,
+    };
+  });
+
+export const setUserXpEarningLock = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth?.token?.admin) {
+      throw new functions.https.HttpsError("permission-denied", "管理者のみが実行できます。");
+    }
+
+    const uid = parseUserDocumentId((data as any)?.uid);
+    const locked = (data as any)?.locked === true;
+
+    const now = Timestamp.now();
+    const userRef = db.doc(`users/${uid}`);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "ユーザーが見つかりません。");
+    }
+
+    const batch = db.batch();
+    batch.update(userRef, {
+      xpEarningLocked: locked,
+      xpEarningLockUpdatedAt: now,
+      xpEarningLockUpdatedBy: context.auth.uid,
+      updatedAt: now.toDate().toISOString(),
+    });
+    batch.set(db.doc(`integrity_user_summaries/${uid}`), {
+      uid,
+      displayName: clampString(userSnap.data()?.displayName, 80) || `利用者 ${uid.slice(0, 8)}`,
+      reviewStatus: locked ? "confirmed" : "monitoring",
+      reviewedAt: now,
+      reviewedBy: context.auth.uid,
+      newEventCount: 0,
+      xpEarningLocked: locked,
+      updatedAt: now,
+    }, { merge: true });
+    await batch.commit();
+
+    return { success: true, uid, locked };
+  });
+
+export const resetUserLearningData = functions
+  .region("us-central1")
+  .runWith({ timeoutSeconds: 120, memory: "512MB" })
+  .https.onCall(async (data, context) => {
+    if (!context.auth?.token?.admin) {
+      throw new functions.https.HttpsError("permission-denied", "管理者のみが実行できます。");
+    }
+
+    const uid = parseUserDocumentId((data as any)?.uid);
+
+    const now = Timestamp.now();
+    const userRef = db.doc(`users/${uid}`);
+    const leaderboardRef = db.doc("leaderboards/overall");
+    const resetResult = await db.runTransaction(async (transaction) => {
+      const [userSnap, leaderboardSnap] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(leaderboardRef),
+      ]);
+      if (!userSnap.exists) {
+        throw new functions.https.HttpsError("not-found", "ユーザーが見つかりません。");
+      }
+
+      const userData = userSnap.data() || {};
+      const previousGeneration = Math.max(1, Number(userData.learningGeneration) || 1);
+      const learningGeneration = previousGeneration + 1;
+      const hadParticipation = userData.hasParticipated === true
+        || Number(userData.xp) > 0
+        || Object.keys(userData.unitStats || {}).length > 0
+        || Object.keys(userData.writtenStats || {}).length > 0;
+
+      transaction.update(userRef, {
+        xp: 0,
+        level: 1,
+        title: "算数卒業生",
+        totalScore: 0,
+        unitStats: {},
+        icon: "📐",
+        progressPercent: 0,
+        currentLevelXp: 0,
+        nextLevelXp: calculateMathXpForNextLevel(1),
+        learningGeneration,
+        learningResetAt: now,
+        hasParticipated: hadParticipation,
+        integrityGuardV1: {
+          logicalDate: buildTokyoLogicalDate(now.toDate()),
+          acceptedAttempts: 0,
+          earnedXp: 0,
+          consecutiveBurstCount: 0,
+          lastAcceptedAt: null,
+          lastSampledAt: null,
+        },
+        lastAttemptTimes: FieldValue.delete(),
+        learningDailyV1: FieldValue.delete(),
+        writtenStats: FieldValue.delete(),
+        unlockedIcons: FieldValue.delete(),
+        updatedAt: now.toDate().toISOString(),
+      });
+
+      if (leaderboardSnap.exists) {
+        const rankings = Array.isArray(leaderboardSnap.data()?.rankings)
+          ? leaderboardSnap.data()!.rankings.filter((entry: any) => entry?.uid !== uid)
+          : [];
+        transaction.update(leaderboardRef, {
+          rankings,
+          updatedAt: now.toDate().toISOString(),
+        });
+      }
+
+      const resetEventRef = db.doc(
+        `analytics_events/user_reset_${safeAnalyticsEventIdPart(uid)}_${now.toMillis()}`,
+      );
+      transaction.set(resetEventRef, {
+        eventType: "USER_DATA_RESET",
+        eventVersion: 1,
+        occurredAt: now,
+        logicalDate: buildTokyoLogicalDate(now.toDate()),
+        uid,
+        previousGeneration,
+        learningGeneration,
+        source: "resetUserLearningData",
+        actor: context.auth!.uid,
+      });
+
+      return { learningGeneration };
+    });
+
+    const [wrongAnswersSnap, writtenLimitsSnap] = await Promise.all([
+      userRef.collection("wrong_answers").get(),
+      userRef.collection("writtenAttemptLimits").get(),
+    ]);
+    const writer = db.bulkWriter();
+    writer.onWriteError((error) => error.failedAttempts < 3);
+    wrongAnswersSnap.docs.forEach((doc) => writer.delete(doc.ref));
+    writtenLimitsSnap.docs.forEach((doc) => writer.delete(doc.ref));
+    await writer.close();
+
+    return {
+      success: true,
+      uid,
+      learningGeneration: resetResult.learningGeneration,
+      retainedAttemptsForAudit: true,
+      deletedWrongAnswers: wrongAnswersSnap.size,
+      deletedWrittenAttemptLimits: writtenLimitsSnap.size,
     };
   });
 

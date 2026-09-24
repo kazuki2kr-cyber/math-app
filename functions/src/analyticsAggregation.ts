@@ -204,6 +204,14 @@ last_reset AS (
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
 ),
+user_resets AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.uid') AS uid,
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'USER_DATA_RESET'
+  GROUP BY uid
+),
 submitted AS (
   SELECT
     JSON_VALUE(raw_json, '$.attemptId') AS attempt_id,
@@ -233,9 +241,12 @@ SELECT s.*
 FROM submitted s
 LEFT JOIN deleted d
   ON d.attempt_id = s.attempt_id
+LEFT JOIN user_resets ur
+  ON ur.uid = s.uid
 CROSS JOIN last_reset lr
 WHERE s.occurred_at IS NOT NULL
   AND (lr.reset_at IS NULL OR s.occurred_at > lr.reset_at)
+  AND (ur.reset_at IS NULL OR s.occurred_at > ur.reset_at)
   AND (d.deleted_at IS NULL OR d.deleted_at < s.occurred_at)
 `;
 }
@@ -257,6 +268,14 @@ last_reset AS (
     MAX(${occurredAtExpr("raw_json")}) AS reset_at
   FROM raw_events
   WHERE JSON_VALUE(raw_json, '$.eventType') = 'ALL_DATA_RESET'
+),
+user_resets AS (
+  SELECT
+    JSON_VALUE(raw_json, '$.uid') AS uid,
+    MAX(${occurredAtExpr("raw_json")}) AS reset_at
+  FROM raw_events
+  WHERE JSON_VALUE(raw_json, '$.eventType') = 'USER_DATA_RESET'
+  GROUP BY uid
 ),
 submitted AS (
   SELECT
@@ -300,10 +319,13 @@ SELECT
 FROM submitted s
 LEFT JOIN deleted d
   ON d.attempt_id = s.attempt_id
+LEFT JOIN user_resets ur
+  ON ur.uid = s.uid
 CROSS JOIN last_reset lr
 CROSS JOIN UNNEST(s.question_results) AS question_result
 WHERE s.occurred_at IS NOT NULL
   AND (lr.reset_at IS NULL OR s.occurred_at > lr.reset_at)
+  AND (ur.reset_at IS NULL OR s.occurred_at > ur.reset_at)
   AND (d.deleted_at IS NULL OR d.deleted_at < s.occurred_at)
 `;
 }

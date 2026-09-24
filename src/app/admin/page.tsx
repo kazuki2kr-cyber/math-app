@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp, increment } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp, increment, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare, Bell } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
@@ -91,20 +91,20 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
   
   const [activeTab, setActiveTab] = useState<'import' | 'units' | 'scores' | 'xp' | 'suspicious' | 'analytics' | 'writtenAnalytics' | 'feedback' | 'writtenFeedback' | 'notifications' | 'roles'>('roles');
-  const [selectedSuspiciousIds, setSelectedSuspiciousIds] = useState<Set<string>>(new Set());
   const [units, setUnits] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]); // holds attempts now
   const [lastAttemptDoc, setLastAttemptDoc] = useState<any>(null);
   const [hasMoreAttempts, setHasMoreAttempts] = useState(true);
   const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
+  const [integritySummaries, setIntegritySummaries] = useState<any[]>([]);
+  const [integrityEventsByUid, setIntegrityEventsByUid] = useState<Record<string, any[]>>({});
+  const [integrityLoadingUid, setIntegrityLoadingUid] = useState<string | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [feedbackItems, setFeedbackItems] = useState<any[]>([]);
   const [writtenFeedbackItems, setWrittenFeedbackItems] = useState<any[]>([]);
   const [editingXp, setEditingXp] = useState<Record<string, string>>({});
-  const [suspiciousFilter, setSuspiciousFilter] = useState<'red' | 'yellow' | 'all'>('red');
   const [displayScoresCount, setDisplayScoresCount] = useState(50);
   const [displayUsersCount, setDisplayUsersCount] = useState(50);
-  const [displaySuspiciousCount, setDisplaySuspiciousCount] = useState(30);
   const [selectedScoreIds, setSelectedScoreIds] = useState<Set<string>>(new Set());
   
   // Analytics
@@ -138,7 +138,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     if (activeTab === 'units') fetchUnits();
-    if (activeTab === 'scores' || activeTab === 'suspicious') fetchScores();
+    if (activeTab === 'scores') fetchScores();
+    if (activeTab === 'suspicious') fetchIntegritySummaries();
     if (activeTab === 'xp') fetchUsers();
     if (activeTab === 'feedback') fetchFeedback();
     if (activeTab === 'writtenFeedback') fetchWrittenFeedback();
@@ -371,6 +372,83 @@ export default function AdminPage() {
       setMessage('得点の取得に失敗しました。');
     }
     setLoading(false);
+  };
+
+  const fetchIntegritySummaries = async () => {
+    if (!isAdmin) return;
+    setLoading(true);
+    setMessage('');
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'integrity_user_summaries'),
+        orderBy('lastFlaggedAt', 'desc'),
+        limit(50),
+      ));
+      const summaries = snap.docs.map((summaryDoc) => ({
+        id: summaryDoc.id,
+        ...summaryDoc.data(),
+      }));
+      setIntegritySummaries(summaries);
+      setIntegrityEventsByUid({});
+
+      // 旧形式の未レビュー履歴も移行期間中は併記する。
+      await fetchScores(false);
+    } catch (error) {
+      console.error(error);
+      setMessage('インテグリティサマリーの取得に失敗しました。');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchIntegrityEvents = async (uid: string) => {
+    if (!isAdmin || !uid) return;
+    setIntegrityLoadingUid(uid);
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'integrity_events'),
+        where('uid', '==', uid),
+        orderBy('createdAt', 'desc'),
+        limit(20),
+      ));
+      setIntegrityEventsByUid((previous) => ({
+        ...previous,
+        [uid]: snap.docs.map((eventDoc) => ({ id: eventDoc.id, ...eventDoc.data() })),
+      }));
+    } catch (error) {
+      console.error(error);
+      setMessage('ユーザー別の検知詳細を取得できませんでした。');
+    } finally {
+      setIntegrityLoadingUid(null);
+    }
+  };
+
+  const updateIntegrityReviewStatus = async (
+    uid: string,
+    reviewStatus: 'unreviewed' | 'monitoring' | 'dismissed' | 'confirmed',
+  ) => {
+    if (!isAdmin || !user?.uid) return;
+    setLoading(true);
+    setMessage('');
+    try {
+      await updateDoc(doc(db, 'integrity_user_summaries', uid), {
+        reviewStatus,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: user.uid,
+        newEventCount: 0,
+      });
+      setIntegritySummaries((previous) => previous.map((summary) => (
+        summary.uid === uid
+          ? { ...summary, reviewStatus, reviewedBy: user.uid, newEventCount: 0 }
+          : summary
+      )));
+      setMessage('レビュー状態を更新しました。');
+    } catch (error) {
+      console.error(error);
+      setMessage('レビュー状態の更新に失敗しました。');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchUsers = async () => {
@@ -619,177 +697,61 @@ export default function AdminPage() {
     setLoading(false);
   };
 
-  const handleIgnoreSuspicious = async (activityOrId: any) => {
-    setLoading(true);
-    try {
-      let activity = typeof activityOrId === 'string' 
-        ? suspiciousActivities.find(a => a.id === activityOrId)
-        : activityOrId;
-
-      if (!activity && typeof activityOrId === 'string') {
-        // scores (Auto) から探す
-        const score = scores.find(s => s.docId === activityOrId);
-        if (score) activity = { ...score, isServer: false, id: score.docId };
-      }
-
-      if (!activity) throw new Error('対象のデータが見つかりませんでした。');
-
-      if (!activity.isServer) {
-        // 自動検知（Attemptsベース）の場合は、Attemptsドキュメントを更新
-        // docId や path が確実に存在することを確認
-        const path = activity.path;
-        const uid = activity.uid;
-        const docId = activity.docId || activity.id;
-
-        let attemptRef;
-        if (path) {
-          attemptRef = doc(db, path);
-        } else if (uid && docId) {
-          attemptRef = doc(db, 'users', uid, 'attempts', docId);
-        }
-
-        if (attemptRef) {
-          await updateDoc(attemptRef, { ignoreFraud: true });
-        }
-      } else {
-        // サーバー検知（suspicious_activitiesベース）の場合は、そのアクティビティを削除
-        await deleteDoc(doc(db, 'suspicious_activities', activity.id));
-      }
-      
-      setSuspiciousActivities(prev => prev.filter(a => a.id !== (activity.id || activity.docId)));
-      setMessage('報告を無視リストに移動しました。');
-    } catch (e: any) {
-       console.error(e);
-       setMessage('無視処理に失敗しました: ' + e.message);
-    }
-    setLoading(false);
-  };
-
-  const handleBatchActionSuspicious = async (action: 'ignore' | 'delete') => {
-    if (selectedSuspiciousIds.size === 0) return;
-    const count = selectedSuspiciousIds.size;
-    if (action === 'delete' && !window.confirm(`${count}件のデータを一括削除しますか？\n(XPもすべて差し引かれます)`)) return;
-
-    setLoading(true);
-    try {
-      const suspiciousScores = scores
-        .filter(s => s.time != null && s.time > 0 && !s.ignoreFraud)
-        .map(s => {
-          const answeredCount = s.answeredCount || (Array.isArray(s.details) ? s.details.length : 10);
-          const avgPerQ = s.time / Math.max(1, answeredCount);
-          let flag: 'red' | 'yellow' | 'green' = 'green';
-          if (avgPerQ <= 3) flag = 'red';
-          else if (avgPerQ <= 5) flag = 'yellow';
-          return { ...s, flag, isServer: false, id: s.docId };
-        });
-      const serverSuspicious = suspiciousActivities.map(s => ({ ...s, isServer: true }));
-      const allSuspicious = [...serverSuspicious, ...suspiciousScores.filter(s => s.flag !== 'green')];
-      
-      const itemsToProcess = allSuspicious.filter(item => selectedSuspiciousIds.has(item.id || item.docId));
-
-      for (const item of itemsToProcess) {
-        if (action === 'delete') {
-          // handleDeleteScore と同等の処理が必要だが、バッチ化は複雑なので順次処理（件数が多くない想定）
-          await handleDeleteScore(item);
-        } else {
-          await handleIgnoreSuspicious(item);
-        }
-      }
-      
-      setSelectedSuspiciousIds(new Set());
-      setMessage(`${count}件の処理が完了しました。`);
-    } catch (e: any) {
-      console.error(e);
-      setMessage('一括処理エラー: ' + e.message);
-    }
-    setLoading(false);
-  };
-
-  const handleToggleSelectSuspicious = (id: string) => {
-    const newSet = new Set(selectedSuspiciousIds);
-    if (newSet.has(id)) newSet.delete(id);
-    else newSet.add(id);
-    setSelectedSuspiciousIds(newSet);
-  };
-
   const handleResetUserData = async (uid: string, displayName: string) => {
-    if (!window.confirm(`⚠️ 警告: ${displayName || uid} さんの全学習データをリセットしますか？\n\n獲得したXP、レベル、ハイスコア、アイコン、演習履歴がすべて消去され、初期状態に戻ります。この操作は取り消せません。`)) return;
-    if (!window.confirm(`【最終確認】${displayName || uid} さんのデータを本当にすべて削除しますか？`)) return;
+    if (!window.confirm(`⚠️ 警告: ${displayName || uid} さんの数学学習データをリセットしますか？\n\nXP、レベル、ハイスコア、進捗、記述式の挑戦状態が初期化されます。過去の演習履歴と不審操作ログは監査用として保持され、90日後に自動削除されます。`)) return;
+    if (!window.confirm(`【最終確認】${displayName || uid} さんの数学学習状態を本当に初期化しますか？`)) return;
 
     setLoading(true);
     setMessage('ユーザーデータリセット中...');
 
     try {
-      // 1. ユーザーの全 attempts を取得
-      const attemptsSnap = await getDocs(collection(db, 'users', uid, 'attempts'));
-      const attemptsCount = attemptsSnap.size;
-      const attempts = attemptsSnap.docs.map(d => ({ docId: d.id, path: d.ref.path, ...d.data() }));
-
-      // 3. Attempts サブコレクションの全削除
-      for (let i = 0; i < attempts.length; i += ANALYTICS_EVENT_BATCH_SIZE) {
-        const batch = writeBatch(db);
-        attempts.slice(i, i + ANALYTICS_EVENT_BATCH_SIZE).forEach(attempt => {
-          if (attempt.path) {
-            batch.delete(doc(db, attempt.path));
-            queueAttemptDeletedAnalyticsEvent(batch, attempt, user?.uid || user?.email || 'admin', 'user_data_reset');
-          }
-        });
-        await batch.commit();
-      }
-      
-      // 4. wrong_answers サブコレクションの削除
-      const wrongSnap = await getDocs(collection(db, 'users', uid, 'wrong_answers'));
-      for (let i = 0; i < wrongSnap.docs.length; i += 400) {
-        const batch = writeBatch(db);
-        wrongSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-
-      // 5. ユーザードキュメントの初期化
-      const userRef = doc(db, 'users', uid);
-      await updateDoc(userRef, {
-        xp: 0,
-        level: 1,
-        title: '算数卒業生',
-        totalScore: 0,
-        unitStats: {},
-        icon: '📐',
-        progressPercent: 0,
-        currentLevelXp: 0,
-        nextLevelXp: 52,
-        updatedAt: new Date().toISOString()
-      });
-
-      // 7. リーダーボード（配列形式）の更新
-      try {
-        const lbRef = doc(db, 'leaderboards', 'overall');
-        const lbSnap = await getDoc(lbRef);
-        if (lbSnap.exists()) {
-          const rankings = lbSnap.data().rankings || [];
-          const newRankings = rankings.filter((r: any) => r.uid !== uid);
-          if (rankings.length !== newRankings.length) {
-            await updateDoc(lbRef, { rankings: newRankings });
-          }
-        }
-      } catch (lbErr) {
-        console.warn('Leaderboard cleanup failed:', lbErr);
-      }
+      const resetUserLearningData = httpsCallable<
+        { uid: string },
+        { learningGeneration: number; deletedWrongAnswers: number; deletedWrittenAttemptLimits: number }
+      >(getFunctions(undefined, 'us-central1'), 'resetUserLearningData');
+      const response = await resetUserLearningData({ uid });
 
       // ローカルステートの更新
-      setUsers(users.map(u => u.docId === uid ? {
+      setUsers(current => current.map(u => u.docId === uid ? {
         ...u,
         xp: 0,
         level: 1,
         totalScore: 0,
-        icon: '📐'
+        icon: '📐',
+        unitStats: {},
+        learningGeneration: response.data.learningGeneration,
       } : u));
 
-      setMessage(`✅ ${displayName || uid} さんのデータを初期化しました。`);
+      setMessage(`✅ ${displayName || uid} さんの数学学習状態を初期化しました。過去履歴は監査用として保持されています。`);
     } catch (e: any) {
       console.error(e);
       setMessage(`❌ エラーが発生しました: ${e.message}`);
     }
     setLoading(false);
+  };
+
+  const handleToggleXpEarningLock = async (uid: string, displayName: string, locked: boolean) => {
+    const action = locked ? '停止' : '再開';
+    if (!window.confirm(`${displayName || uid} さんのXP獲得を${action}しますか？`)) return;
+
+    setLoading(true);
+    setMessage('XP獲得設定を更新中...');
+    try {
+      const setUserXpEarningLock = httpsCallable<
+        { uid: string; locked: boolean },
+        { success: boolean; locked: boolean }
+      >(getFunctions(undefined, 'us-central1'), 'setUserXpEarningLock');
+      await setUserXpEarningLock({ uid, locked });
+      setUsers(current => current.map(candidate => (
+        candidate.docId === uid ? { ...candidate, xpEarningLocked: locked } : candidate
+      )));
+      setMessage(`✅ ${displayName || uid} さんのXP獲得を${action}しました。`);
+    } catch (error: any) {
+      console.error(error);
+      setMessage(`❌ XP獲得設定の更新に失敗しました: ${error.message || error}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleToggleSelectScore = (docId: string) => {
@@ -1265,27 +1227,24 @@ export default function AdminPage() {
           setEditingXp={setEditingXp}
           onUpdateXp={handleUpdateXp}
           onResetUserData={handleResetUserData}
+          onToggleXpEarningLock={handleToggleXpEarningLock}
           onRefresh={fetchUsers}
         />
       )}
       {/* ========== TAB: SUSPICIOUS ========== */}
       {activeTab === 'suspicious' && (
         <SuspiciousTab
+          summaries={integritySummaries}
+          eventsByUid={integrityEventsByUid}
           scores={scores}
           suspiciousActivities={suspiciousActivities}
           loading={loading}
-          suspiciousFilter={suspiciousFilter}
-          setSuspiciousFilter={setSuspiciousFilter}
-          selectedSuspiciousIds={selectedSuspiciousIds}
-          setSelectedSuspiciousIds={setSelectedSuspiciousIds}
-          displaySuspiciousCount={displaySuspiciousCount}
-          setDisplaySuspiciousCount={setDisplaySuspiciousCount}
-          onDeleteScore={handleDeleteScore}
-          onIgnoreSuspicious={handleIgnoreSuspicious}
-          onBatchAction={handleBatchActionSuspicious}
+          loadingUid={integrityLoadingUid}
+          onLoadEvents={fetchIntegrityEvents}
+          onSetReviewStatus={updateIntegrityReviewStatus}
           onSetUnitForStats={setSelectedUnitForStats}
           onSwitchToAnalytics={() => { setAnalyticsAutoLoad(true); setActiveTab('analytics'); }}
-          onRefresh={() => fetchScores(false)}
+          onRefresh={fetchIntegritySummaries}
         />
       )}
       {/* ========== TAB: ANALYTICS ========== */}

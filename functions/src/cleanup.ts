@@ -91,6 +91,11 @@ export const cleanupRetentionData = functions
       "suspicious_activities"
     );
 
+    const deletedIntegrityEvents = await deleteQueryBatch(
+      () => db.collection("integrity_events").where("expireAt", "<=", now).orderBy("expireAt"),
+      "integrity_events"
+    );
+
     const [deletedKanjiBattleRooms, deletedKanjiBattleListings] = await Promise.all([
       deleteExpiredRtdbRooms("kanjiBattleRooms"),
       deleteExpiredRtdbRooms("kanjiBattleRoomListings"),
@@ -100,6 +105,7 @@ export const cleanupRetentionData = functions
       deletedAttempts,
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
+      deletedIntegrityEvents,
       deletedKanjiBattleRooms,
       deletedKanjiBattleListings,
       retention: RETENTION,
@@ -109,6 +115,7 @@ export const cleanupRetentionData = functions
       deletedAttempts,
       deletedAnalyticsEvents,
       deletedSuspiciousActivities,
+      deletedIntegrityEvents,
       deletedKanjiBattleRooms,
     };
   });
