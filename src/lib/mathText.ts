@@ -16,8 +16,23 @@ const SYMBOL_GUIDES: Array<MathSymbolGuide & { pattern: RegExp }> = [
   { symbol: 'π', label: '円周率', pattern: /\\pi(?![A-Za-z])|π/ },
 ];
 
+function normalizeMathEnvironments(text: string) {
+  return text.replace(
+    /\\begin\{(aligned\*?|gathered|cases)\}([\s\S]*?)\\end\{\1\}/g,
+    (match, environment: string, body: string, offset: number, source: string) => {
+      const cleanedBody = body.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+      const cleanedEnvironment = `\\begin{${environment}}${cleanedBody}\\end{${environment}}`;
+      const before = source.slice(Math.max(0, offset - 2), offset);
+      const after = source.slice(offset + match.length, offset + match.length + 2);
+      return (before === '\\[' && after === '\\]') || (before === '$$' && after === '$$')
+        ? cleanedEnvironment
+        : `\\[${cleanedEnvironment}\\]`;
+    },
+  );
+}
+
 function normalizeOutsideMath(text: string) {
-  return text
+  const normalized = text
     .replace(/```(?:latex|tex|math)?\s*/gi, '')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*|__/g, '')
@@ -32,24 +47,8 @@ function normalizeOutsideMath(text: string) {
     .replace(/\\pi(?![A-Za-z])/g, 'π')
     .replace(/\\left(?![A-Za-z])|\\right(?![A-Za-z])/g, '')
     .replace(/\\text\{([^{}]*)\}/g, '$1');
-}
 
-export function normalizeMathTextForDisplay(text: string) {
-  if (!text) return text;
-
-  const normalized = text
-    .replace(/\r\n?/g, '\n')
-    .replace(/\u000crac/g, '\\frac')
-    .replace(/\u000crt/g, '\\sqrt')
-    .replace(/\u000c/g, '\\f')
-    .replace(/\\{2,}(?=(?:\(|\)|\[|\]|frac\b|sqrt\b|times\b|div\b|cdot\b|pi\b|leq?\b|geq?\b|ne(?:q)?\b|left\b|right\b|text\b))/g, '\\');
-
-  const parts = normalized.split(DELIMITED_MATH_PATTERN);
-  const formatted = parts.map((part, index) => (
-    index % 2 === 1 ? part : normalizeOutsideMath(part)
-  )).join('');
-
-  return formatted.replace(
+  return normalized.replace(
     /((?:[0-9a-zA-Zπ]+|[+\-−×÷=*/^().,]|\s){3,}(?:=|×|÷|\+|\-|\^)(?:[0-9a-zA-Zπ]+|[+\-−×÷=*/^().,]|\s){2,})/g,
     (match) => {
       const trimmed = match.trim();
@@ -64,6 +63,22 @@ export function normalizeMathTextForDisplay(text: string) {
       return `${leading}\\(${latex}\\)${trailing}`;
     },
   );
+}
+
+export function normalizeMathTextForDisplay(text: string) {
+  if (!text) return text;
+
+  const normalized = normalizeMathEnvironments(text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u000crac/g, '\\frac')
+    .replace(/\u000crt/g, '\\sqrt')
+    .replace(/\u000c/g, '\\f')
+    .replace(/\\{2,}(?=(?:\(|\)|\[|\]|frac\b|sqrt\b|times\b|div\b|cdot\b|pi\b|leq?\b|geq?\b|ne(?:q)?\b|left\b|right\b|text\b|begin\b|end\b))/g, '\\'));
+
+  const parts = normalized.split(DELIMITED_MATH_PATTERN);
+  return parts.map((part, index) => (
+    index % 2 === 1 ? part : normalizeOutsideMath(part)
+  )).join('');
 }
 
 export function getMathSymbolGuides(text: string): MathSymbolGuide[] {
