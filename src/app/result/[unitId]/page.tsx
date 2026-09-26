@@ -7,6 +7,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
+import { MathRichText } from '@/components/MathRichText';
 import { ScratchPaperReview } from '@/components/ScratchPaperReview';
 import { OnDeviceAiAdvisor } from '@/components/OnDeviceAiAdvisor';
 import {
@@ -103,41 +104,6 @@ const WRITTEN_FEEDBACK_OPTIONS = {
     { value: 'unclear', label: 'わかりにくい' },
   ],
 } as const;
-
-function normalizeMathFeedbackText(text: string) {
-  if (!text) return text;
-
-  const normalized = text
-    .replace(/\u000crac/g, '\\frac')
-    .replace(/\u000crt/g, '\\sqrt')
-    .replace(/\u000c/g, '\\f');
-
-  if (/(\$\$[\s\S]*\$\$|\\\[[\s\S]*\\\]|\\\([\s\S]*\\\)|\$[\s\S]*\$)/.test(normalized)) return normalized;
-
-  const withLatexCommands = normalized
-    .replace(/\\frac\{[^{}]+\}\{[^{}]+\}/g, (match) => `\\(${match}\\)`)
-    .replace(/\\sqrt\{[^{}]+\}/g, (match) => `\\(${match}\\)`);
-
-  return withLatexCommands.replace(
-    /((?:[0-9a-zA-Z\u03c0]+|[+\-\u2212\u00d7\u00f7=*/^().,]|\s){3,}(?:=|\u00d7|\u00f7|\+|\-|\^)(?:[0-9a-zA-Z\u03c0]+|[+\-\u2212\u00d7\u00f7=*/^().,]|\s){2,})/g,
-    (match) => {
-      const trimmed = match.trim();
-      if (!trimmed || !/[0-9a-zA-Z\u03c0]/.test(trimmed)) return match;
-      const leading = match.match(/^\s*/)?.[0] || '';
-      const trailing = match.match(/\s*$/)?.[0] || '';
-      const latex = trimmed
-        .replace(/\u03c0/g, '\\pi')
-        .replace(/\u00d7/g, '\\times')
-        .replace(/\u00f7/g, '\\div')
-        .replace(/\u2212/g, '-');
-      return `${leading}\\(${latex}\\)${trailing}`;
-    }
-  );
-}
-
-function FeedbackMath({ children, className }: { children: string; className?: string }) {
-  return <MathDisplay math={normalizeMathFeedbackText(children)} className={className || 'text-base'} />;
-}
 
 export default function ResultPage() {
   const params = useParams();
@@ -559,7 +525,7 @@ export default function ResultPage() {
                 <div className="rounded-xl border bg-gray-50 p-4">
                   <p className="text-xs font-bold text-muted-foreground mb-2">AIが読み取った答案</p>
                   <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
-                    <FeedbackMath className="text-sm">{writtenGrading.transcription}</FeedbackMath>
+                    <MathRichText className="text-sm">{writtenGrading.transcription}</MathRichText>
                   </div>
                 </div>
               )}
@@ -568,7 +534,7 @@ export default function ResultPage() {
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-5">
                   <p className="text-sm font-bold text-emerald-800 mb-3">模範解答</p>
                   <div className="text-gray-900 leading-relaxed">
-                    <FeedbackMath>{writtenModelAnswer}</FeedbackMath>
+                    <MathRichText showSymbolGuide>{writtenModelAnswer}</MathRichText>
                   </div>
                 </div>
               )}
@@ -581,7 +547,7 @@ export default function ResultPage() {
                       <p className="font-mono text-primary font-black">{item.score}/{item.maxScore}</p>
                     </div>
                     <div className="text-sm text-gray-600 leading-relaxed">
-                      <FeedbackMath className="text-sm">{item.comment}</FeedbackMath>
+                      <MathRichText className="text-sm" showSymbolGuide>{item.comment}</MathRichText>
                     </div>
                   </div>
                 ))}
@@ -590,7 +556,7 @@ export default function ResultPage() {
               <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
                 <p className="text-sm font-bold text-primary mb-2">総評</p>
                 <div className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-                  <FeedbackMath>{writtenGrading.feedback}</FeedbackMath>
+                  <MathRichText showSymbolGuide>{writtenGrading.feedback}</MathRichText>
                 </div>
               </div>
 
@@ -599,9 +565,9 @@ export default function ResultPage() {
                   <p className="text-sm font-bold text-amber-800 mb-3">改善ポイント</p>
                   <ul className="space-y-2">
                     {writtenGrading.improvementPoints.map((point, index) => (
-                      <li key={index} className="text-sm text-amber-900 leading-relaxed">
-                        <span className="mr-1">・</span>
-                        <FeedbackMath className="text-sm">{point}</FeedbackMath>
+                      <li key={index} className="flex items-start gap-1 text-sm leading-relaxed text-amber-900">
+                        <span className="shrink-0">・</span>
+                        <MathRichText className="text-sm" showSymbolGuide>{point}</MathRichText>
                       </li>
                     ))}
                   </ul>
@@ -764,7 +730,7 @@ export default function ResultPage() {
                         <span className="bg-destructive/10 px-2 py-0.5 rounded text-destructive mr-2">解説</span>
                       </p>
                       <div className="text-gray-800 leading-relaxed">
-                        <MathDisplay math={q.explanation || '解説がありません。'} />
+                        <MathRichText showSymbolGuide>{q.explanation || '解説がありません。'}</MathRichText>
                       </div>
                       <ScratchPaperReview pages={scratchPagesByQuestion[q.id] ?? []} />
                     </CardContent>
@@ -799,7 +765,7 @@ export default function ResultPage() {
                           <span className="mr-2 rounded bg-green-100 px-2 py-0.5 text-green-800">解説</span>
                         </p>
                         <div className="leading-relaxed text-gray-800">
-                          <MathDisplay math={q.explanation || '解説がありません。'} />
+                          <MathRichText showSymbolGuide>{q.explanation || '解説がありません。'}</MathRichText>
                         </div>
                       </div>
                       <ScratchPaperReview pages={scratchPagesByQuestion[q.id] ?? []} />

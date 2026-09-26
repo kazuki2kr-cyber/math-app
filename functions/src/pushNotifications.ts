@@ -9,21 +9,26 @@ import {
 import {
   canReadNotificationCampaign,
   canReadNotificationSummaryItem,
+  mergeNotificationReadIds,
   normalizeNotificationCampaignId,
   normalizeNotificationLink,
+  normalizeNotificationReadIds,
 } from './pushNotificationUtils';
 
 export {
   canReadNotificationCampaign,
   canReadNotificationSummaryItem,
+  mergeNotificationReadIds,
   normalizeNotificationCampaignId,
   normalizeNotificationLink,
+  normalizeNotificationReadIds,
 } from './pushNotificationUtils';
 
 const PUSH_SUBSCRIPTIONS_COLLECTION = 'push_subscriptions';
 const NOTIFICATION_CAMPAIGNS_COLLECTION = 'notification_campaigns';
 const NOTIFICATION_INBOX_STATE_COLLECTION = 'notification_inbox_state';
 const NOTIFICATION_INBOX_STATE_DOCUMENT = 'current';
+const NOTIFICATION_READ_STATES_COLLECTION = 'notification_read_states';
 const MAX_MULTICAST_TOKENS = 500;
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
 const MAX_ADMIN_HISTORY_ITEMS = 20;
@@ -127,6 +132,15 @@ function parseNotificationCampaignIds(value: unknown) {
 
 function notificationInboxStateRef(db: admin.firestore.Firestore) {
   return db.collection(NOTIFICATION_INBOX_STATE_COLLECTION).doc(NOTIFICATION_INBOX_STATE_DOCUMENT);
+}
+
+function notificationReadStateRef(db: admin.firestore.Firestore, uid: string) {
+  return db.collection(NOTIFICATION_READ_STATES_COLLECTION).doc(uid);
+}
+
+async function getNotificationReadIds(db: admin.firestore.Firestore, uid: string) {
+  const state = await notificationReadStateRef(db, uid).get();
+  return normalizeNotificationReadIds(state.data()?.readCampaignIds);
 }
 
 async function getNotificationSummaryItems(db: admin.firestore.Firestore) {
@@ -265,16 +279,56 @@ export const getPushNotificationOverview = functions.region('us-central1').https
 
 export const getUserNotificationSummary = functions.region('us-central1').https.onCall(async (_data, context) => {
   assertAppAccess(context);
-  const summaryItems = await getNotificationSummaryItems(admin.firestore());
+  const db = admin.firestore();
+  const [summaryItems, storedReadIds] = await Promise.all([
+    getNotificationSummaryItems(db),
+    getNotificationReadIds(db, context.auth!.uid),
+  ]);
+  const notifications = summaryItems
+    .filter((item) => canReadNotificationSummaryItem(item, context.auth!.uid))
+    .slice(0, MAX_INBOX_ITEMS)
+    .map((item) => ({
+      id: item.id,
+      sentAt: item.sentAt.toDate().toISOString(),
+    }));
   return {
-    notifications: summaryItems
-      .filter((item) => canReadNotificationSummaryItem(item, context.auth!.uid))
-      .slice(0, MAX_INBOX_ITEMS)
-      .map((item) => ({
-        id: item.id,
-        sentAt: item.sentAt.toDate().toISOString(),
-      })),
+    notifications,
+    readNotificationIds: storedReadIds.filter((id) => (
+      notifications.some((notification) => notification.id === id)
+    )),
   };
+});
+
+export const syncUserNotificationReadState = functions.region('us-central1').https.onCall(async (data, context) => {
+  assertAppAccess(context);
+  const db = admin.firestore();
+  const uid = context.auth!.uid;
+  const incomingReadIds = normalizeNotificationReadIds((data || {}).readNotificationIds);
+  const summaryItems = await getNotificationSummaryItems(db);
+  const allowedIds = summaryItems
+    .filter((item) => canReadNotificationSummaryItem(item, uid))
+    .slice(0, MAX_INBOX_ITEMS)
+    .map((item) => item.id);
+  const stateRef = notificationReadStateRef(db, uid);
+
+  const readNotificationIds = await db.runTransaction(async (transaction) => {
+    const state = await transaction.get(stateRef);
+    const mergedIds = mergeNotificationReadIds(
+      state.data()?.readCampaignIds,
+      incomingReadIds,
+      allowedIds,
+    );
+    const now = Timestamp.now();
+    transaction.set(stateRef, {
+      uid,
+      readCampaignIds: mergedIds,
+      createdAt: state.exists ? state.data()?.createdAt || now : now,
+      updatedAt: now,
+    }, { merge: true });
+    return mergedIds;
+  });
+
+  return { readNotificationIds };
 });
 
 export const deleteNotificationCampaign = functions.region('us-central1').https.onCall(async (data, context) => {
@@ -321,11 +375,14 @@ export const deleteNotificationCampaign = functions.region('us-central1').https.
 export const getUserNotificationInbox = functions.region('us-central1').https.onCall(async (_data, context) => {
   assertAppAccess(context);
 
-  const campaigns = await admin.firestore()
-    .collection(NOTIFICATION_CAMPAIGNS_COLLECTION)
-    .orderBy('sentAt', 'desc')
-    .limit(MAX_INBOX_CANDIDATES)
-    .get();
+  const db = admin.firestore();
+  const [campaigns, storedReadIds] = await Promise.all([
+    db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION)
+      .orderBy('sentAt', 'desc')
+      .limit(MAX_INBOX_CANDIDATES)
+      .get(),
+    getNotificationReadIds(db, context.auth!.uid),
+  ]);
 
   const notifications = campaigns.docs
     .filter((doc) => canReadNotificationCampaign(doc.data(), context.auth!.uid))
@@ -341,7 +398,12 @@ export const getUserNotificationInbox = functions.region('us-central1').https.on
       };
     });
 
-  return { notifications };
+  return {
+    notifications,
+    readNotificationIds: storedReadIds.filter((id) => (
+      notifications.some((notification) => notification.id === id)
+    )),
+  };
 });
 
 export const sendPushNotification = functions

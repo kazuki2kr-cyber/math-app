@@ -9,8 +9,10 @@ import { normalizePushNotificationPayload } from '../../functions/src/pushNotifi
 import {
   canReadNotificationCampaign,
   canReadNotificationSummaryItem,
+  mergeNotificationReadIds,
   normalizeNotificationCampaignId,
   normalizeNotificationLink,
+  normalizeNotificationReadIds,
 } from '../../functions/src/pushNotificationUtils';
 import {
   addNotificationId,
@@ -198,8 +200,8 @@ describe('notification inbox access', () => {
   });
 });
 
-describe('local notification read state', () => {
-  it('tracks unread notification IDs without per-user database writes', () => {
+describe('notification read state', () => {
+  it('tracks unread notification IDs for immediate local updates', () => {
     const campaignIds = normalizeNotificationIds(['new-2', 'new-1', 'new-1']);
     const readIds = markNotificationIdsRead([], ['new-1']);
 
@@ -211,6 +213,15 @@ describe('local notification read state', () => {
 
   it('drops malformed IDs from local storage data', () => {
     expect(normalizeNotificationIds(['valid_id', '../invalid', 123, 'valid_id'])).toEqual(['valid_id']);
+  });
+
+  it('merges account read state while dropping malformed and inaccessible campaigns', () => {
+    expect(normalizeNotificationReadIds(['old-1', '../invalid', 'old-1'])).toEqual(['old-1']);
+    expect(mergeNotificationReadIds(
+      ['old-1'],
+      ['new-1', 'not-visible'],
+      ['new-1', 'old-1'],
+    )).toEqual(['new-1', 'old-1']);
   });
 });
 
@@ -227,5 +238,7 @@ describe('notification link UI', () => {
     expect(adminTab).toContain('配信済みのプッシュ通知は取り消せません');
     expect(notificationPage).toContain('すべて既読');
     expect(notificationPage).toContain('既読にする');
+    const provider = readFileSync(resolve(process.cwd(), 'src/components/PwaProvider.tsx'), 'utf8');
+    expect(provider).toContain("'syncUserNotificationReadState'");
   });
 });

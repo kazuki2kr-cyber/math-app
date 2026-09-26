@@ -27,6 +27,7 @@ type NotificationItem = {
 
 type NotificationInboxResponse = {
   notifications: NotificationItem[];
+  readNotificationIds: string[];
 };
 
 function formatSentAt(value: string) {
@@ -66,7 +67,10 @@ export default function NotificationsPage() {
       );
       const result = await getInbox({});
       setNotifications(result.data.notifications);
-      syncNotificationCampaigns(result.data.notifications.map((notification) => notification.id));
+      syncNotificationCampaigns(
+        result.data.notifications.map((notification) => notification.id),
+        result.data.readNotificationIds,
+      );
     } catch (loadError) {
       console.error('Failed to load notification inbox:', loadError);
       setInboxError('お知らせを読み込めませんでした。時間をおいてもう一度お試しください。');

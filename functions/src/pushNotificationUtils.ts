@@ -2,6 +2,28 @@ function clampString(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
+const MAX_NOTIFICATION_READ_IDS = 200;
+
+export function normalizeNotificationReadIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((item) => clampString(item, 128))
+    .filter((item) => /^[A-Za-z0-9_-]{1,128}$/.test(item));
+  return Array.from(new Set(ids)).slice(0, MAX_NOTIFICATION_READ_IDS);
+}
+
+export function mergeNotificationReadIds(
+  existingValue: unknown,
+  incomingValue: unknown,
+  allowedValue: unknown,
+) {
+  const allowedIds = new Set(normalizeNotificationReadIds(allowedValue));
+  return normalizeNotificationReadIds([
+    ...normalizeNotificationReadIds(incomingValue),
+    ...normalizeNotificationReadIds(existingValue),
+  ]).filter((id) => allowedIds.has(id));
+}
+
 export function canReadNotificationCampaign(
   campaign: Record<string, unknown>,
   uid: string,

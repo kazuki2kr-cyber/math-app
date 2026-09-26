@@ -46,7 +46,7 @@ type PwaContextValue = {
   isNotificationRead: (notificationId: string) => boolean;
   markNotificationRead: (notificationId: string) => void;
   markAllNotificationsRead: () => void;
-  syncNotificationCampaigns: (notificationIds: string[]) => void;
+  syncNotificationCampaigns: (notificationIds: string[], readNotificationIds?: string[]) => void;
 };
 
 const DISMISSED_UNTIL_KEY = 'formix_pwa_prompt_dismissed_until';
@@ -81,6 +81,11 @@ function writeStoredNotificationIds(key: string, ids: string[]) {
 
 type NotificationSummaryResponse = {
   notifications: Array<{ id: string; sentAt: string }>;
+  readNotificationIds: string[];
+};
+
+type NotificationReadStateResponse = {
+  readNotificationIds: string[];
 };
 
 type NavigatorWithBadging = Navigator & {
@@ -100,13 +105,23 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState('');
   const [dismissed, setDismissed] = useState(true);
 
-  const syncNotificationCampaigns = useCallback((notificationIds: string[]) => {
+  const mergeReadNotificationIds = useCallback((notificationIds: string[]) => {
+    if (!user?.uid) return;
+    setReadNotificationIds((currentIds) => {
+      const nextIds = markNotificationIdsRead(currentIds, notificationIds);
+      writeStoredNotificationIds(`${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`, nextIds);
+      return nextIds;
+    });
+  }, [user?.uid]);
+
+  const syncNotificationCampaigns = useCallback((notificationIds: string[], syncedReadIds: string[] = []) => {
     const normalizedIds = normalizeNotificationIds(notificationIds);
     setNotificationCampaignIds(normalizedIds);
     if (user?.uid) {
       writeStoredNotificationIds(`${NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX}${user.uid}`, normalizedIds);
+      mergeReadNotificationIds(syncedReadIds);
     }
-  }, [user?.uid]);
+  }, [mergeReadNotificationIds, user?.uid]);
 
   const registerUnreadNotification = useCallback((notificationId: string) => {
     if (!notificationId || !user?.uid) return;
@@ -124,26 +139,39 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       'getUserNotificationSummary',
     );
     const result = await getSummary({});
-    syncNotificationCampaigns(result.data.notifications.map((notification) => notification.id));
+    syncNotificationCampaigns(
+      result.data.notifications.map((notification) => notification.id),
+      result.data.readNotificationIds,
+    );
   }, [syncNotificationCampaigns, user?.uid]);
+
+  const syncNotificationReadState = useCallback(async (notificationIds: string[]) => {
+    if (!user?.uid) return;
+    const syncReadState = httpsCallable<
+      { readNotificationIds: string[] },
+      NotificationReadStateResponse
+    >(functions, 'syncUserNotificationReadState');
+    const result = await syncReadState({
+      readNotificationIds: normalizeNotificationIds(notificationIds),
+    });
+    mergeReadNotificationIds(result.data.readNotificationIds);
+  }, [mergeReadNotificationIds, user?.uid]);
 
   const markNotificationRead = useCallback((notificationId: string) => {
     if (!user?.uid) return;
-    setReadNotificationIds((currentIds) => {
-      const nextIds = markNotificationIdsRead(currentIds, [notificationId]);
-      writeStoredNotificationIds(`${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`, nextIds);
-      return nextIds;
+    mergeReadNotificationIds([notificationId]);
+    syncNotificationReadState([notificationId]).catch((syncError) => {
+      console.warn('Notification read state sync failed:', syncError);
     });
-  }, [user?.uid]);
+  }, [mergeReadNotificationIds, syncNotificationReadState, user?.uid]);
 
   const markAllNotificationsRead = useCallback(() => {
     if (!user?.uid) return;
-    setReadNotificationIds((currentIds) => {
-      const nextIds = markNotificationIdsRead(currentIds, notificationCampaignIds);
-      writeStoredNotificationIds(`${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`, nextIds);
-      return nextIds;
+    mergeReadNotificationIds(notificationCampaignIds);
+    syncNotificationReadState(notificationCampaignIds).catch((syncError) => {
+      console.warn('Notification read state sync failed:', syncError);
     });
-  }, [notificationCampaignIds, user?.uid]);
+  }, [mergeReadNotificationIds, notificationCampaignIds, syncNotificationReadState, user?.uid]);
 
   const readNotificationIdSet = useMemo(() => new Set(readNotificationIds), [readNotificationIds]);
   const isNotificationRead = useCallback(
@@ -219,10 +247,12 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         refreshNotifications().catch(() => undefined);
+        refreshNotificationSummary().catch(() => undefined);
       }
     };
     const handleFocus = () => {
       refreshNotifications().catch(() => undefined);
+      refreshNotificationSummary().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
@@ -233,7 +263,7 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [refreshNotifications]);
+  }, [refreshNotificationSummary, refreshNotifications]);
 
   useEffect(() => {
     if (!user?.uid) {
@@ -242,16 +272,38 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setNotificationCampaignIds(readStoredNotificationIds(
+    const storedCampaignIds = readStoredNotificationIds(
       `${NOTIFICATION_CAMPAIGN_IDS_KEY_PREFIX}${user.uid}`,
-    ));
-    setReadNotificationIds(readStoredNotificationIds(
+    );
+    const storedReadIds = readStoredNotificationIds(
       `${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}`,
-    ));
-    refreshNotificationSummary().catch((summaryError) => {
-      console.warn('Notification summary refresh failed:', summaryError);
+    );
+    setNotificationCampaignIds(storedCampaignIds);
+    setReadNotificationIds(storedReadIds);
+
+    const initializeReadState = storedReadIds.length > 0
+      ? syncNotificationReadState(storedReadIds).catch((syncError) => {
+          console.warn('Notification read state initialization failed:', syncError);
+        })
+      : Promise.resolve();
+    initializeReadState.finally(() => {
+      refreshNotificationSummary().catch((summaryError) => {
+        console.warn('Notification summary refresh failed:', summaryError);
+      });
     });
-  }, [refreshNotificationSummary, user?.uid]);
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === `${NOTIFICATION_READ_IDS_KEY_PREFIX}${user.uid}` && event.newValue) {
+        try {
+          mergeReadNotificationIds(JSON.parse(event.newValue));
+        } catch {
+          // Ignore malformed state written by an older client.
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [mergeReadNotificationIds, refreshNotificationSummary, syncNotificationReadState, user?.uid]);
 
   useEffect(() => {
     if (!user) return;
