@@ -1,11 +1,15 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { updateLearningReviewStats } from "./learningReview";
 import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { ServerValue } from "firebase-admin/database";
 import { extractJsonObject } from "./writtenGradingJson";
+import { archiveReceiptPath, deleteStagedWrittenArchive, stageWrittenArchive } from "./writtenArchive";
+export { listWrittenArchiveRecords, getWrittenArchiveImage, acknowledgeWrittenArchive } from "./writtenArchive";
+export { recordWrittenResultExposure, listWrittenResultExposures, acknowledgeWrittenResultExposure } from "./writtenResultExposure";
+import { writtenExposurePath } from "./writtenResultExposure";
 import {
   buildWrittenGradingGenerationConfig,
   requestGeminiWithSchemaFallback,
@@ -2054,6 +2058,7 @@ async function gradeWrittenAnswerWithGemini(params: {
       : [],
     usageMetadata: {
       model,
+      promptHash: createHash("sha256").update(prompt).digest("hex"),
       promptTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.promptTokenCount) || 0)),
       candidatesTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.candidatesTokenCount) || 0)),
       totalTokenCount: Math.max(0, Math.round(Number(json?.usageMetadata?.totalTokenCount) || 0)),
@@ -2258,6 +2263,7 @@ export const submitWrittenDrillResult = functions
       };
     }
     let grading: Awaited<ReturnType<typeof gradeWrittenAnswerWithGemini>>;
+    let archive: Awaited<ReturnType<typeof stageWrittenArchive>>;
     try {
       grading = await gradeWrittenAnswerWithGemini({
         unitTitle: String(unitData.title || unitId),
@@ -2265,6 +2271,28 @@ export const submitWrittenDrillResult = functions
         modelAnswer: modelAnswerText,
         gradingRubric: question.gradingRubric || question.grading_rubric || unitData.gradingRubric || [],
         answerImageDataUrl: imageDataUrl,
+      });
+      archive = await stageWrittenArchive({
+        uid,
+        attemptId: attemptDocId,
+        imageDataUrl,
+        unitId,
+        unitTitle: String(unitData.title || unitId),
+        subject: String(unitData.subject || unitData.baseSubject || "数学"),
+        field: String(unitData.archiveField || unitData.category || "未分類"),
+        questionId,
+        questionText: String(question.question_text || ""),
+        modelAnswer: modelAnswerText,
+        rubric: normalizeWrittenRubric(question.gradingRubric || question.grading_rubric || unitData.gradingRubric || []),
+        submittedAt: dateStr,
+        grading,
+        gradingVersion: grading.usageMetadata.promptHash,
+        score: grading.score,
+        attemptOrdinal: reservation.attemptOrdinal,
+        attemptGroupId: reservation.attemptGroupId,
+        lessonSessionId: clampString(unitData.analysisLessonSessionId, 80),
+        classKey: clampString(unitData.analysisClassKey, 80),
+        instructionVersion: clampString(unitData.analysisInstructionVersion, 80),
       });
     } catch (gradingErr: unknown) {
       const gradingErrorCode =
@@ -2417,6 +2445,7 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
         remainingAttempts,
         grading,
+        archive,
         ...(earnedIconReward ? {
           iconReward: {
             id: earnedIconReward.id,
@@ -2426,6 +2455,12 @@ export const submitWrittenDrillResult = functions
         } : {}),
         gradedAt: now,
         updatedAt: now,
+      });
+      transaction.set(db.doc(archiveReceiptPath(uid, attemptDocId)), {
+        uid,
+        attemptId: attemptDocId,
+        sha256: archive.sha256,
+        createdAt: now,
       });
       transaction.set(analyticsEventRef, {
         eventType: "WRITTEN_ATTEMPT_SUBMITTED",
@@ -2803,7 +2838,8 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
 
   for (let index = 0; index < attemptsSnap.docs.length; index += 150) {
     const batch = db.batch();
-    attemptsSnap.docs.slice(index, index + 150).forEach((attemptDoc) => {
+    const chunk = attemptsSnap.docs.slice(index, index + 150);
+    chunk.forEach((attemptDoc) => {
       const attempt = attemptDoc.data() || {};
       const pathSegments = attemptDoc.ref.path.split("/");
       const uid = clampString(attempt.uid || pathSegments[1], 128);
@@ -2815,8 +2851,11 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
       }
       batch.delete(attemptDoc.ref);
       batch.delete(db.collection("analytics_events").doc(`written_${attemptDoc.id}`));
+      batch.delete(db.doc(archiveReceiptPath(uid, attemptDoc.id)));
+      batch.delete(db.doc(writtenExposurePath(uid, attemptDoc.id)));
     });
     await batch.commit();
+    await Promise.all(chunk.map((attemptDoc) => deleteStagedWrittenArchive(attemptDoc.data()?.archive)));
   }
 
   const limitDocsSnap = await db.collectionGroup("writtenAttemptLimits")
