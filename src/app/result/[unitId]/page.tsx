@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { MathDisplay } from '@/components/MathDisplay';
 import { MathRichText } from '@/components/MathRichText';
+import { hasUnreadableWrittenFeedback, unreadableOverallFeedback, unreadableRubricComment } from '@/lib/writtenFeedbackPresentation';
 import { ScratchPaperReview } from '@/components/ScratchPaperReview';
 import { OnDeviceAiAdvisor } from '@/components/OnDeviceAiAdvisor';
 import {
@@ -393,6 +394,8 @@ export default function ResultPage() {
     );
   }
 
+  const unreadableWrittenFeedback = writtenGrading ? hasUnreadableWrittenFeedback(writtenGrading) : false;
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -592,7 +595,7 @@ export default function ResultPage() {
                       <p className="font-mono text-primary font-black">{item.score}/{item.maxScore}</p>
                     </div>
                     <div className="text-sm text-gray-600 leading-relaxed">
-                      <MathRichText className="text-sm" showSymbolGuide>{item.comment}</MathRichText>
+                      <MathRichText className="text-sm" showSymbolGuide>{unreadableWrittenFeedback ? unreadableRubricComment : item.comment}</MathRichText>
                     </div>
                   </div>
                 ))}
@@ -601,11 +604,11 @@ export default function ResultPage() {
               <div ref={writtenSummaryRef} className="rounded-xl border border-primary/10 bg-primary/5 p-5">
                 <p className="text-sm font-bold text-primary mb-2">総評</p>
                 <div className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-                  <MathRichText showSymbolGuide>{writtenGrading.feedback}</MathRichText>
+                  <MathRichText showSymbolGuide>{unreadableWrittenFeedback ? unreadableOverallFeedback : writtenGrading.feedback}</MathRichText>
                 </div>
               </div>
 
-              {writtenGrading.improvementPoints.length > 0 && (
+              {!unreadableWrittenFeedback && writtenGrading.improvementPoints.length > 0 && (
                 <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-5">
                   <p className="text-sm font-bold text-amber-800 mb-3">改善ポイント</p>
                   <ul className="space-y-2">

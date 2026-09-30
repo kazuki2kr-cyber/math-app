@@ -18,6 +18,7 @@ import {
   normalizeRubricScores,
   WrittenRubricCriterion,
 } from "./writtenRubricScoring";
+import { sanitizeWrittenFeedback } from "./writtenFeedbackQuality";
 import { mutateKanjiRoom } from "./kanjiBattle";
 import { ALL_KANJI_UNIT_ID, loadPoolQuestions } from "./kanjiBattlePool";
 import { member as kanjiMember, touch as touchKanjiRoom } from "./kanjiBattleState";
@@ -1985,6 +1986,8 @@ async function gradeWrittenAnswerWithGemini(params: {
     "In transcription, never solve the problem, correct an equation, reorder steps, fill in omitted symbols, or infer reasoning that the student did not write. If a part is unreadable, write [判読不能].",
     "For detectedAnswer, copy only the student's visibly written final answer. Do not add an omitted variable, equality sign, unit, conclusion, or explanation.",
     "For example, if the visible final line is only -2, detectedAnswer must be \\(-2\\), not \\(x=-2\\), and must not include notes such as '(implied by final value)'.",
+    "If handwriting is unclear, use [判読不能] only in transcription. Do not copy uncertain OCR characters into feedback, improvementPoints, or rubric comments; describe the unreadable part in ordinary Japanese instead.",
+    "Proofread all Japanese feedback before returning JSON. Use standard modern Japanese and valid mathematical symbols. Never output replacement boxes, stray radicals, invented glyphs, or malformed degree signs.",
     "In feedback, improvementPoints, rubric comments, and detectedAnswer, wrap all mathematical expressions in LaTeX delimiters like \\( ... \\). Use \\times, \\div, \\frac{}, and \\pi instead of plain symbols where appropriate.",
     "",
     `Unit: ${params.unitTitle}`,
@@ -2047,15 +2050,24 @@ async function gradeWrittenAnswerWithGemini(params: {
     });
   }
 
-  return {
-    score: reconciledScore,
-    transcription: clampString(parsed?.transcription, 2000),
-    detectedAnswer,
+  const narrative = sanitizeWrittenFeedback({
     rubricScores,
     feedback: clampString(parsed?.feedback, 1200),
     improvementPoints: Array.isArray(parsed?.improvementPoints)
       ? parsed.improvementPoints.slice(0, 5).map((point: unknown) => clampString(point, 300)).filter(Boolean)
       : [],
+  });
+  if (narrative.sanitized) {
+    console.warn("[submitWrittenDrillResult] Replaced unreadable AI feedback", { model });
+  }
+
+  return {
+    score: reconciledScore,
+    transcription: clampString(parsed?.transcription, 2000),
+    detectedAnswer,
+    rubricScores: narrative.rubricScores,
+    feedback: narrative.feedback,
+    improvementPoints: narrative.improvementPoints,
     usageMetadata: {
       model,
       promptHash: createHash("sha256").update(prompt).digest("hex"),
