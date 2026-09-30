@@ -79,11 +79,14 @@ export default function Home() {
   const { user, logout, agreeToTerms } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<'数学甲' | '数学乙'>('数学甲');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedCategoryOverride, setSelectedCategoryOverride] = useState<string | null>(null);
   const availableCategories = useMemo(() => Array.from(new Set(units
     .filter(unit => normalizeMathSubject(unit.subject) === selectedSubject)
     .map(unit => unit.category || 'その他')))
     .sort((a, b) => a.localeCompare(b, 'ja', { numeric: true })), [units, selectedSubject]);
+  const selectedCategory = selectedCategoryOverride && (selectedCategoryOverride === 'all' || availableCategories.includes(selectedCategoryOverride))
+    ? selectedCategoryOverride
+    : availableCategories.at(-1) || 'all';
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [overallRanking, setOverallRanking] = useState<OverallRank[]>([]);
   const [showMoreRanking, setShowMoreRanking] = useState(false);
@@ -637,7 +640,7 @@ export default function Home() {
                     <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">教科</span>
                     <select
                       value={selectedSubject}
-                      onChange={(e) => { setSelectedSubject(e.target.value as '数学甲' | '数学乙'); setSelectedCategory('all'); }}
+                      onChange={(e) => { setSelectedSubject(e.target.value as '数学甲' | '数学乙'); setSelectedCategoryOverride(null); }}
                       className="flex-1 w-full sm:w-28 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
                     >
                       <option value="数学甲">数学甲</option>
@@ -650,7 +653,7 @@ export default function Home() {
                     <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">分野</span>
                     <select
                       value={selectedCategory}
-                      onChange={(e) => setSelectedCategory(e.target.value)}
+                      onChange={(e) => setSelectedCategoryOverride(e.target.value)}
                       className="flex-1 w-full sm:w-40 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
                     >
                       <option value="all">すべて表示</option>
