@@ -30,7 +30,8 @@ describe('math dashboard unit filtering', () => {
     expect(units.filter(unit => normalizeMathSubject(unit.subject) === '数学乙').map(unit => unit.id)).toEqual(['数学乙__4.証明']);
     expect(getImportedUnitId('数学甲', '4.証明')).toBe('4.証明');
     expect(getImportedUnitId('数学乙', '4.証明')).toBe('数学乙__4.証明');
-    expect(getImportSubjectMetadata('math_b_written')).toMatchObject({ subject: '数学乙', drillType: 'written' });
+    expect(getImportSubjectMetadata('math_b')).toMatchObject({ subject: '数学乙' });
+    expect(() => getImportSubjectMetadata('math_b_written')).toThrow();
   });
 
   test('漢字単元を通常版の単元・分野候補から除外する', () => {

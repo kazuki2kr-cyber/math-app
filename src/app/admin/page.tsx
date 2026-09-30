@@ -969,7 +969,7 @@ export default function AdminPage() {
               throw new Error(`${unit_id}: CSVの教科「${csvSubject}」と選択中の教科「${subjectMetadata.subject}」が一致しません。`);
             }
             const unitDocId = getImportedUnitId(subjectMetadata.subject, unit_id);
-            const rowDrillType = question_type === 'written' || subjectMetadata.drillType === 'written' ? 'written' : 'multiple_choice';
+            const rowDrillType = question_type === 'written' ? 'written' : 'multiple_choice';
             const writtenAttemptLimit = Math.max(2, parseInt(written_attempt_limit, 10) || 2);
 
             if (!unitsMap[unitDocId]) {
