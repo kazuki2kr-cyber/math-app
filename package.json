@@ -18,7 +18,7 @@
     "archive:written:units": "node scripts/list-written-analysis-units.js",
     "archive:written:observations": "node scripts/import-written-observations.js",
     "test:weekly-snapshot": "jest tests/weekly-automation-snapshot.spec.ts",
-    "test:written-grading": "jest --runInBand tests/unit/functions/writtenGradingJson.spec.ts tests/unit/functions/writtenRubricScoring.spec.ts tests/unit/functions/writtenGradingRequest.spec.ts tests/unit/functions/writtenAttemptState.spec.ts",
+    "test:written-grading": "jest --runInBand tests/unit/functions/writtenGradingJson.spec.ts tests/unit/functions/writtenRubricScoring.spec.ts tests/unit/functions/writtenGradingRequest.spec.ts tests/unit/functions/writtenAttemptState.spec.ts tests/unit/functions/writtenFeedbackQuality.spec.ts",
     "smoke:written-grading-api": "npm.cmd --prefix functions run build && npm.cmd --prefix functions run smoke:written-grading-api",
     "deploy:written-grading": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-written-grading.ps1",
     "test": "npm run test:unit && npm run test:security",
