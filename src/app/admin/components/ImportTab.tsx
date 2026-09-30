@@ -62,6 +62,7 @@ export default function ImportTab({ loading, importSubject, setImportSubject, on
           <ul className="list-disc list-inside space-y-2">
             <li>必須カラム: <code className="bg-white px-1 py-0.5 border rounded">unit_id</code>, <code className="bg-white px-1 py-0.5 border rounded">question_text</code>, <code className="bg-white px-1 py-0.5 border rounded">options</code>, <code className="bg-white px-1 py-0.5 border rounded">answer_index</code></li>
             <li>任意カラム: <code className="bg-white px-1 py-0.5 border rounded">category</code> (分野。空の場合は「その他」として登録されます)</li>
+            <li>記述式の分析用任意カラム: <code>lesson_session_id</code>（授業回ごとに固有）、<code>class_key</code>（匿名のクラス識別子）、<code>instruction_version</code>（指導内容の版）。提出前に設定します。</li>
             <li><code className="bg-white px-1 py-0.5 border rounded">question_text</code> や解説はLaTeX記述（$数式$など）対応。</li>
             <li><code className="bg-white px-1 py-0.5 border rounded">options</code> は <code>{`["選択1", "選択2"]`}</code> のJSON形式を推奨（カンマ区切りも可）。</li>
           </ul>

@@ -95,6 +95,7 @@ Codex は Claude のスラッシュコマンドをそのまま実行するわけ
 | Firebase / Firestore / Cloud Functions の設計・変更 | `.agents/skills/firebase-best-practices` |
 | Gemini記述式採点のモデル・API・Schema・応答解析の変更 | `docs/written-grading-architecture.md` および `.codex/commands/tools/deploy-checklist.md` |
 | セキュリティレビュー、権限、脆弱性確認 | `.agents/skills/security-audit` および `.codex/commands/tools/security-scan.md` |
+| 記述式答案の授業改善分析、またはこのプロジェクトで「分析をしたい」とだけ依頼された場合 | `.agents/skills/written-answer-teaching-analysis`。対象単元と分析の深さを必要に応じて質問する |
 
 ---
 

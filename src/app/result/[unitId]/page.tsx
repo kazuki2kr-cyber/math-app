@@ -141,6 +141,9 @@ export default function ResultPage() {
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number, newLevel: number, icon: string, title: string } | null>(null);
   const processedRef = React.useRef(false);
   const writtenFeedbackRef = React.useRef<HTMLDivElement | null>(null);
+  const writtenModelAnswerRef = React.useRef<HTMLDivElement | null>(null);
+  const writtenSummaryRef = React.useRef<HTMLDivElement | null>(null);
+  const recordedExposureRef = React.useRef<Set<string>>(new Set());
 
   const openWrittenFeedbackForm = () => {
     setWrittenFeedbackOpen(true);
@@ -160,6 +163,48 @@ export default function ResultPage() {
       cancelled = true;
     };
   }, [storedData?.attemptId, storedData?.type, user?.uid]);
+
+  useEffect(() => {
+    if (saving || error || storedData?.type !== 'written' || !storedData.attemptId || !writtenGrading) return;
+    const attemptId = storedData.attemptId;
+    const functions = getFunctions(undefined, 'us-central1');
+    const recordExposure = httpsCallable(functions, 'recordWrittenResultExposure');
+    const recordKind = (kind: 'feedback' | 'model_answer') => {
+      const key = `${attemptId}:${kind}`;
+      if (recordedExposureRef.current.has(key)) return;
+      recordedExposureRef.current.add(key);
+      void recordExposure({
+        attemptId,
+        feedbackShown: kind === 'feedback',
+        modelAnswerShown: kind === 'model_answer',
+      }).catch(() => { recordedExposureRef.current.delete(key); });
+    };
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || document.visibilityState !== 'visible') continue;
+        const kind = entry.target === writtenModelAnswerRef.current ? 'model_answer' : 'feedback';
+        recordKind(kind);
+      }
+    }, { threshold: 0.25 });
+    const recordVisibleOnReturn = () => {
+      if (document.visibilityState !== 'visible') return;
+      for (const [element, kind] of [
+        [writtenModelAnswerRef.current, 'model_answer'],
+        [writtenSummaryRef.current, 'feedback'],
+      ] as const) {
+        if (!element) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.top < window.innerHeight && rect.bottom > 0) recordKind(kind);
+      }
+    };
+    if (writtenModelAnswerRef.current) observer.observe(writtenModelAnswerRef.current);
+    if (writtenSummaryRef.current) observer.observe(writtenSummaryRef.current);
+    document.addEventListener('visibilitychange', recordVisibleOnReturn);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', recordVisibleOnReturn);
+    };
+  }, [saving, error, storedData, writtenGrading, writtenModelAnswer]);
 
   const processResult = useCallback(async () => {
     if (!user) return;
@@ -531,7 +576,7 @@ export default function ResultPage() {
               )}
 
               {writtenModelAnswer && (
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-5">
+                <div ref={writtenModelAnswerRef} className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-5">
                   <p className="text-sm font-bold text-emerald-800 mb-3">模範解答</p>
                   <div className="text-gray-900 leading-relaxed">
                     <MathRichText showSymbolGuide>{writtenModelAnswer}</MathRichText>
@@ -553,7 +598,7 @@ export default function ResultPage() {
                 ))}
               </div>
 
-              <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
+              <div ref={writtenSummaryRef} className="rounded-xl border border-primary/10 bg-primary/5 p-5">
                 <p className="text-sm font-bold text-primary mb-2">総評</p>
                 <div className="text-gray-800 leading-relaxed whitespace-pre-wrap">
                   <MathRichText showSymbolGuide>{writtenGrading.feedback}</MathRichText>

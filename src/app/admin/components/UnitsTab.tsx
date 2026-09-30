@@ -7,6 +7,7 @@ import { Trash2, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 import { normalizeMathSubject } from '@/lib/mathSubjects';
+import WrittenLessonMetadataEditor, { type WrittenLessonMetadata } from './WrittenLessonMetadataEditor';
 
 interface UnitsTabProps {
   units: any[];
@@ -19,6 +20,7 @@ interface UnitsTabProps {
   onDeleteQuestion: (unitId: string, qId: string) => void;
   onToggleQuestionActive: (unitId: string, qId: string, active: boolean) => void;
   onToggleUnitQuestionsActive: (unitId: string, active: boolean) => void;
+  onSaveAnalysisLesson: (unitId: string, metadata: WrittenLessonMetadata) => Promise<void>;
   updatingQuestionKeys: Set<string>;
   updatingUnitIds: Set<string>;
   onRefresh: () => void;
@@ -28,7 +30,7 @@ export default function UnitsTab({
   units, loading,
   unitFilterSubject, setUnitFilterSubject,
   unitFilterCategory, setUnitFilterCategory,
-  onDeleteUnit, onDeleteQuestion, onToggleQuestionActive, onToggleUnitQuestionsActive,
+  onDeleteUnit, onDeleteQuestion, onToggleQuestionActive, onToggleUnitQuestionsActive, onSaveAnalysisLesson,
   updatingQuestionKeys, updatingUnitIds, onRefresh,
 }: UnitsTabProps) {
   const filteredUnits = units.filter(u => {
@@ -144,6 +146,17 @@ export default function UnitsTab({
                   </div>
                   <div className="rounded border bg-white px-3 py-2">
                     <span className="font-bold text-gray-700">終了:</span> {formatEventDate(unit.eventEndsAt)}
+                  </div>
+                  <div className="rounded border bg-white px-3 py-2 sm:col-span-2">
+                    <span className="font-bold text-gray-700">分析用授業回:</span> {unit.analysisLessonSessionId || '未設定'}
+                    {unit.analysisClassKey ? ` / クラス ${unit.analysisClassKey}` : ''}
+                    {unit.analysisInstructionVersion ? ` / 指導版 ${unit.analysisInstructionVersion}` : ''}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <WrittenLessonMetadataEditor
+                      key={[unit.id, unit.analysisLessonSessionId, unit.analysisClassKey, unit.analysisInstructionVersion].join(':')}
+                      unit={unit} disabled={isUnitBusy} onSave={onSaveAnalysisLesson}
+                    />
                   </div>
                   <div className="rounded border bg-blue-50 px-3 py-2 text-blue-700 sm:col-span-2">
                     総合ランキングの得点対象外（獲得XPは同点時の順位に影響）。1問構成で運用してください。
