@@ -5,6 +5,7 @@ import { httpsCallable } from 'firebase/functions';
 import { BarChart2, BookOpen, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { functions } from '@/lib/firebase';
+import { normalizeMathSubject } from '@/lib/mathSubjects';
 import OverviewPanel from './OverviewPanel';
 import PublicAnalyticsReportPanel from './PublicAnalyticsReportPanel';
 import QuestionAnalysisPanel from './QuestionAnalysisPanel';
@@ -45,6 +46,10 @@ interface AnalyticsTabProps {
 
 type SubTab = 'overview' | 'questions' | 'correlation' | 'report';
 
+function displaySubject(value?: string): string {
+  return normalizeMathSubject(value) || value || '数学甲';
+}
+
 function formatGeneratedAt(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === 'string') return new Date(value).toLocaleString('ja-JP');
@@ -80,7 +85,7 @@ export default function AnalyticsTab({
 
   const filteredUnitSummaries = useMemo(() => {
     return unitSummaries.filter((unit) => {
-      const matchesSubject = subjectFilter === 'all' || (unit.subject || '数学') === subjectFilter;
+      const matchesSubject = subjectFilter === 'all' || displaySubject(unit.subject) === subjectFilter;
       const matchesCategory = categoryFilter === 'all' || (unit.category || 'その他') === categoryFilter;
       return matchesSubject && matchesCategory;
     });
@@ -88,14 +93,14 @@ export default function AnalyticsTab({
 
   const subjects = useMemo(() => {
     const subjectSet = new Set<string>();
-    unitSummaries.forEach((unit) => subjectSet.add(unit.subject || '数学'));
+    unitSummaries.forEach((unit) => subjectSet.add(displaySubject(unit.subject)));
     return Array.from(subjectSet).sort();
   }, [unitSummaries]);
 
   const availableCategories = useMemo(() => {
     const categorySet = new Set<string>();
     unitSummaries
-      .filter((unit) => subjectFilter === 'all' || (unit.subject || '数学') === subjectFilter)
+      .filter((unit) => subjectFilter === 'all' || displaySubject(unit.subject) === subjectFilter)
       .forEach((unit) => categorySet.add(unit.category || 'その他'));
     return Array.from(categorySet).sort();
   }, [subjectFilter, unitSummaries]);
@@ -278,7 +283,14 @@ export default function AnalyticsTab({
       }
 
       if (subjectFilter !== 'all') {
-        const overview = await fetchAnalyticsOverviewBySubject(subjectFilter);
+        const sourceSubjects = Array.from(new Set(unitSummaries
+          .filter((unit) => displaySubject(unit.subject) === subjectFilter)
+          .map((unit) => unit.subject || '数学')));
+        // Separate legacy and current serving documents cannot be summed safely:
+        // their unique-user counts and rankings may overlap.
+        const overview = sourceSubjects.length === 1
+          ? await fetchAnalyticsOverviewBySubject(sourceSubjects[0])
+          : null;
         if (!cancelled) setScopedOverview(overview);
         return;
       }
@@ -291,7 +303,7 @@ export default function AnalyticsTab({
     return () => {
       cancelled = true;
     };
-  }, [categoryFilter, dataRequested, hasServingData, subjectFilter]);
+  }, [categoryFilter, dataRequested, hasServingData, subjectFilter, unitSummaries]);
 
   if (!hasServingData && !dataRequested) {
     return (

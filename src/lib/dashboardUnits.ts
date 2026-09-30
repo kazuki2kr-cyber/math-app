@@ -1,3 +1,5 @@
+import { normalizeMathSubject } from './mathSubjects';
+
 export interface DashboardUnit {
   subject?: string;
   mode?: string;
@@ -9,8 +11,7 @@ export interface DashboardUnit {
 }
 
 export function isMathSubjectValue(value?: string) {
-  // mojibake-ok: legacy imported math subject values are kept for compatibility.
-  return !value || value === 'math' || value === '数学' || value === '謨ｰ蟄ｦ';
+  return normalizeMathSubject(value) !== null;
 }
 
 function isBattleUnit(unit: DashboardUnit) {
@@ -51,7 +52,7 @@ function isVisibleUnit(unit: DashboardUnit) {
 
 export function getMathDashboardUnits<T extends DashboardUnit>(units: T[]): T[] {
   return units.filter(unit => (
-    isMathSubjectValue(unit.subject)
+    normalizeMathSubject(unit.subject) !== null
     && !isBattleUnit(unit)
     && isVisibleUnit(unit)
   ));

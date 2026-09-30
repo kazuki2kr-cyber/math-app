@@ -34,12 +34,13 @@ export default function ImportTab({ loading, importSubject, setImportSubject, on
             onChange={(e) => setImportSubject(e.target.value)}
             className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white font-medium focus:border-primary outline-none"
           >
-            <option value="math">数学</option>
-            <option value="math_written">数学（記述式イベント）</option>
-            <option value="english">英語</option>
+            <option value="math">数学甲</option>
+            <option value="math_written">数学甲（記述式イベント）</option>
+            <option value="math_b">数学乙</option>
+            <option value="math_b_written">数学乙（記述式イベント）</option>
           </select>
           <p className="text-xs text-muted-foreground mt-1">
-            ※アップロードするCSVデータすべてにこの教科が設定されます。
+            ※アップロードするCSVデータすべてにこの教科が設定されます。CSVにsubject列がある場合は、選択した教科と一致することを確認します。
           </p>
         </div>
 
@@ -60,7 +61,7 @@ export default function ImportTab({ loading, importSubject, setImportSubject, on
           <p className="font-semibold mb-2 text-gray-700">要求フォーマット</p>
           <ul className="list-disc list-inside space-y-2">
             <li>必須カラム: <code className="bg-white px-1 py-0.5 border rounded">unit_id</code>, <code className="bg-white px-1 py-0.5 border rounded">question_text</code>, <code className="bg-white px-1 py-0.5 border rounded">options</code>, <code className="bg-white px-1 py-0.5 border rounded">answer_index</code></li>
-            <li>任意カラム: <code className="bg-white px-1 py-0.5 border rounded">category</code> (分野。空の場合は「1.正の数と負の数」として登録されます)</li>
+            <li>任意カラム: <code className="bg-white px-1 py-0.5 border rounded">category</code> (分野。空の場合は「その他」として登録されます)</li>
             <li>記述式の分析用任意カラム: <code>lesson_session_id</code>（授業回ごとに固有）、<code>class_key</code>（匿名のクラス識別子）、<code>instruction_version</code>（指導内容の版）。提出前に設定します。</li>
             <li><code className="bg-white px-1 py-0.5 border rounded">question_text</code> や解説はLaTeX記述（$数式$など）対応。</li>
             <li><code className="bg-white px-1 py-0.5 border rounded">options</code> は <code>{`["選択1", "選択2"]`}</code> のJSON形式を推奨（カンマ区切りも可）。</li>

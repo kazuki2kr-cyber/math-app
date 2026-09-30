@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="330" viewBox="0 0 440 330" role="img" aria-labelledby="title desc">
+  <title id="title">三角形ABCと三角形ADE</title>
+  <desc id="desc">Aは左下、Bは右下、CはAの真上。Dは辺BC上、EはAの左上にある。</desc>
+  <rect width="440" height="330" fill="white"/>
+  <g fill="none" stroke="#222" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 270 L370 270 L170 70 Z" stroke-width="2.5"/>
+    <path d="M170 270 L310 210 L110 130 Z" stroke-width="2.2"/>
+    <path d="M110 130 L170 70" stroke-width="1.5"/>
+  </g>
+  <g fill="#222" font-family="Georgia, 'Times New Roman', serif" font-size="26">
+    <text x="160" y="305">A</text>
+    <text x="374" y="285">B</text>
+    <text x="160" y="58">C</text>
+    <text x="315" y="212">D</text>
+    <text x="85" y="135">E</text>
+  </g>
+</svg>

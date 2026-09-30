@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Trash2, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { MathDisplay } from '@/components/MathDisplay';
 import { UserAvatarIcon } from '@/components/UserAvatarIcon';
+import { normalizeMathSubject } from '@/lib/mathSubjects';
 import WrittenLessonMetadataEditor, { type WrittenLessonMetadata } from './WrittenLessonMetadataEditor';
 
 interface UnitsTabProps {
@@ -33,7 +34,7 @@ export default function UnitsTab({
   updatingQuestionKeys, updatingUnitIds, onRefresh,
 }: UnitsTabProps) {
   const filteredUnits = units.filter(u => {
-    const sMatch = unitFilterSubject === 'all' || u.subject === unitFilterSubject;
+    const sMatch = unitFilterSubject === 'all' || normalizeMathSubject(u.subject) === unitFilterSubject;
     const cMatch = unitFilterCategory === 'all' || (u.category || 'その他') === unitFilterCategory;
     return sMatch && cMatch;
   });
@@ -75,8 +76,8 @@ export default function UnitsTab({
               className="text-sm border rounded-md px-3 py-1.5 bg-white font-medium focus:border-primary outline-none"
             >
               <option value="all">すべての教科</option>
-              <option value="数学">数学</option>
-              <option value="英語">英語</option>
+              <option value="数学甲">数学甲</option>
+              <option value="数学乙">数学乙</option>
             </select>
           </div>
           <div className="flex flex-col gap-1">
@@ -88,7 +89,7 @@ export default function UnitsTab({
             >
               <option value="all">すべての分野</option>
               {Array.from(new Set(units
-                .filter(u => unitFilterSubject === 'all' || u.subject === unitFilterSubject)
+                .filter(u => unitFilterSubject === 'all' || normalizeMathSubject(u.subject) === unitFilterSubject)
                 .map(u => u.category || 'その他')))
                 .sort()
                 .map(cat => (
@@ -119,7 +120,7 @@ export default function UnitsTab({
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded uppercase">
-                  {unit.subject || '不明'}
+                  {normalizeMathSubject(unit.subject) || unit.subject || '不明'}
                 </span>
                 <span className="text-xs text-muted-foreground font-medium">
                   分野: {unit.category || 'その他'}
