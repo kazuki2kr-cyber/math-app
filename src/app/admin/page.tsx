@@ -7,6 +7,7 @@ import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, set
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare, Bell } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
+import { getImportSubjectMetadata, getImportedUnitId } from '@/lib/mathSubjects';
 import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
 import ImportTab from './components/ImportTab';
@@ -21,19 +22,6 @@ import NotificationsTab from './components/NotificationsTab';
 import 'katex/dist/katex.min.css';
 
 const ANALYTICS_EVENT_BATCH_SIZE = 200;
-
-function getImportSubjectMetadata(importSubject: string) {
-  switch (importSubject) {
-    case 'math':
-      return { subject: '数学', baseSubject: '数学', mode: 'solo' };
-    case 'math_written':
-      return { subject: '数学', baseSubject: '数学', mode: 'solo', drillType: 'written' };
-    case 'english':
-      return { subject: '英語', baseSubject: '英語', mode: 'solo' };
-    default:
-      return { subject: importSubject, baseSubject: importSubject, mode: 'solo' };
-  }
-}
 
 function getAttemptDocId(attempt: any): string | null {
   if (attempt?.docId) return String(attempt.docId);
@@ -912,6 +900,7 @@ export default function AdminPage() {
           data.forEach((row) => {
             const {
               unit_id,
+              subject: csvSubject,
               question_text,
               options,
               answer_index,
@@ -932,13 +921,17 @@ export default function AdminPage() {
               reward_condition_value,
             } = row;
             if (!unit_id) return;
+            if (csvSubject && csvSubject !== subjectMetadata.subject) {
+              throw new Error(`${unit_id}: CSVの教科「${csvSubject}」と選択中の教科「${subjectMetadata.subject}」が一致しません。`);
+            }
+            const unitDocId = getImportedUnitId(subjectMetadata.subject, unit_id);
             const rowDrillType = question_type === 'written' || subjectMetadata.drillType === 'written' ? 'written' : 'multiple_choice';
             const writtenAttemptLimit = Math.max(2, parseInt(written_attempt_limit, 10) || 2);
 
-            if (!unitsMap[unit_id]) {
-              unitsMap[unit_id] = {
+            if (!unitsMap[unitDocId]) {
+              unitsMap[unitDocId] = {
                 unitDoc: {
-                  id: unit_id,
+                  id: unitDocId,
                   title: `単元 ${unit_id}`,
                   subject: subjectMetadata.subject,
                   baseSubject: subjectMetadata.baseSubject,
@@ -950,7 +943,7 @@ export default function AdminPage() {
                   writtenAttemptLimit: rowDrillType === 'written' ? writtenAttemptLimit : null,
                   writtenXpBase: rowDrillType === 'written' ? 232 : null,
                   includeInTotalScore: rowDrillType !== 'written',
-                  category: category || '1.正の数と負の数',
+                  category: category || 'その他',
                   totalQuestions: 0
                 },
                 questions: []
@@ -959,7 +952,7 @@ export default function AdminPage() {
 
             // IDは単元内の連番で生成（全体行番号を使うと他単元の問題数に依存し、
             // 再インポート時にIDがズレて wrongQuestionIds の追跡が壊れる）
-            const localIndex = unitsMap[unit_id].questions.length;
+            const localIndex = unitsMap[unitDocId].questions.length;
             let iconReward = null;
             const hasRewardSetting = [
               reward_icon_id,
@@ -990,7 +983,7 @@ export default function AdminPage() {
                 },
               };
             }
-            unitsMap[unit_id].questions.push({
+            unitsMap[unitDocId].questions.push({
               id: `q_${localIndex}`,
               order: localIndex,
               question_text: question_text || '',
@@ -1010,7 +1003,7 @@ export default function AdminPage() {
               })(grading_rubric) : [],
               iconReward,
             });
-            unitsMap[unit_id].unitDoc.totalQuestions = unitsMap[unit_id].questions.length;
+            unitsMap[unitDocId].unitDoc.totalQuestions = unitsMap[unitDocId].questions.length;
           });
 
           const writes: Array<{ ref: any, data: any }> = [];

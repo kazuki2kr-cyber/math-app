@@ -9,19 +9,19 @@ import Image from 'next/image';
 import { db, functions } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { PwaHeaderActions } from '@/components/PwaProvider';
 import { ThemeSettingsButton } from '@/components/ThemeSettingsButton';
 import {
   getMathDashboardUnits,
-  isMathSubjectValue,
   type DashboardUnit,
 } from '@/lib/dashboardUnits';
 import { buildLearningProgressReport, getLearningProgressReadiness } from '@/lib/learningProgress';
 import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 import { getUnlockedRewardIcons, type UnlockedRewardIcon } from '@/lib/rewardIcons';
+import { normalizeMathSubject } from '@/lib/mathSubjects';
 
 interface Unit extends DashboardUnit {
   id: string;
@@ -78,9 +78,12 @@ function clearDrillDataCache() {
 export default function Home() {
   const { user, logout, agreeToTerms } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState<string>('数学');
+  const [selectedSubject, setSelectedSubject] = useState<'数学甲' | '数学乙'>('数学甲');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const availableCategories = useMemo(() => Array.from(new Set(units
+    .filter(unit => normalizeMathSubject(unit.subject) === selectedSubject)
+    .map(unit => unit.category || 'その他')))
+    .sort((a, b) => a.localeCompare(b, 'ja', { numeric: true })), [units, selectedSubject]);
   const [scores, setScores] = useState<Record<string, Score>>({});
   const [overallRanking, setOverallRanking] = useState<OverallRank[]>([]);
   const [showMoreRanking, setShowMoreRanking] = useState(false);
@@ -234,11 +237,6 @@ export default function Home() {
         });
 
         setUnits(soloUnitsData);
-
-        // Extract available categories
-        const categories = Array.from(new Set(soloUnitsData.map(u => u.category || 'その他'))).sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
-        setAvailableCategories(categories);
-        setSelectedCategory(categories.at(-1) || 'all');
 
         setScores(newScores);
       } catch (err) {
@@ -639,11 +637,11 @@ export default function Home() {
                     <span className="text-[11px] font-bold text-primary/70 pl-3 uppercase tracking-tighter">教科</span>
                     <select
                       value={selectedSubject}
-                      onChange={(e) => setSelectedSubject(e.target.value)}
+                      onChange={(e) => { setSelectedSubject(e.target.value as '数学甲' | '数学乙'); setSelectedCategory('all'); }}
                       className="flex-1 w-full sm:w-28 text-sm border-none bg-white rounded-lg px-2 py-2 font-bold text-gray-800 outline-none cursor-pointer focus:ring-2 ring-primary/20 transition-all"
                     >
-                      <option value="数学">数学</option>
-                      <option value="英語" disabled>英語 (準備中)</option>
+                      <option value="数学甲">数学甲</option>
+                      <option value="数学乙">数学乙</option>
                     </select>
                   </div>
 
@@ -678,7 +676,7 @@ export default function Home() {
               ) : (
                 <div className="grid gap-6 sm:grid-cols-2">
                   {units
-                    .filter(unit => isMathSubjectValue(selectedSubject) ? isMathSubjectValue(unit.subject) : unit.subject === selectedSubject)
+                    .filter(unit => normalizeMathSubject(unit.subject) === selectedSubject)
                     .filter(unit => selectedCategory === 'all' || (unit.category || 'その他') === selectedCategory)
                     .map((unit) => {
                       const myScore = scores[unit.id];

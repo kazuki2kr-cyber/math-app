@@ -1,4 +1,5 @@
 import { getMathDashboardUnits, isMathSubjectValue } from '@/lib/dashboardUnits';
+import { getImportSubjectMetadata, getImportedUnitId, normalizeMathSubject } from '@/lib/mathSubjects';
 
 describe('math dashboard unit filtering', () => {
   test('公開中の問題が0問になった単元を非表示にする', () => {
@@ -12,9 +13,24 @@ describe('math dashboard unit filtering', () => {
     expect(isMathSubjectValue(undefined)).toBe(true);
     expect(isMathSubjectValue('math')).toBe(true);
     expect(isMathSubjectValue('数学')).toBe(true);
+    expect(isMathSubjectValue('数学甲')).toBe(true);
+    expect(isMathSubjectValue('数学乙')).toBe(true);
     expect(isMathSubjectValue('謨ｰ蟄ｦ')).toBe(true);
     expect(isMathSubjectValue('kanji')).toBe(false);
     expect(isMathSubjectValue('漢字')).toBe(false);
+  });
+
+  test('数学甲の旧データと数学乙を別教科として表示し、単元IDを分離する', () => {
+    const units = getMathDashboardUnits([
+      { id: '4.証明', subject: '数学', category: '3.図形の性質と合同' },
+      { id: '数学乙__4.証明', subject: '数学乙', category: '3.図形の性質と合同' },
+      { id: 'kanji', subject: '漢字' },
+    ]);
+    expect(units.filter(unit => normalizeMathSubject(unit.subject) === '数学甲').map(unit => unit.id)).toEqual(['4.証明']);
+    expect(units.filter(unit => normalizeMathSubject(unit.subject) === '数学乙').map(unit => unit.id)).toEqual(['数学乙__4.証明']);
+    expect(getImportedUnitId('数学甲', '4.証明')).toBe('4.証明');
+    expect(getImportedUnitId('数学乙', '4.証明')).toBe('数学乙__4.証明');
+    expect(getImportSubjectMetadata('math_b_written')).toMatchObject({ subject: '数学乙', drillType: 'written' });
   });
 
   test('漢字単元を通常版の単元・分野候補から除外する', () => {
