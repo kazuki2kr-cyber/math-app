@@ -27,6 +27,16 @@ beforeEach(async () => {
 });
 
 describe('Firestore Security Rules', () => {
+  test('記述式結果の表示記録はクライアントから直接読み書きできない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'written_result_exposures', 'sample'), { attemptId: 'a1' });
+    });
+    for (const context of [testEnv.unauthenticatedContext(), testEnv.authenticatedContext('student'), testEnv.authenticatedContext('admin', { admin: true })]) {
+      const ref = doc(context.firestore(), 'written_result_exposures', 'sample');
+      await expect(getDoc(ref)).rejects.toThrow();
+      await expect(setDoc(ref, { attemptId: 'a2' })).rejects.toThrow();
+    }
+  });
   test('全単元セットの本文・正解と有効版はクライアントから読み書きできない', async () => {
     for (const context of [testEnv.unauthenticatedContext(), testEnv.authenticatedContext('student', { email: 'student@shibaurafzk.com' }), testEnv.authenticatedContext('admin-pool', { admin: true })]) {
       for (const path of ['kanji_battle_pools/active', 'kanji_battle_pools/version/questions/0']) {

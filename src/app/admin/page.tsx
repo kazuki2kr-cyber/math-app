@@ -11,6 +11,7 @@ import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
 import ImportTab from './components/ImportTab';
 import UnitsTab from './components/UnitsTab';
+import type { WrittenLessonMetadata } from './components/WrittenLessonMetadataEditor';
 import ScoresTab from './components/ScoresTab';
 import XpTab from './components/XpTab';
 import SuspiciousTab from './components/SuspiciousTab';
@@ -730,6 +731,46 @@ export default function AdminPage() {
     setLoading(false);
   };
 
+  const handleSaveAnalysisLesson = async (unitId: string, metadata: WrittenLessonMetadata) => {
+    const lessonSessionId = metadata.lessonSessionId.trim();
+    const classKey = metadata.classKey.trim();
+    const instructionVersion = metadata.instructionVersion.trim();
+    if (!lessonSessionId && (classKey || instructionVersion)) {
+      setMessage('クラスキー・指導内容版を設定する場合は授業回IDも入力してください。');
+      return;
+    }
+    setUpdatingUnitIds(current => new Set(current).add(unitId));
+    setMessage('');
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'units', unitId), {
+        analysisLessonSessionId: lessonSessionId || null,
+        analysisClassKey: classKey || null,
+        analysisInstructionVersion: instructionVersion || null,
+      });
+      batch.set(doc(db, 'config', 'unit_catalog'), {
+        revision: increment(1),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      await batch.commit();
+      setUnits(current => current.map(unit => unit.id === unitId ? {
+        ...unit,
+        analysisLessonSessionId: lessonSessionId || null,
+        analysisClassKey: classKey || null,
+        analysisInstructionVersion: instructionVersion || null,
+      } : unit));
+      setMessage('分析用授業情報を保存しました。今後の提出から適用されます。');
+    } catch (error: any) {
+      setMessage(`分析用授業情報の保存に失敗しました: ${error.message || error}`);
+    } finally {
+      setUpdatingUnitIds(current => {
+        const next = new Set(current);
+        next.delete(unitId);
+        return next;
+      });
+    }
+  };
+
   const handleToggleXpEarningLock = async (uid: string, displayName: string, locked: boolean) => {
     const action = locked ? '停止' : '再開';
     if (!window.confirm(`${displayName || uid} さんのXP獲得を${action}しますか？`)) return;
@@ -925,6 +966,9 @@ export default function AdminPage() {
               event_starts_at,
               event_ends_at,
               written_attempt_limit,
+              lesson_session_id,
+              class_key,
+              instruction_version,
               reward_icon_id,
               reward_icon_name,
               reward_icon_image_url,
@@ -949,6 +993,12 @@ export default function AdminPage() {
                   eventEndsAt: event_ends_at || null,
                   writtenAttemptLimit: rowDrillType === 'written' ? writtenAttemptLimit : null,
                   writtenXpBase: rowDrillType === 'written' ? 232 : null,
+                  ...(rowDrillType === 'written' && String(lesson_session_id || '').trim()
+                    ? { analysisLessonSessionId: String(lesson_session_id).trim().slice(0, 80) } : {}),
+                  ...(rowDrillType === 'written' && String(class_key || '').trim()
+                    ? { analysisClassKey: String(class_key).trim().slice(0, 80) } : {}),
+                  ...(rowDrillType === 'written' && String(instruction_version || '').trim()
+                    ? { analysisInstructionVersion: String(instruction_version).trim().slice(0, 80) } : {}),
                   includeInTotalScore: rowDrillType !== 'written',
                   category: category || '1.正の数と負の数',
                   totalQuestions: 0
@@ -1194,6 +1244,7 @@ export default function AdminPage() {
           onDeleteQuestion={handleDeleteQuestion}
           onToggleQuestionActive={handleToggleQuestionActive}
           onToggleUnitQuestionsActive={handleToggleUnitQuestionsActive}
+          onSaveAnalysisLesson={handleSaveAnalysisLesson}
           updatingQuestionKeys={updatingQuestionKeys}
           updatingUnitIds={updatingUnitIds}
           onRefresh={fetchUnits}
