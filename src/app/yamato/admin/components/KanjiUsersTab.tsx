@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Archive, Ban, Loader2, RotateCcw, Save, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus, X } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { CLOSING_KANJI_SEASON, getClosingSeasonBadgeFields, getKanjiSeasonBadges, KanjiSeasonArchive, NEXT_KANJI_SEASON_NUMBER } from '@/lib/kanjiSeasons';
 
 interface KanjiUsersTabProps {
@@ -393,21 +393,24 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
       const certifiedUsers = new Map((archive.certifiedUsers || []).map((user) => [user.uid, user]));
       const usersSnap = await getDocs(collection(db, 'users'));
       const allUids = usersSnap.docs.map((userDoc) => userDoc.id);
+      if (allUids.length + 3 > 500) throw new Error('対象ユーザーが一括更新の上限を超えています。初期化を中止しました。');
 
+      const completedAt = new Date().toISOString();
+      const batch = writeBatch(db);
       for (const uid of allUids) {
         const certifiedUser = certifiedUsers.get(uid);
         const userRef = doc(db, 'users', uid);
-        await updateDoc(userRef, {
+        batch.update(userRef, {
           ...NEXT_SEASON_INITIAL_FIELDS,
           ...(certifiedUser ? getClosingSeasonBadgeFields(certifiedUser, archive.archivedAt) : {}),
         });
       }
 
-      const completedAt = new Date().toISOString();
       const lbRef = doc(db, 'leaderboards', 'kanji');
-      await setDoc(lbRef, { rankings: [], updatedAt: completedAt }, { merge: true });
-      await setDoc(doc(db, 'leaderboards', 'kanjiBattle'), { rankings: [], updatedAt: completedAt }, { merge: true });
-      await updateDoc(doc(db, 'leaderboards', CLOSING_KANJI_SEASON.archiveDocumentId), { resetCompletedAt: completedAt });
+      batch.set(lbRef, { rankings: [], updatedAt: completedAt }, { merge: true });
+      batch.set(doc(db, 'leaderboards', 'kanjiBattle'), { rankings: [], updatedAt: completedAt }, { merge: true });
+      batch.update(doc(db, 'leaderboards', CLOSING_KANJI_SEASON.archiveDocumentId), { resetCompletedAt: completedAt });
+      await batch.commit();
 
       await refreshUsers();
       setMessage(`✅ Season ${CLOSING_KANJI_SEASON.number}を保存し、全員（${allUids.length}名）の漢字・対戦データを初期化しました。Season ${NEXT_KANJI_SEASON_NUMBER} はLv.1・0 XPから開始できます。認証バッジ対象: ${archive.certifiedUsers?.length || 0}名。`);
