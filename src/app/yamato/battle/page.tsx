@@ -57,7 +57,8 @@ export default function KanjiBattlePage() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
   const [userData, setUserData] = useState<Record<string, unknown> | null>(null);
-  const [season2Archive, setSeason2Archive] = useState<KanjiSeasonArchive | null>(null);
+  const [seasonArchives, setSeasonArchives] = useState<KanjiSeasonArchive[]>([]);
+  const [selectedArchiveId, setSelectedArchiveId] = useState<string>('');
   const [battleRanking, setBattleRanking] = useState<BattleRankingEntry[]>([]);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
@@ -151,17 +152,25 @@ export default function KanjiBattlePage() {
   useEffect(() => {
     if (!hasBattleAccess) return;
     async function fetchSeasonArchive() {
-      const season = KANJI_SEASONS.find((item) => item.id === 'season2');
-      if (!season) return;
       try {
-        const archiveSnap = await getDoc(doc(db, 'leaderboards', season.archiveDocumentId));
-        setSeason2Archive(archiveSnap.exists() ? archiveSnap.data() as KanjiSeasonArchive : null);
+        const snapshots = await Promise.all(KANJI_SEASONS.map((season) => getDoc(doc(db, 'leaderboards', season.archiveDocumentId))));
+        const archives = snapshots
+          .map((snapshot, index) => snapshot.exists() ? {
+            ...snapshot.data(),
+            seasonId: snapshot.data().seasonId || KANJI_SEASONS[index].id,
+            seasonNumber: snapshot.data().seasonNumber || KANJI_SEASONS[index].number,
+          } as KanjiSeasonArchive : null)
+          .filter((archive): archive is KanjiSeasonArchive => archive !== null && archive.topBattleRankings?.length > 0);
+        setSeasonArchives(archives);
+        setSelectedArchiveId((current) => archives.some((archive) => archive.seasonId === current) ? current : archives[0]?.seasonId || '');
       } catch (err) {
         console.error('Failed to load kanji battle season archive:', err);
       }
     }
     fetchSeasonArchive();
   }, [hasBattleAccess]);
+
+  const selectedArchive = seasonArchives.find((archive) => archive.seasonId === selectedArchiveId) || seasonArchives[0];
 
   const subjects = useMemo(() => {
     return Array.from(new Set(units.map(unit => unit.baseSubject || unit.subject || '漢字'))).sort();
@@ -616,16 +625,25 @@ export default function KanjiBattlePage() {
 
           <aside className="space-y-6 lg:sticky lg:top-6">
             {battleRankingPanel}
-            {(season2Archive?.topBattleRankings?.length ?? 0) > 0 && (
+            {(selectedArchive?.topBattleRankings?.length ?? 0) > 0 && (
               <Card className="overflow-hidden border border-amber-200 bg-white/95 shadow-sm">
                 <CardHeader className="border-b border-amber-100 bg-amber-50/70 pb-3">
                   <CardTitle className="flex items-center gap-2 text-base font-black text-amber-950">
-                    <Trophy className="h-5 w-5 text-amber-600" /> Season 2 対戦XP上位
+                    <Trophy className="h-5 w-5 text-amber-600" /> Season {selectedArchive.seasonNumber} 対戦XP上位
                   </CardTitle>
+                  {seasonArchives.length > 1 && (
+                    <div className="flex gap-2 pt-2">
+                      {seasonArchives.map((archive) => (
+                        <Button key={archive.seasonId} size="sm" variant={archive.seasonId === selectedArchive.seasonId ? 'default' : 'outline'} onClick={() => setSelectedArchiveId(archive.seasonId)} className="h-7 text-xs">
+                          Season {archive.seasonNumber}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y divide-amber-100/80">
-                    {season2Archive!.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
+                    {selectedArchive.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
                       const finalRank = getBattleRank(Number(rankUser.xp || 0));
                       return (
                         <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
