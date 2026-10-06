@@ -131,6 +131,22 @@ test('all-unit pool pins ten unique copies across replacement, retries, particip
   expect((await db.doc('units/ocr-battle-test').get()).data()).toEqual(sourceBefore);
   await db.doc('kanji_battle_pools/active').set({ version, count: 9 });
   await expect(run('createKanjiBattleRoom', { unitId: 'kanji-all-random', requestId: randomUUID() }, uids[0])).rejects.toThrow();
+
+  // An old immutable pool must not enable new rooms after the live questions are removed.
+  await db.doc('kanji_battle_pools/active').set({ version, count: 25 });
+  const liveUnits = (await db.collection('units').get()).docs.filter(unit =>
+    [unit.data().subject, unit.data().baseSubject].some(value => value === 'kanji' || value === '漢字'));
+  try {
+    const remove = db.batch();
+    liveUnits.forEach(unit => remove.delete(unit.ref));
+    await remove.commit();
+    await expect(run('createKanjiBattleRoom', { unitId: 'kanji-all-random', requestId: randomUUID() }, uids[0]))
+      .rejects.toThrow('出題できる漢字問題が10問未満');
+  } finally {
+    const restore = db.batch();
+    liveUnits.forEach(unit => restore.set(unit.ref, unit.data()));
+    await restore.commit();
+  }
 });
 
 test('pool publisher verifies all copies and leaves source units unchanged', async () => {

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
 import { limitToLast, onValue, orderByChild, query as realtimeQuery, ref, startAt } from 'firebase/database';
 import {
   BATTLE_RANKS,
@@ -32,6 +32,7 @@ interface BattleUnit {
   subject?: string;
   baseSubject?: string;
   totalQuestions?: number;
+  questions?: unknown[];
 }
 
 interface BattleProfile {
@@ -63,6 +64,8 @@ export default function KanjiBattlePage() {
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
   const [units, setUnits] = useState<BattleUnit[]>([]);
+  const [allUnitQuestionsAvailable, setAllUnitQuestionsAvailable] = useState(false);
+  const [allUnitQuestionsLoading, setAllUnitQuestionsLoading] = useState(true);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [loading, setLoading] = useState(true);
@@ -108,7 +111,7 @@ export default function KanjiBattlePage() {
         const unitsSnap = await getDocs(collection(db, 'units'));
         const battleUnits = unitsSnap.docs
           .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as BattleUnit))
-          .filter(unit => unit.subject === 'kanji' || unit.subject === '漢字' || unit.baseSubject === '漢字')
+          .filter(unit => unit.subject === 'kanji' || unit.subject === '漢字' || unit.baseSubject === 'kanji' || unit.baseSubject === '漢字')
           .sort((a, b) => {
             const subjectCompare = (a.baseSubject || a.subject || '').localeCompare(b.baseSubject || b.subject || '', 'ja');
             if (subjectCompare !== 0) return subjectCompare;
@@ -117,11 +120,24 @@ export default function KanjiBattlePage() {
             return a.title.localeCompare(b.title, 'ja', { numeric: true });
           });
         setUnits(battleUnits);
+        let questionCount = 0;
+        for (const unit of battleUnits) {
+          if (Array.isArray(unit.questions) && unit.questions.length > 0) {
+            questionCount += unit.questions.length;
+          } else {
+            const questions = await getDocs(query(collection(db, 'units', unit.id, 'questions'), limit(10 - questionCount)));
+            questionCount += questions.size;
+          }
+          if (questionCount >= 10) break;
+        }
+        setAllUnitQuestionsAvailable(questionCount >= 10);
       } catch (err) {
         console.error('Failed to load kanji battle units:', err);
         setError('漢字の単元を読み込めませんでした。');
+        setAllUnitQuestionsAvailable(false);
       } finally {
         setLoading(false);
+        setAllUnitQuestionsLoading(false);
       }
     }
 
@@ -213,6 +229,10 @@ export default function KanjiBattlePage() {
 
   const createRoom = async (unit: BattleUnit) => {
     if (!user || isCreatingRoomRef.current) return;
+    if (unit.id === 'kanji-all-random' && !allUnitQuestionsAvailable) {
+      setError('出題できる漢字問題が10問未満のため、ルームを作成できません。');
+      return;
+    }
     isCreatingRoomRef.current = true;
     setCreatingUnitId(unit.id);
     setError(null);
@@ -563,12 +583,13 @@ export default function KanjiBattlePage() {
             </CardHeader>
             <CardContent className="text-sm text-gray-700">
               全単元をまとめた問題セットから、毎回ランダムに10問出題します。2〜4人で対戦できます。
+              {!allUnitQuestionsLoading && !allUnitQuestionsAvailable && <p className="mt-2 font-bold text-amber-800">問題データが10問以上登録されるまで作成できません。</p>}
             </CardContent>
             <CardFooter>
               <Button className="bg-amber-500 font-bold text-white hover:bg-amber-600"
-                disabled={creatingUnitId !== null}
+                disabled={creatingUnitId !== null || allUnitQuestionsLoading || !allUnitQuestionsAvailable}
                 onClick={() => createRoom({ id: 'kanji-all-random', title: '全単元出題（ランダム10問）' })}>
-                {creatingUnitId === 'kanji-all-random' ? '作成中...' : '全単元でルーム作成'}
+                {creatingUnitId === 'kanji-all-random' ? '作成中...' : allUnitQuestionsLoading ? '問題を確認中...' : '全単元でルーム作成'}
               </Button>
             </CardFooter>
           </Card>
