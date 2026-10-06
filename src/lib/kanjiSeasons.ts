@@ -18,9 +18,26 @@ export interface KanjiSeasonArchive {
   certificationLevel: number;
   topXpRankings: any[];
   topBattleRankings: any[];
+  certifiedUsers?: {
+    uid: string;
+    name: string;
+    xp: number;
+    level: number;
+    totalScore: number;
+    badgeImageUrl: string;
+  }[];
+  resetCompletedAt?: string;
 }
 
 export const KANJI_SEASONS = [
+  {
+    id: 'season3',
+    number: 3,
+    title: '漢字 Season 3',
+    certificationLevel: 300,
+    badgeImageUrl: '/images/kanji-season3-badge.png',
+    archiveDocumentId: 'kanjiSeason3',
+  },
   {
     id: 'season2',
     number: 2,
@@ -39,7 +56,27 @@ export const KANJI_SEASONS = [
   },
 ] as const;
 
-export const CURRENT_KANJI_SEASON = KANJI_SEASONS[0];
+// Season 3 is the season to close. Season 4 begins after its archive and reset complete.
+export const CLOSING_KANJI_SEASON = KANJI_SEASONS[0];
+export const NEXT_KANJI_SEASON_NUMBER = 4;
+
+export function getClosingSeasonBadgeFields(user: { kanjiLevel?: number; level?: number; kanjiXp?: number; xp?: number }, archivedAt: string): Record<string, KanjiSeasonBadge> {
+  const level = Number(user.kanjiLevel ?? user.level ?? 1);
+  if (level < CLOSING_KANJI_SEASON.certificationLevel) return {};
+
+  const badge: KanjiSeasonBadge = {
+    seasonId: CLOSING_KANJI_SEASON.id,
+    seasonNumber: CLOSING_KANJI_SEASON.number,
+    label: `Season ${CLOSING_KANJI_SEASON.number} 認証`,
+    title: '万葉の匠',
+    awardedAt: archivedAt,
+    level,
+    xp: Number(user.kanjiXp ?? user.xp ?? 0),
+    badgeImageUrl: CLOSING_KANJI_SEASON.badgeImageUrl,
+  };
+
+  return { [`kanjiSeasonBadges.${CLOSING_KANJI_SEASON.id}`]: badge };
+}
 
 export function getKanjiSeasonBadges(data: any): KanjiSeasonBadge[] {
   const storedBadges = Array.isArray(data?.badges)

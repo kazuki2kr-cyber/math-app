@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
 import { limitToLast, onValue, orderByChild, query as realtimeQuery, ref, startAt } from 'firebase/database';
 import {
   BATTLE_RANKS,
@@ -32,6 +32,7 @@ interface BattleUnit {
   subject?: string;
   baseSubject?: string;
   totalQuestions?: number;
+  questions?: unknown[];
 }
 
 interface BattleProfile {
@@ -57,11 +58,14 @@ export default function KanjiBattlePage() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
   const [userData, setUserData] = useState<Record<string, unknown> | null>(null);
-  const [season2Archive, setSeason2Archive] = useState<KanjiSeasonArchive | null>(null);
+  const [seasonArchives, setSeasonArchives] = useState<KanjiSeasonArchive[]>([]);
+  const [selectedArchiveId, setSelectedArchiveId] = useState<string>('');
   const [battleRanking, setBattleRanking] = useState<BattleRankingEntry[]>([]);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
   const [units, setUnits] = useState<BattleUnit[]>([]);
+  const [allUnitQuestionsAvailable, setAllUnitQuestionsAvailable] = useState(false);
+  const [allUnitQuestionsLoading, setAllUnitQuestionsLoading] = useState(true);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [loading, setLoading] = useState(true);
@@ -107,7 +111,7 @@ export default function KanjiBattlePage() {
         const unitsSnap = await getDocs(collection(db, 'units'));
         const battleUnits = unitsSnap.docs
           .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as BattleUnit))
-          .filter(unit => unit.subject === 'kanji' || unit.subject === '漢字' || unit.baseSubject === '漢字')
+          .filter(unit => unit.subject === 'kanji' || unit.subject === '漢字' || unit.baseSubject === 'kanji' || unit.baseSubject === '漢字')
           .sort((a, b) => {
             const subjectCompare = (a.baseSubject || a.subject || '').localeCompare(b.baseSubject || b.subject || '', 'ja');
             if (subjectCompare !== 0) return subjectCompare;
@@ -116,11 +120,24 @@ export default function KanjiBattlePage() {
             return a.title.localeCompare(b.title, 'ja', { numeric: true });
           });
         setUnits(battleUnits);
+        let questionCount = 0;
+        for (const unit of battleUnits) {
+          if (Array.isArray(unit.questions) && unit.questions.length > 0) {
+            questionCount += unit.questions.length;
+          } else {
+            const questions = await getDocs(query(collection(db, 'units', unit.id, 'questions'), limit(10 - questionCount)));
+            questionCount += questions.size;
+          }
+          if (questionCount >= 10) break;
+        }
+        setAllUnitQuestionsAvailable(questionCount >= 10);
       } catch (err) {
         console.error('Failed to load kanji battle units:', err);
         setError('漢字の単元を読み込めませんでした。');
+        setAllUnitQuestionsAvailable(false);
       } finally {
         setLoading(false);
+        setAllUnitQuestionsLoading(false);
       }
     }
 
@@ -151,17 +168,25 @@ export default function KanjiBattlePage() {
   useEffect(() => {
     if (!hasBattleAccess) return;
     async function fetchSeasonArchive() {
-      const season = KANJI_SEASONS.find((item) => item.id === 'season2');
-      if (!season) return;
       try {
-        const archiveSnap = await getDoc(doc(db, 'leaderboards', season.archiveDocumentId));
-        setSeason2Archive(archiveSnap.exists() ? archiveSnap.data() as KanjiSeasonArchive : null);
+        const snapshots = await Promise.all(KANJI_SEASONS.map((season) => getDoc(doc(db, 'leaderboards', season.archiveDocumentId))));
+        const archives = snapshots
+          .map((snapshot, index) => snapshot.exists() ? {
+            ...snapshot.data(),
+            seasonId: snapshot.data().seasonId || KANJI_SEASONS[index].id,
+            seasonNumber: snapshot.data().seasonNumber || KANJI_SEASONS[index].number,
+          } as KanjiSeasonArchive : null)
+          .filter((archive): archive is KanjiSeasonArchive => archive !== null && archive.topBattleRankings?.length > 0);
+        setSeasonArchives(archives);
+        setSelectedArchiveId((current) => archives.some((archive) => archive.seasonId === current) ? current : archives[0]?.seasonId || '');
       } catch (err) {
         console.error('Failed to load kanji battle season archive:', err);
       }
     }
     fetchSeasonArchive();
   }, [hasBattleAccess]);
+
+  const selectedArchive = seasonArchives.find((archive) => archive.seasonId === selectedArchiveId) || seasonArchives[0];
 
   const subjects = useMemo(() => {
     return Array.from(new Set(units.map(unit => unit.baseSubject || unit.subject || '漢字'))).sort();
@@ -204,6 +229,10 @@ export default function KanjiBattlePage() {
 
   const createRoom = async (unit: BattleUnit) => {
     if (!user || isCreatingRoomRef.current) return;
+    if (unit.id === 'kanji-all-random' && !allUnitQuestionsAvailable) {
+      setError('出題できる漢字問題が10問未満のため、ルームを作成できません。');
+      return;
+    }
     isCreatingRoomRef.current = true;
     setCreatingUnitId(unit.id);
     setError(null);
@@ -554,12 +583,13 @@ export default function KanjiBattlePage() {
             </CardHeader>
             <CardContent className="text-sm text-gray-700">
               全単元をまとめた問題セットから、毎回ランダムに10問出題します。2〜4人で対戦できます。
+              {!allUnitQuestionsLoading && !allUnitQuestionsAvailable && <p className="mt-2 font-bold text-amber-800">問題データが10問以上登録されるまで作成できません。</p>}
             </CardContent>
             <CardFooter>
               <Button className="bg-amber-500 font-bold text-white hover:bg-amber-600"
-                disabled={creatingUnitId !== null}
+                disabled={creatingUnitId !== null || allUnitQuestionsLoading || !allUnitQuestionsAvailable}
                 onClick={() => createRoom({ id: 'kanji-all-random', title: '全単元出題（ランダム10問）' })}>
-                {creatingUnitId === 'kanji-all-random' ? '作成中...' : '全単元でルーム作成'}
+                {creatingUnitId === 'kanji-all-random' ? '作成中...' : allUnitQuestionsLoading ? '問題を確認中...' : '全単元でルーム作成'}
               </Button>
             </CardFooter>
           </Card>
@@ -616,16 +646,25 @@ export default function KanjiBattlePage() {
 
           <aside className="space-y-6 lg:sticky lg:top-6">
             {battleRankingPanel}
-            {(season2Archive?.topBattleRankings?.length ?? 0) > 0 && (
+            {(selectedArchive?.topBattleRankings?.length ?? 0) > 0 && (
               <Card className="overflow-hidden border border-amber-200 bg-white/95 shadow-sm">
                 <CardHeader className="border-b border-amber-100 bg-amber-50/70 pb-3">
                   <CardTitle className="flex items-center gap-2 text-base font-black text-amber-950">
-                    <Trophy className="h-5 w-5 text-amber-600" /> Season 2 対戦XP上位
+                    <Trophy className="h-5 w-5 text-amber-600" /> Season {selectedArchive.seasonNumber} 対戦XP上位
                   </CardTitle>
+                  {seasonArchives.length > 1 && (
+                    <div className="flex gap-2 pt-2">
+                      {seasonArchives.map((archive) => (
+                        <Button key={archive.seasonId} size="sm" variant={archive.seasonId === selectedArchive.seasonId ? 'default' : 'outline'} onClick={() => setSelectedArchiveId(archive.seasonId)} className="h-7 text-xs">
+                          Season {archive.seasonNumber}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y divide-amber-100/80">
-                    {season2Archive!.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
+                    {selectedArchive.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
                       const finalRank = getBattleRank(Number(rankUser.xp || 0));
                       return (
                         <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">

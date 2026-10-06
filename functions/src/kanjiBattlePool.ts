@@ -5,11 +5,33 @@ import { randomInt } from 'crypto';
 export const ALL_KANJI_UNIT_ID = 'kanji-all-random';
 export const POOL_ROOT = 'kanji_battle_pools';
 
+// The immutable pool may still exist while source questions are being replaced.
+// A new room must not start from that old copy when fewer than ten live questions remain.
+export async function hasLiveKanjiBattleQuestions(): Promise<boolean> {
+  const units = await admin.firestore().collection('units').get();
+  let count = 0;
+  for (const unit of units.docs) {
+    const data = unit.data();
+    if (![data.subject, data.baseSubject].some(value => value === 'kanji' || value === '漢字')) continue;
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      count += data.questions.length;
+    } else {
+      const questions = await unit.ref.collection('questions').limit(10 - count).get();
+      count += questions.size;
+    }
+    if (count >= 10) return true;
+  }
+  return false;
+}
+
 // Immutable pool versions let existing rooms finish after a new version is published.
 export async function selectPoolQuestions() {
   const active = (await admin.firestore().doc(`${POOL_ROOT}/active`).get()).data();
   if (!active || !/^[a-zA-Z0-9-]+$/.test(active.version) || !Number.isSafeInteger(active.count) || active.count < 10 || active.count >= 2 ** 48) {
     throw new functions.https.HttpsError('failed-precondition', '全単元出題セットが準備されていません。');
+  }
+  if (!await hasLiveKanjiBattleQuestions()) {
+    throw new functions.https.HttpsError('failed-precondition', '出題できる漢字問題が10問未満のため、ルームを作成できません。');
   }
   const slots = new Set<number>();
   while (slots.size < 10) slots.add(randomInt(active.count));
