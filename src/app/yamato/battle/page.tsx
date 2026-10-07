@@ -176,7 +176,8 @@ export default function KanjiBattlePage() {
             seasonId: snapshot.data().seasonId || KANJI_SEASONS[index].id,
             seasonNumber: snapshot.data().seasonNumber || KANJI_SEASONS[index].number,
           } as KanjiSeasonArchive : null)
-          .filter((archive): archive is KanjiSeasonArchive => archive !== null && archive.topBattleRankings?.length > 0);
+          .filter((archive): archive is KanjiSeasonArchive => archive !== null && archive.topBattleRankings?.length > 0)
+          .sort((a, b) => b.seasonNumber - a.seasonNumber);
         setSeasonArchives(archives);
         setSelectedArchiveId((current) => archives.some((archive) => archive.seasonId === current) ? current : archives[0]?.seasonId || '');
       } catch (err) {
@@ -402,8 +403,8 @@ export default function KanjiBattlePage() {
                 <Lock className="h-5 w-5" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-gray-900">漢字対戦モード（β版）</h1>
-                <p className="text-sm font-semibold text-muted-foreground">現在は限定公開中です。</p>
+                <h1 className="text-xl font-black text-gray-900">漢字対戦モード</h1>
+                <p className="text-sm font-semibold text-muted-foreground">対戦モードのパスワードを入力してください。</p>
               </div>
             </div>
             <form onSubmit={unlockBattleMode} className="space-y-3">
@@ -442,7 +443,7 @@ export default function KanjiBattlePage() {
             </div>
             <div>
               <h1 className="text-2xl font-black tracking-tight text-gray-900">漢字対戦モード</h1>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Kanji battle beta</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Kanji battle</p>
             </div>
           </div>
           <Button variant="ghost" onClick={() => router.push('/yamato')} className="justify-start text-muted-foreground">
