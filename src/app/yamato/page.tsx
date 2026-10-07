@@ -28,7 +28,7 @@ export default function KanjiDashboard() {
   const [userData, setUserData] = useState<any>(null);
   const [overallRanking, setOverallRanking] = useState<any[]>([]);
   const [seasonArchives, setSeasonArchives] = useState<KanjiSeasonArchive[]>([]);
-  const [selectedArchiveId, setSelectedArchiveId] = useState('season2');
+  const [selectedArchiveId, setSelectedArchiveId] = useState('');
   const [rankingLoading, setRankingLoading] = useState(false);
   const [showRanking, setShowRanking] = useState(false);
   const router = useRouter();
@@ -59,11 +59,12 @@ export default function KanjiDashboard() {
               topBattleRankings: snapshot.data().topBattleRankings || [],
             } as KanjiSeasonArchive;
           })
-          .filter((archive): archive is KanjiSeasonArchive => archive !== null);
+          .filter((archive): archive is KanjiSeasonArchive => archive !== null)
+          .sort((a, b) => b.seasonNumber - a.seasonNumber);
         setSeasonArchives(archives);
-        if (archives.length > 0 && !archives.some((archive) => archive.seasonId === selectedArchiveId)) {
-          setSelectedArchiveId(archives[0].seasonId);
-        }
+        setSelectedArchiveId((current) => archives.some((archive) => archive.seasonId === current)
+          ? current
+          : archives[0]?.seasonId || '');
 
         const unitsSnap = await getDocs(collection(db, 'units'));
         const allUnits = unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit));
@@ -132,7 +133,7 @@ export default function KanjiDashboard() {
             className="inline-flex border-orange-200 bg-orange-50/80 text-orange-900 hover:bg-orange-100 font-bold shadow-sm"
           >
             <Swords className="w-4 h-4 mr-2" />
-            <span className="hidden sm:inline">対戦モード（β版）</span>
+            <span className="hidden sm:inline">対戦モード</span>
             <span className="sm:hidden">対戦</span>
           </Button>
           <ThemeSettingsButton
