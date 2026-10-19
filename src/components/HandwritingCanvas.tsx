@@ -21,16 +21,29 @@ export interface HandwritingStroke {
   tool?: 'pen' | 'eraser';
 }
 
+export type HandwritingTool = 'pen' | 'eraser' | 'strokeEraser';
+
+export interface HandwritingHistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
 interface PreviewPoint {
   x: number;
   y: number;
 }
 
 const PAPER_COLOR = '#FFFFFF';
+const MAX_HISTORY_STEPS = 50;
+const STROKE_ERASER_HIT_RADIUS = 14;
 
 export interface HandwritingCanvasRef {
   undo: () => void;
+  redo: () => void;
   clear: () => void;
+  clearWithHistory: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
   toDataURL: () => string | null;
   hasStrokes: () => boolean;
   getStrokes: () => HandwritingStroke[];
@@ -42,13 +55,63 @@ interface HandwritingCanvasProps {
   height?: number | string;
   strokeColor?: string;
   strokeWidth?: number;
-  tool?: 'pen' | 'eraser';
+  tool?: HandwritingTool;
   eraserWidth?: number;
   className?: string;
   onChange?: (hasStrokes: boolean) => void;
   initialStrokes?: HandwritingStroke[];
   onStrokesChange?: (strokes: HandwritingStroke[]) => void;
+  onHistoryChange?: (state: HandwritingHistoryState) => void;
   readOnly?: boolean;
+}
+
+function distanceToSegment(
+  point: PreviewPoint,
+  start: PreviewPoint,
+  end: PreviewPoint,
+) {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const squaredLength = deltaX * deltaX + deltaY * deltaY;
+  if (squaredLength === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+
+  const projection = Math.min(1, Math.max(0, (
+    (point.x - start.x) * deltaX + (point.y - start.y) * deltaY
+  ) / squaredLength));
+  const nearestX = start.x + projection * deltaX;
+  const nearestY = start.y + projection * deltaY;
+  return Math.hypot(point.x - nearestX, point.y - nearestY);
+}
+
+function findTopmostStrokeIndex(
+  strokes: HandwritingStroke[],
+  point: PreviewPoint,
+  width: number,
+  height: number,
+) {
+  for (let strokeIndex = strokes.length - 1; strokeIndex >= 0; strokeIndex -= 1) {
+    const stroke = strokes[strokeIndex];
+    if (stroke.tool === 'eraser' || stroke.points.length === 0) continue;
+
+    const hitRadius = Math.max(STROKE_ERASER_HIT_RADIUS, stroke.width / 2 + 8);
+    const scaledPoints = stroke.points.map((strokePoint) => ({
+      x: strokePoint.x * width,
+      y: strokePoint.y * height,
+    }));
+    if (scaledPoints.length === 1) {
+      if (Math.hypot(point.x - scaledPoints[0].x, point.y - scaledPoints[0].y) <= hitRadius) {
+        return strokeIndex;
+      }
+      continue;
+    }
+
+    for (let pointIndex = 1; pointIndex < scaledPoints.length; pointIndex += 1) {
+      if (distanceToSegment(point, scaledPoints[pointIndex - 1], scaledPoints[pointIndex]) <= hitRadius) {
+        return strokeIndex;
+      }
+    }
+  }
+  return -1;
 }
 
 export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCanvasProps>(
@@ -63,18 +126,44 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     onChange,
     initialStrokes = [],
     onStrokesChange,
+    onHistoryChange,
     readOnly = false,
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [isDrawing, setIsDrawing] = useState(false);
     const [strokes, setStrokes] = useState<HandwritingStroke[]>(() => initialStrokes);
     const [currentStroke, setCurrentStroke] = useState<HandwritingStroke | null>(null);
     const [eraserPreviewPoint, setEraserPreviewPoint] = useState<PreviewPoint | null>(null);
+    const [historyRevision, setHistoryRevision] = useState(0);
     const strokesRef = useRef(strokes);
     const currentStrokeRef = useRef(currentStroke);
+    const isDrawingRef = useRef(false);
+    const undoStackRef = useRef<HandwritingStroke[][]>([]);
+    const redoStackRef = useRef<HandwritingStroke[][]>([]);
+    const strokeEraseStartRef = useRef<HandwritingStroke[] | null>(null);
+    const strokeEraseChangedRef = useRef(false);
     const onChangeRef = useRef(onChange);
     const onStrokesChangeRef = useRef(onStrokesChange);
+    const onHistoryChangeRef = useRef(onHistoryChange);
+
+    const applyStrokes = (nextStrokes: HandwritingStroke[]) => {
+      strokesRef.current = nextStrokes;
+      setStrokes(nextStrokes);
+    };
+
+    const notifyHistoryChanged = () => setHistoryRevision((revision) => revision + 1);
+
+    const recordUndoSnapshot = (snapshot: HandwritingStroke[]) => {
+      undoStackRef.current = [...undoStackRef.current, snapshot].slice(-MAX_HISTORY_STEPS);
+      redoStackRef.current = [];
+      notifyHistoryChanged();
+    };
+
+    const resetHistory = () => {
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      notifyHistoryChanged();
+    };
 
     const redrawCanvas = () => {
       const canvas = canvasRef.current;
@@ -126,7 +215,8 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     useEffect(() => {
       onChangeRef.current = onChange;
       onStrokesChangeRef.current = onStrokesChange;
-    }, [onChange, onStrokesChange]);
+      onHistoryChangeRef.current = onHistoryChange;
+    }, [onChange, onHistoryChange, onStrokesChange]);
 
     useEffect(() => {
       onChangeRef.current?.(strokes.length > 0 || currentStroke !== null);
@@ -135,6 +225,13 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     useEffect(() => {
       onStrokesChangeRef.current?.(strokes);
     }, [strokes]);
+
+    useEffect(() => {
+      onHistoryChangeRef.current?.({
+        canUndo: undoStackRef.current.length > 0 || strokes.length > 0,
+        canRedo: redoStackRef.current.length > 0,
+      });
+    }, [historyRevision, strokes.length]);
 
     useEffect(() => {
       strokesRef.current = strokes;
@@ -178,18 +275,62 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
       if (readOnly || (event.button !== 0 && event.pointerType === 'mouse')) return;
 
-      setIsDrawing(true);
+      isDrawingRef.current = true;
+      if (tool === 'strokeEraser') {
+        setEraserPreviewPoint(getPreviewPosition(event));
+        strokeEraseStartRef.current = strokesRef.current;
+        strokeEraseChangedRef.current = false;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const strokeIndex = findTopmostStrokeIndex(
+          strokesRef.current,
+          getPreviewPosition(event),
+          rect.width,
+          rect.height,
+        );
+        if (strokeIndex >= 0) {
+          applyStrokes(strokesRef.current.filter((_, index) => index !== strokeIndex));
+          strokeEraseChangedRef.current = true;
+        }
+        canvasRef.current?.setPointerCapture(event.pointerId);
+        return;
+      }
+
       setCurrentStroke({
         points: [getPointerPosition(event)],
         color: tool === 'eraser' ? PAPER_COLOR : strokeColor,
         width: tool === 'eraser' ? eraserWidth : strokeWidth,
         tool,
       });
+      currentStrokeRef.current = {
+        points: [getPointerPosition(event)],
+        color: tool === 'eraser' ? PAPER_COLOR : strokeColor,
+        width: tool === 'eraser' ? eraserWidth : strokeWidth,
+        tool,
+      };
       canvasRef.current?.setPointerCapture(event.pointerId);
     };
 
     const draw = (event: React.PointerEvent<HTMLCanvasElement>) => {
-      if (readOnly || !isDrawing || !currentStroke) return;
+      if (readOnly || !isDrawingRef.current) return;
+
+      if (tool === 'strokeEraser') {
+        const previewPoint = getPreviewPosition(event);
+        setEraserPreviewPoint(previewPoint);
+        const rect = event.currentTarget.getBoundingClientRect();
+        const strokeIndex = findTopmostStrokeIndex(
+          strokesRef.current,
+          previewPoint,
+          rect.width,
+          rect.height,
+        );
+        if (strokeIndex >= 0) {
+          applyStrokes(strokesRef.current.filter((_, index) => index !== strokeIndex));
+          strokeEraseChangedRef.current = true;
+        }
+        return;
+      }
+
+      if (!currentStroke) return;
 
       const position = getPointerPosition(event);
       if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
@@ -199,35 +340,81 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
     };
 
     const stopDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
-      if (readOnly || !isDrawing || !currentStroke) return;
+      if (readOnly || !isDrawingRef.current) return;
 
-      setStrokes((previous) => [...previous, currentStroke]);
+      if (tool === 'strokeEraser') {
+        if (strokeEraseChangedRef.current && strokeEraseStartRef.current) {
+          recordUndoSnapshot(strokeEraseStartRef.current);
+        }
+        strokeEraseStartRef.current = null;
+        strokeEraseChangedRef.current = false;
+        isDrawingRef.current = false;
+        if (canvasRef.current?.hasPointerCapture(event.pointerId)) {
+          canvasRef.current.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
+      if (!currentStroke) return;
+
+      const previousStrokes = strokesRef.current;
+      recordUndoSnapshot(previousStrokes);
+      applyStrokes([...previousStrokes, currentStroke]);
       setCurrentStroke(null);
-      setIsDrawing(false);
+      currentStrokeRef.current = null;
+      isDrawingRef.current = false;
       if (canvasRef.current?.hasPointerCapture(event.pointerId)) {
         canvasRef.current.releasePointerCapture(event.pointerId);
       }
     };
 
     useImperativeHandle(ref, () => ({
-      undo: () => setStrokes((previous) => previous.slice(0, -1)),
-      clear: () => {
-        setStrokes([]);
-        setCurrentStroke(null);
+      undo: () => {
+        const currentStrokes = strokesRef.current;
+        if (undoStackRef.current.length === 0 && currentStrokes.length === 0) return;
+        const previousStrokes = undoStackRef.current.pop() ?? currentStrokes.slice(0, -1);
+        redoStackRef.current = [...redoStackRef.current, currentStrokes].slice(-MAX_HISTORY_STEPS);
+        applyStrokes(previousStrokes);
+        notifyHistoryChanged();
       },
-      hasStrokes: () => strokes.length > 0 || currentStroke !== null,
+      redo: () => {
+        const nextStrokes = redoStackRef.current.pop();
+        if (!nextStrokes) return;
+        undoStackRef.current = [...undoStackRef.current, strokesRef.current].slice(-MAX_HISTORY_STEPS);
+        applyStrokes(nextStrokes);
+        notifyHistoryChanged();
+      },
+      clear: () => {
+        applyStrokes([]);
+        setCurrentStroke(null);
+        currentStrokeRef.current = null;
+        resetHistory();
+      },
+      clearWithHistory: () => {
+        if (strokesRef.current.length === 0) return;
+        recordUndoSnapshot(strokesRef.current);
+        applyStrokes([]);
+        setCurrentStroke(null);
+        currentStrokeRef.current = null;
+      },
+      canUndo: () => undoStackRef.current.length > 0 || strokesRef.current.length > 0,
+      canRedo: () => redoStackRef.current.length > 0,
+      hasStrokes: () => strokesRef.current.length > 0 || currentStrokeRef.current !== null,
       toDataURL: () => canvasRef.current?.toDataURL('image/png') ?? null,
-      getStrokes: () => strokes,
+      getStrokes: () => strokesRef.current,
       setStrokes: (nextStrokes) => {
         setCurrentStroke(null);
-        setStrokes(nextStrokes);
+        currentStrokeRef.current = null;
+        applyStrokes(nextStrokes);
+        resetHistory();
       },
-    }), [currentStroke, strokes]);
+    }));
 
+    const previewDiameter = tool === 'strokeEraser' ? 28 : eraserWidth;
     const previewStyle = eraserPreviewPoint
       ? {
-          left: eraserPreviewPoint.x - eraserWidth / 2,
-          top: eraserPreviewPoint.y - eraserWidth / 2,
+          left: eraserPreviewPoint.x - previewDiameter / 2,
+          top: eraserPreviewPoint.y - previewDiameter / 2,
         }
       : null;
 
@@ -245,27 +432,31 @@ export const HandwritingCanvas = forwardRef<HandwritingCanvasRef, HandwritingCan
             height: '100%',
             display: 'block',
             touchAction: readOnly ? 'auto' : 'none',
-            cursor: readOnly ? 'default' : tool === 'eraser' ? 'cell' : 'crosshair',
+            cursor: readOnly ? 'default' : tool === 'pen' ? 'crosshair' : 'cell',
           }}
           onPointerDown={readOnly ? undefined : startDrawing}
           onPointerMove={readOnly ? undefined : (event) => {
-            if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
+            if (tool !== 'pen') setEraserPreviewPoint(getPreviewPosition(event));
             draw(event);
           }}
           onPointerUp={readOnly ? undefined : stopDrawing}
           onPointerCancel={readOnly ? undefined : stopDrawing}
           onPointerEnter={readOnly ? undefined : (event) => {
-            if (tool === 'eraser') setEraserPreviewPoint(getPreviewPosition(event));
+            if (tool !== 'pen') setEraserPreviewPoint(getPreviewPosition(event));
           }}
           onPointerLeave={readOnly ? undefined : () => setEraserPreviewPoint(null)}
         />
-        {!readOnly && tool === 'eraser' && previewStyle && (
+        {!readOnly && tool !== 'pen' && previewStyle && (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute rounded-full border-2 border-primary/80 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
+            className={`pointer-events-none absolute rounded-full border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.9)] ${
+              tool === 'strokeEraser'
+                ? 'border-fuchsia-700/80 bg-fuchsia-500/10'
+                : 'border-primary/80 bg-primary/10'
+            }`}
             style={{
-              width: eraserWidth,
-              height: eraserWidth,
+              width: previewDiameter,
+              height: previewDiameter,
               ...previewStyle,
             }}
           />

@@ -94,17 +94,25 @@ test.describe('ドリル演習', () => {
 
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     const undoButton = page.getByRole('button', { name: '計算用紙を戻す' });
+    const redoButton = page.getByRole('button', { name: '計算用紙をやり直す' });
     const eraserButton = page.getByRole('button', { name: '消しゴムで消す' });
+    const strokeEraserButton = page.getByRole('button', { name: '線ごと消す' });
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
+    await expect(redoButton).toBeDisabled({ timeout: 5000 });
     await expect(eraserButton).toBeEnabled({ timeout: 5000 });
+    await expect(strokeEraserButton).toBeEnabled({ timeout: 5000 });
     await expect(page.locator('section[aria-hidden="false"]').getByText('Q1/3')).toBeVisible();
     await expect(page.getByRole('button', { name: 'ペンの太さ: 標準' })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('button', { name: '消しゴムのサイズ: 中' })).toHaveAttribute('aria-pressed', 'false');
 
     await page.getByRole('button', { name: 'ペンの太さ: かなり細い' }).click();
     await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'ペン色: 赤' }).click();
+    await expect(page.getByRole('button', { name: 'ペン色: 赤' })).toHaveAttribute('aria-pressed', 'true');
     const savedStrokeWidth = await page.evaluate(() => window.localStorage.getItem('formix:scratch-paper-stroke-width'));
+    const savedPenColor = await page.evaluate(() => window.localStorage.getItem('formix:scratch-paper-pen-color'));
     expect(savedStrokeWidth).toBe('extraThin');
+    expect(savedPenColor).toBe('red');
 
     const canvas = page.locator('section[aria-hidden="false"] canvas');
     const box = await canvas.boundingBox();
@@ -115,7 +123,37 @@ test.describe('ドリル演習', () => {
     await page.mouse.move(box.x + 160, box.y + 120);
     await page.mouse.up();
     await expect(undoButton).toBeEnabled({ timeout: 5000 });
+    await undoButton.click();
+    await expect(redoButton).toBeEnabled({ timeout: 5000 });
+    await redoButton.click();
+    await expect(redoButton).toBeDisabled({ timeout: 5000 });
     await expect(eraserButton).toBeEnabled({ timeout: 5000 });
+
+    await strokeEraserButton.click();
+    await expect(strokeEraserButton).toHaveAttribute('aria-pressed', 'true');
+    await page.mouse.click(box.x + 92, box.y + 72);
+    const readStrokePixel = () => canvas.evaluate((element) => {
+      const scratchCanvas = element as HTMLCanvasElement;
+      const context = scratchCanvas.getContext('2d');
+      const rect = scratchCanvas.getBoundingClientRect();
+      if (!context) throw new Error('Scratch paper canvas context was unavailable');
+      const scaleX = scratchCanvas.width / rect.width;
+      const scaleY = scratchCanvas.height / rect.height;
+      return Array.from(context.getImageData(
+        Math.round(92 * scaleX),
+        Math.round(72 * scaleY),
+        1,
+        1,
+      ).data);
+    });
+    await expect.poll(readStrokePixel).toEqual([255, 255, 255, 255]);
+    await undoButton.click();
+    await expect.poll(readStrokePixel).not.toEqual([255, 255, 255, 255]);
+
+    await page.getByRole('button', { name: '計算用紙を全部消す' }).click();
+    await expect.poll(readStrokePixel).toEqual([255, 255, 255, 255]);
+    await undoButton.click();
+    await expect.poll(readStrokePixel).not.toEqual([255, 255, 255, 255]);
 
     await eraserButton.click();
     await expect(eraserButton).toHaveAttribute('aria-pressed', 'true');
@@ -166,6 +204,7 @@ test.describe('ドリル演習', () => {
     await page.getByRole('button', { name: '計算用紙を開く' }).click();
     await expect(undoButton).toBeDisabled({ timeout: 5000 });
     await expect(page.getByRole('button', { name: 'ペンの太さ: かなり細い' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: 'ペン色: 赤' })).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('button', { name: '計算用紙を閉じる' }).click();
 
     await page.locator('button.w-full.text-left').first().click();

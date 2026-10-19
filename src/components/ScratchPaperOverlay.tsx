@@ -1,16 +1,19 @@
 'use client';
 
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Eraser, FilePlus2, PenLine, RotateCcw, Trash2, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Eraser, FilePlus2, MousePointer2, PenLine, RotateCcw, RotateCw, Trash2, X } from 'lucide-react';
 import {
   HandwritingCanvas,
   HandwritingCanvasRef,
+  type HandwritingHistoryState,
   type HandwritingStroke,
+  type HandwritingTool,
 } from '@/components/HandwritingCanvas';
 import { MathDisplay } from '@/components/MathDisplay';
 import { Button } from '@/components/ui/button';
 
 const STROKE_WIDTH_STORAGE_KEY = 'formix:scratch-paper-stroke-width';
+const PEN_COLOR_STORAGE_KEY = 'formix:scratch-paper-pen-color';
 const STROKE_WIDTH_OPTIONS = [
   { id: 'standard', label: '標準', width: 4 },
   { id: 'thin', label: '細い', width: 2.5 },
@@ -21,14 +24,25 @@ const ERASER_SIZE_OPTIONS = [
   { id: 'medium', label: '中', width: 28 },
   { id: 'large', label: '大', width: 42 },
 ] as const;
+const PEN_COLOR_OPTIONS = [
+  { id: 'black', label: '黒', color: '#111827' },
+  { id: 'blue', label: '青', color: '#2563EB' },
+  { id: 'red', label: '赤', color: '#DC2626' },
+  { id: 'green', label: '緑', color: '#15803D' },
+] as const;
 const MAX_SCRATCH_PAGES = 10;
 
 type StrokeWidthId = (typeof STROKE_WIDTH_OPTIONS)[number]['id'];
 type EraserSizeId = (typeof ERASER_SIZE_OPTIONS)[number]['id'];
-type ScratchTool = 'pen' | 'eraser';
+type PenColorId = (typeof PEN_COLOR_OPTIONS)[number]['id'];
+type ScratchTool = HandwritingTool;
 
 function isStrokeWidthId(value: string | null): value is StrokeWidthId {
   return STROKE_WIDTH_OPTIONS.some((option) => option.id === value);
+}
+
+function isPenColorId(value: string | null): value is PenColorId {
+  return PEN_COLOR_OPTIONS.some((option) => option.id === value);
 }
 
 interface ScratchPaperOverlayProps {
@@ -59,11 +73,21 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
     const [eraserSizeId, setEraserSizeId] = useState<EraserSizeId>('medium');
     const [activePage, setActivePage] = useState(0);
     const [internalPages, setInternalPages] = useState<HandwritingStroke[][]>([[]]);
+    const [historyState, setHistoryState] = useState<HandwritingHistoryState>({
+      canUndo: false,
+      canRedo: false,
+    });
     const [strokeWidthId, setStrokeWidthId] = useState<StrokeWidthId>(() => {
       if (typeof window === 'undefined') return 'standard';
 
       const savedStrokeWidth = window.localStorage.getItem(STROKE_WIDTH_STORAGE_KEY);
       return isStrokeWidthId(savedStrokeWidth) ? savedStrokeWidth : 'standard';
+    });
+    const [penColorId, setPenColorId] = useState<PenColorId>(() => {
+      if (typeof window === 'undefined') return 'black';
+
+      const savedPenColor = window.localStorage.getItem(PEN_COLOR_STORAGE_KEY);
+      return isPenColorId(savedPenColor) ? savedPenColor : 'black';
     });
     const canvasRef = useRef<HandwritingCanvasRef>(null);
     const sourcePages = pages ?? internalPages;
@@ -74,6 +98,7 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
     const currentPageHasStrokes = currentPageStrokes.length > 0;
     const hasStrokes = normalizedPages.some((page) => page.length > 0);
     const selectedStrokeWidth = STROKE_WIDTH_OPTIONS.find((option) => option.id === strokeWidthId)?.width ?? 4;
+    const selectedStrokeColor = PEN_COLOR_OPTIONS.find((option) => option.id === penColorId)?.color ?? '#111827';
     const selectedEraserWidth = ERASER_SIZE_OPTIONS.find((option) => option.id === eraserSizeId)?.width ?? 28;
 
     const replaceActivePage = (strokes: HandwritingStroke[]) => {
@@ -85,12 +110,16 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
 
     useImperativeHandle(ref, () => ({
       undo: () => canvasRef.current?.undo(),
+      redo: () => canvasRef.current?.redo(),
       clear: () => {
         canvasRef.current?.clear();
         updatePages([[]]);
         setActivePage(0);
         setActiveTool('pen');
       },
+      clearWithHistory: () => canvasRef.current?.clearWithHistory(),
+      canUndo: () => canvasRef.current?.canUndo() ?? false,
+      canRedo: () => canvasRef.current?.canRedo() ?? false,
       hasStrokes: () => canvasRef.current?.hasStrokes() ?? false,
       toDataURL: () => null,
       getStrokes: () => canvasRef.current?.getStrokes() ?? [],
@@ -120,11 +149,15 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
     }, [strokeWidthId]);
 
     useEffect(() => {
+      window.localStorage.setItem(PEN_COLOR_STORAGE_KEY, penColorId);
+    }, [penColorId]);
+
+    useEffect(() => {
       onChange?.(hasStrokes);
     }, [hasStrokes, onChange]);
 
     const handleClear = () => {
-      canvasRef.current?.clear();
+      canvasRef.current?.clearWithHistory();
       setActiveTool('pen');
     };
 
@@ -162,6 +195,40 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
             </div>
 
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              <div
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
+                aria-label="ペンの色"
+              >
+                {PEN_COLOR_OPTIONS.map((option) => {
+                  const isSelected = penColorId === option.id;
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      tabIndex={open ? 0 : -1}
+                      aria-label={`ペン色: ${option.label}`}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setPenColorId(option.id);
+                        setActiveTool('pen');
+                      }}
+                      className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                        isSelected
+                          ? 'bg-white shadow-sm ring-2 ring-primary/70'
+                          : 'hover:bg-white'
+                      }`}
+                    >
+                      <span
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-black/15"
+                        style={{ backgroundColor: option.color }}
+                      >
+                        {isSelected && <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
               <div
                 className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
                 aria-label="ペンの太さ"
@@ -220,6 +287,20 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 >
                   <Eraser className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  tabIndex={open ? 0 : -1}
+                  aria-label="線ごと消す"
+                  aria-pressed={activeTool === 'strokeEraser'}
+                  onClick={() => setActiveTool('strokeEraser')}
+                  className={`flex h-8 w-9 items-center justify-center rounded-md transition-colors ${
+                    activeTool === 'strokeEraser'
+                      ? 'bg-fuchsia-600 text-white shadow-sm ring-2 ring-fuchsia-200 dark:bg-fuchsia-500 dark:ring-fuchsia-900'
+                      : 'text-gray-600 hover:bg-fuchsia-50 hover:text-fuchsia-900 dark:text-gray-300 dark:hover:bg-fuchsia-950 dark:hover:text-fuchsia-100'
+                  }`}
+                >
+                  <MousePointer2 className="h-4 w-4" />
+                </button>
               </div>
               <div
                 className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
@@ -255,18 +336,28 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
                 variant="outline"
                 size="sm"
                 tabIndex={open ? 0 : -1}
-                disabled={!currentPageHasStrokes}
+                disabled={!historyState.canUndo}
                 aria-label="計算用紙を戻す"
                 onClick={() => {
                   canvasRef.current?.undo();
-                  if (canvasRef.current && !canvasRef.current.hasStrokes()) {
-                    setActiveTool('pen');
-                  }
                 }}
                 className="h-10 px-3"
               >
                 <RotateCcw className="h-4 w-4 md:mr-2" />
                 <span className="hidden md:inline">戻す</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                tabIndex={open ? 0 : -1}
+                disabled={!historyState.canRedo}
+                aria-label="計算用紙をやり直す"
+                onClick={() => canvasRef.current?.redo()}
+                className="h-10 px-3"
+              >
+                <RotateCw className="h-4 w-4 md:mr-2" />
+                <span className="hidden md:inline">やり直す</span>
               </Button>
               <Button
                 type="button"
@@ -380,9 +471,10 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
               initialStrokes={currentPageStrokes}
               onStrokesChange={replaceActivePage}
               strokeWidth={selectedStrokeWidth}
-              strokeColor="#111827"
+              strokeColor={selectedStrokeColor}
               tool={activeTool}
               eraserWidth={selectedEraserWidth}
+              onHistoryChange={setHistoryState}
               className="h-full w-full !rounded-none !border-gray-200 !shadow-none"
             />
           </div>
