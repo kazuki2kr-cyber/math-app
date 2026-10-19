@@ -56,3 +56,9 @@ jobs:
 
       - name: Run unit and Firestore security tests
         run: npm test
+
+      - name: Install browser for scratch paper regression test
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify scratch paper editing and result submission
+        run: npm run test:e2e:emu -- tests/e2e/drill.spec.ts --grep 計算用紙は問題ごと
