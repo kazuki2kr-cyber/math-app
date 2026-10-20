@@ -9,6 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { kanjiBattleCall, kanjiBattleError, KanjiBattleRoom } from '@/lib/kanjiBattle';
 import { useBattleClock } from '@/hooks/useBattleClock';
+import { CheckCircle2, Users } from 'lucide-react';
+import { BattleScene } from '../../BattleScene';
+import styles from '../../battle-scene.module.css';
 
 export default function KanjiBattleRoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -73,21 +76,31 @@ export default function KanjiBattleRoomPage() {
   const waiting = room?.status === 'waiting' && room.phase === 'waiting';
   const canStart = waiting && players.length >= 2 && players.length <= 4 && players.every(p => p.ready && p.questionsReady);
   return (
-    <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
+    <BattleScene variant="lobby">
       <main className="mx-auto max-w-3xl space-y-5">
         <Button variant="ghost" disabled={busy} onClick={leave}>{room?.hostUid === user?.uid ? 'ルームを解散して戻る' : '退出して戻る'}</Button>
+        <header className={styles.lobbyHeader}>
+          <p className={styles.eyebrow}>MATCH LOBBY</p>
+          <h1 className={styles.heading}>準備ができたら、いざ勝負。</h1>
+          <p className={styles.subtitle}>用意ができたら「準備完了」。全員の準備後、ホストが対戦を開始します。</p>
+        </header>
         {error && <div role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}
           {isMember && !prepared && <Button variant="outline" onClick={() => { setError(null); setRetry(v => v + 1); }}>問題の読み込みを再試行</Button>}
         </div>}
         {loading ? <p role="status">ルームを読み込んでいます…</p> : room?.schemaVersion !== 2 ? <p>新しい対戦方式に更新されました。一覧から新しいルームに参加してください。</p>
           : room.status === 'cancelled' ? <p>ルームは解散されました。</p> : (
-          <Card><CardHeader><CardTitle>{room.unitTitle}</CardTitle><p>参加者 {players.length}/4人・10問</p></CardHeader>
+          <Card className={styles.panel}><CardHeader><CardTitle className="text-xl font-bold">{room.unitTitle}</CardTitle><p className="text-sm text-muted-foreground">参加者 {players.length}/4人・10問</p></CardHeader>
             <CardContent className="space-y-5">
-              <ul className="space-y-3">{players.map(p => <li key={p.uid} className="flex justify-between rounded-xl bg-amber-50 p-4">
-                <span>{p.name}{p.uid === room.hostUid ? '（ホスト）' : ''}</span><span>{p.ready ? '準備完了' : p.questionsReady ? '待機中' : '問題を読み込み中'}</span>
+              <ul className={styles.players}>{players.map(p => <li key={p.uid} className={`${styles.player} ${p.ready ? styles.playerReady : ''}`}>
+                <span className={styles.avatar} aria-hidden="true">{Array.from(p.name || '友')[0]}</span>
+                <div className="min-w-0"><p className={styles.playerName}>{p.name}{p.uid === room.hostUid ? '（ホスト）' : ''}{p.uid === user?.uid ? '・あなた' : ''}</p>
+                  <p className={styles.playerStatus}>{p.ready && <CheckCircle2 size={14} aria-hidden="true" />}{p.ready ? '準備完了' : p.questionsReady ? '待機中' : '問題を読み込み中'}</p>
+                </div>
+              </li>)}{Array.from({ length: Math.max(0, 4 - players.length) }, (_, index) => <li key={`empty-${index}`} className={`${styles.player} ${styles.emptyPlayer}`}>
+                <span className={styles.avatar}><Users size={20} aria-hidden="true" /></span><span className="text-sm">参加者を待っています</span>
               </li>)}</ul>
-              {room.phase === 'starting' ? <p role="status" className="text-center text-2xl font-bold">{synchronized ? `開始まで ${Math.max(0, Math.ceil(((room.phaseDeadlineMs || 0) - nowMs) / 1000))}秒` : '時刻を確認しています…'}</p> : (
-                <div className="flex flex-wrap gap-3">
+              {room.phase === 'starting' ? <p role="status" className={`${styles.status} text-2xl font-bold`}>{synchronized ? `開始まで ${Math.max(0, Math.ceil(((room.phaseDeadlineMs || 0) - nowMs) / 1000))}秒` : '時刻を確認しています…'}</p> : (
+                <div className={styles.roomActions}>
                   <Button disabled={busy || !prepared || !waiting || !isMember || !synchronized} onClick={() => run('readyKanjiBattleRoom', { ready: !me?.ready })}>{me?.ready ? '準備を取り消す' : '準備完了'}</Button>
                   {room.hostUid === user?.uid && <Button disabled={busy || !canStart || !synchronized} onClick={() => run('startKanjiBattleRoom')}>対戦を開始</Button>}
                 </div>
@@ -97,6 +110,6 @@ export default function KanjiBattleRoomPage() {
           </Card>
         )}
       </main>
-    </div>
+    </BattleScene>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { BattleScene } from '../../../BattleScene';
+import styles from '../../../battle-scene.module.css';
 import { onValue, ref } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Clock, Medal, Swords, Trophy, XCircle } from 'lucide-react';
@@ -128,60 +130,58 @@ export default function KanjiBattleResultPage() {
   const myQuestionResults: QuestionResult[] = myPlayerScore?.questionResults || [];
 
   return (
-    <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
+    <BattleScene variant="result">
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-        <div className="flex flex-col gap-4 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <Trophy className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-gray-900">対戦結果</h1>
-              <p className="text-xs font-semibold text-muted-foreground">{room?.unitTitle || '漢字対戦'} / Room ID: {roomId}</p>
-            </div>
-          </div>
-          <Button variant="ghost" onClick={() => router.push('/yamato/battle')} className="justify-start text-muted-foreground">
+        <div className="flex justify-between items-center gap-3">
+          <p className={styles.eyebrow}>KANJI ARENA / RESULT</p>
+          <Button variant="ghost" onClick={() => router.push('/yamato/battle')} className="text-muted-foreground">
             <ArrowLeft className="mr-2 h-4 w-4" />
             対戦トップへ
           </Button>
         </div>
+        <header className={styles.ceremony}>
+          <Trophy className={styles.ceremonyIcon} aria-hidden="true" />
+          <p className={styles.eyebrow}>{room?.finalizedAt ? myRank === 1 && !finalizedMyResult?.abandoned ? 'VICTORY' : 'BATTLE COMPLETE' : 'BATTLE RESULT'}</p>
+          <h1 className={styles.heading}>対戦結果</h1>
+          <p className={styles.subtitle}>{room?.unitTitle || '漢字対戦'}</p>
+        </header>
 
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#526052] border-t-amber-500" />
           </div>
         ) : !room ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 p-12 text-center text-sm font-bold text-muted-foreground">
+          <div className="rounded-2xl border border-dashed border-[#526976] bg-[#172d3b] p-12 text-center text-sm font-bold text-muted-foreground">
             ルームが見つかりません。
           </div>
         ) : (
           <>
             {/* 自分のサマリー */}
-            <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="rounded-xl bg-amber-50 p-4">
-                  <p className="text-xs font-bold text-amber-700">あなたの順位</p>
-                  <p className="mt-1 text-3xl font-black text-gray-900">{myRank ? `${myRank}位` : '-'}</p>
+            <div className="rounded-2xl border border-[#526052] bg-[#172d3b] p-5 shadow-sm">
+              <div className={styles.summary}>
+                <div className="rounded-xl bg-[#2c3b40] p-4">
+                  <p className="text-xs font-bold text-[#f3d593]">あなたの順位</p>
+                  <p className="mt-1 text-3xl font-black text-[#f0f4f7]">{myRank ? `${myRank}位` : '-'}</p>
                 </div>
-                <div className="rounded-xl bg-gray-50 p-4">
+                <div className="rounded-xl bg-[#132733] p-4">
                   <p className="text-xs font-bold text-muted-foreground">スコア</p>
-                  <p className="mt-1 text-3xl font-black text-gray-900">{myResult?.totalScore ?? '-'}</p>
+                  <p className="mt-1 text-3xl font-black text-[#f0f4f7]">{myResult?.totalScore ?? '-'}</p>
                 </div>
-                <div className="rounded-xl bg-gray-50 p-4">
+                <div className="rounded-xl bg-[#132733] p-4">
                   <p className="text-xs font-bold text-muted-foreground">正答率</p>
-                  <p className="mt-1 text-3xl font-black text-gray-900">
+                  <p className="mt-1 text-3xl font-black text-[#f0f4f7]">
                     {myResult ? `${Math.round((myResult.correctCount / Math.max(1, myResult.totalQuestions)) * 100)}%` : '-'}
                   </p>
                 </div>
-                <div className="rounded-xl bg-gray-50 p-4">
+                <div className="rounded-xl bg-[#132733] p-4">
                   <p className="text-xs font-bold text-muted-foreground">対戦XP</p>
-                  <p className={`mt-1 text-3xl font-black ${myXpDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  <p className={`mt-1 text-3xl font-black ${myXpDelta >= 0 ? 'text-[#a5ebc6]' : 'text-[#ffb5b5]'}`}>
                     {myRankIndex >= 0 ? `${myXpDelta >= 0 ? '+' : ''}${myXpDelta}` : '-'}
                   </p>
                 </div>
               </div>
               {!allSubmitted && (
-                <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm font-bold text-amber-800">
+                <div className="mt-4 rounded-xl border border-[#526052] bg-[#2c3b40] p-3 text-sm font-bold text-[#f3d593]">
                   {finalizing ? '結果を集計しています...' : `結果を待っています ${results.length}/${participants.length}`}
                 </div>
               )}
@@ -192,53 +192,11 @@ export default function KanjiBattleResultPage() {
               )}
             </div>
 
-            {/* 問題別スコア内訳 */}
-            {myQuestionResults.length > 0 && (
-              <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
-                <h2 className="mb-4 text-lg font-black text-gray-900">問題別スコア</h2>
-                <div className="space-y-2">
-                  {myQuestionResults.map((qr, idx) => (
-                    <div
-                      key={qr.questionId}
-                      className={`grid gap-2 rounded-xl border p-4 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center ${
-                        qr.isCorrect ? 'border-green-100 bg-green-50/50' : 'border-gray-100 bg-gray-50/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-center">
-                        {qr.isCorrect
-                          ? <CheckCircle2 className="h-5 w-5 text-green-600" />
-                          : <XCircle className="h-5 w-5 text-red-400" />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-muted-foreground mb-0.5">Q{idx + 1}</p>
-                        <p
-                          className="truncate text-sm font-bold text-gray-900"
-                          dangerouslySetInnerHTML={{ __html: qr.questionText }}
-                        />
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground font-semibold">
-                          <span>認識: <span className={qr.isCorrect ? 'text-green-700' : 'text-red-600'}>{qr.recognizedText}</span></span>
-                          {!qr.isCorrect && <span>正解: <span className="text-gray-700">{qr.correctText}</span></span>}
-                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{(qr.responseMs / 1000).toFixed(1)}秒</span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-lg font-black text-gray-900">{qr.questionScore}点</p>
-                        <p className="text-xs text-muted-foreground font-semibold">
-                          基礎 {qr.baseScore}
-                          {qr.isCorrect && <span className="ml-1 text-amber-600">+ 速度 {qr.speedBonus}</span>}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* ランキング */}
-            <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+            <div className="rounded-2xl border border-[#526052] bg-[#172d3b] p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
-                <Swords className="h-5 w-5 text-amber-500" />
-                <h2 className="text-lg font-black text-gray-900">ランキング</h2>
+                <Swords className="h-5 w-5 text-[#efc97c]" />
+                <h2 className="text-lg font-black text-[#f0f4f7]">ランキング</h2>
               </div>
               <div className="space-y-3">
                 {results.map((result, index) => {
@@ -247,32 +205,32 @@ export default function KanjiBattleResultPage() {
                   return (
                     <div
                       key={result.uid}
-                      className={`grid gap-3 rounded-xl border p-4 sm:grid-cols-[64px_minmax(0,1fr)_120px_120px_120px] sm:items-center ${
-                        result.uid === user?.uid ? 'border-amber-300 bg-amber-50' : 'border-gray-100 bg-white'
+                      className={`${styles.rankingRow} grid gap-3 rounded-xl border p-4 items-center ${
+                        result.uid === user?.uid ? 'border-[#c9a969] bg-[#2c3b40]' : 'border-[#38505f] bg-[#172d3b]'
                       }`}
                     >
-                      <div className="text-center text-lg font-black text-gray-700">
+                      <div className="text-center text-lg font-black text-[#c5d4dd]">
                         {result.rank && result.rank <= 3 && !result.abandoned ? (
-                          <Medal className={`mx-auto h-6 w-6 ${result.rank === 1 ? 'text-yellow-500' : result.rank === 2 ? 'text-gray-400' : 'text-amber-700'}`} />
+                          <><Medal aria-hidden="true" className={`mx-auto h-6 w-6 ${result.rank === 1 ? 'text-[#f3d593]' : result.rank === 2 ? 'text-[#bacbd7]' : 'text-[#f3d593]'}`} /><span className="mt-1 block text-xs">{result.rank}位</span></>
                         ) : `${result.rank ?? index + 1}位`}
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-gray-900">{result.name}</p>
+                        <p className="truncate text-sm font-black text-[#f0f4f7]">{result.name}</p>
                         <p className="text-xs font-bold text-muted-foreground">
                           {result.abandoned ? '離脱' : `${result.correctCount}/${result.totalQuestions}問正解`}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 text-sm font-black text-gray-800">
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <div className="flex items-center gap-2 text-sm font-black text-[#f0f4f7]">
+                        <CheckCircle2 className="h-4 w-4 text-[#a5ebc6]" />
                         {Math.round((result.correctCount / Math.max(1, result.totalQuestions)) * 100)}%
                       </div>
-                      <div className="flex items-center gap-2 text-sm font-black text-gray-800">
-                        <Clock className="h-4 w-4 text-amber-500" />
+                      <div className="flex items-center gap-2 text-sm font-black text-[#f0f4f7]">
+                        <Clock className="h-4 w-4 text-[#efc97c]" />
                         {Math.round(result.totalTimeMs / 1000)}秒
                       </div>
-                      <div className="text-right text-lg font-black text-gray-900">
+                      <div className="text-right text-lg font-black text-[#f0f4f7]">
                         {result.totalScore}点
-                        <p className={`text-xs ${xpDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        <p className={`text-xs ${xpDelta >= 0 ? 'text-[#a5ebc6]' : 'text-[#ffb5b5]'}`}>
                           XP {xpDelta >= 0 ? '+' : ''}{xpDelta}
                         </p>
                       </div>
@@ -281,9 +239,53 @@ export default function KanjiBattleResultPage() {
                 })}
               </div>
             </div>
+
+            {/* 問題別スコア内訳 */}
+            {myQuestionResults.length > 0 && (
+              <div className="rounded-2xl border border-[#526052] bg-[#172d3b] p-5 shadow-sm">
+                <h2 className="mb-4 text-lg font-black text-[#f0f4f7]">問題別スコア</h2>
+                <div className="space-y-2">
+                  {myQuestionResults.map((qr, idx) => (
+                    <div
+                      key={qr.questionId}
+                      className={`grid gap-2 rounded-xl border p-4 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center ${
+                        qr.isCorrect ? 'border-[#406e58] bg-[#17392f]' : 'border-[#38505f] bg-[#132733]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center">
+                        {qr.isCorrect
+                          ? <CheckCircle2 className="h-5 w-5 text-[#a5ebc6]" />
+                          : <XCircle className="h-5 w-5 text-[#ffb5b5]" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-muted-foreground mb-0.5">Q{idx + 1}</p>
+                        <p
+                          className="break-words text-sm font-bold text-[#f0f4f7]"
+                          dangerouslySetInnerHTML={{ __html: qr.questionText }}
+                        />
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground font-semibold">
+                          <span>認識: <span className={qr.isCorrect ? 'text-[#a5ebc6]' : 'text-[#ffb5b5]'}>{qr.recognizedText}</span></span>
+                          {!qr.isCorrect && <span>正解: <span className="text-[#c5d4dd]">{qr.correctText}</span></span>}
+                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{(qr.responseMs / 1000).toFixed(1)}秒</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-black text-[#f0f4f7]">{qr.questionScore}点</p>
+                        <p className="text-xs text-muted-foreground font-semibold">
+                          基礎 {qr.baseScore}
+                          {qr.isCorrect && <span className="ml-1 text-[#efc97c]">+ 速度 {qr.speedBonus}</span>}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
           </>
         )}
+        {!loading && room && <Button className="min-h-12 self-center px-8 font-bold" onClick={() => router.push('/yamato/battle')}><Swords className="mr-2 h-4 w-4" />次の対戦へ</Button>}
       </main>
-    </div>
+    </BattleScene>
   );
 }

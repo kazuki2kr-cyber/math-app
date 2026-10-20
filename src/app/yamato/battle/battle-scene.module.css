@@ -1,0 +1,102 @@
+.scene {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  padding: 24px 16px 56px;
+  background: #0c1723;
+  color: #f0f4f7;
+  color-scheme: dark;
+  --background: #172d3b;
+  --foreground: #f0f4f7;
+  --card: #172d3b;
+  --card-foreground: #f0f4f7;
+  --muted: #223e4d;
+  --muted-foreground: #bacbd7;
+  --primary: #efc97c;
+  --primary-foreground: #291e0d;
+  --border: #3a5260;
+  --input: #3a5260;
+  --ring: #efc97c;
+}
+.scene::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: 0 0 auto;
+  height: 820px;
+  max-height: 100%;
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.lobby::before { background-image: linear-gradient(#0c172388, #0c1723b8 45%, #0c1723), url('/images/kanji-battle/arena.webp'); }
+.play::before { background-image: linear-gradient(#0c172373, #0c172399 60%, #0c1723), url('/images/kanji-battle/arena-interior.webp'); }
+.result::before { background-image: linear-gradient(#0c17234d, #0c1723b3 50%, #0c1723), url('/images/kanji-battle/ceremony.webp'); }
+.scene [data-slot='button'] { min-height: 44px; }
+.scene [data-slot='button']:focus-visible { outline: 3px solid #f3d593; outline-offset: 3px; }
+.scene [data-slot='button']:disabled { opacity: 1; background: #263c49; color: #bacbd7; border-color: #526976; box-shadow: none; }
+.eyebrow { color: #f3d593; font: 700 11px/1.5 sans-serif; letter-spacing: .22em; }
+.heading { color: #fff4df; font-family: 'Yu Mincho', 'Hiragino Mincho ProN', serif; font-size: clamp(28px, 4vw, 40px); font-weight: 800; letter-spacing: .08em; margin-top: 8px; }
+.subtitle { color: #d4e0e7; font-size: 13px; line-height: 1.8; margin-top: 10px; overflow-wrap: anywhere; }
+.lobbyHeader { padding: 32px 12px; }
+.panel { border: 1px solid #51616a; border-radius: 20px; background: #172d3b; color: #f0f4f7; box-shadow: 0 12px 36px #0003; }
+.players { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.player { display: flex; align-items: center; gap: 12px; padding: 18px; min-width: 0; border-radius: 14px; border: 1px solid #3e5664; background: #132733; }
+.playerReady { border-color: #5b9f85; background: #17392f; }
+.avatar { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 12px; background: #294450; color: #f3d593; font-weight: 800; }
+.playerName { font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.playerStatus { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 12px; color: #c5d4dd; }
+.playerReady .playerStatus { color: #a5ebc6; }
+.emptyPlayer { border-style: dashed; background: #13273380; color: #bacbd7; }
+.roomActions { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 8px; }
+.roomActions > button { flex: 1; min-width: 150px; min-height: 52px !important; font-size: 16px; font-weight: 800; }
+.status { padding: 32px 24px; text-align: center; border: 1px solid #65705b; border-radius: 18px; background: #172d3b; color: #f3d593; }
+.ceremony { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px 20px; border-radius: 22px; border: 1px solid #bca16b77; background: #0c172333; }
+.ceremonyIcon { color: #f3d593; width: 44px; height: 44px; margin-bottom: 12px; }
+.summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.summary > div { border: 1px solid #3e5664; }
+.rankingRow { grid-template-columns: 48px minmax(0, 1fr) repeat(3, 86px); }
+.answerCard {
+  /* Solid, opaque paper surface: background artwork cannot affect ink contrast. */
+  color-scheme: light;
+  --background: #fff;
+  --foreground: #172534;
+  --card: #fff;
+  --card-foreground: #172534;
+  --muted: #f2f5f5;
+  --muted-foreground: #586575;
+  --border: #dce3e7;
+  --input: #dce3e7;
+  --primary: #285b58;
+  --primary-foreground: #fff;
+  background: #fff;
+  border: 1px solid #d7c79d;
+  border-radius: 18px;
+  box-shadow: 0 12px 36px #0004;
+  padding-top: 0;
+  gap: 12px;
+}
+.answerCard [data-slot='card-header'], .answerCard [data-slot='card-content'] { padding-left: 32px; padding-right: 32px; }
+.answerCard [data-slot='card-header'] { padding-top: 24px; }
+.answerCard [data-slot='button']:disabled { background: #e4e9e8; border-color: #c5cdca; color: #566660; }
+.playTop { background: #132733; border: 1px solid #435867; border-radius: 14px; padding: 10px 14px; }
+.progressTrack { background: #29404e; height: 8px; border-radius: 999px; overflow: hidden; }
+.progressFill { background: #efc97c; height: 100%; }
+.timer { min-width: 120px; justify-content: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 639px) {
+  .scene { padding-top: 16px; }
+  .scene::before { height: 680px; }
+  .players { grid-template-columns: 1fr; }
+  .player { padding: 14px; }
+  .lobbyHeader { padding: 20px 8px; }
+  .ceremony { min-height: 220px; }
+  .summary { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rankingRow { grid-template-columns: 36px minmax(0, 1fr); }
+  .rankingRow > div:nth-child(n+3) { grid-column: 2; text-align: left; }
+  .playTop { padding: 8px; gap: 8px; }
+  .answerCard [data-slot='card-footer'] { padding: 16px; gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene *, .scene *::before, .scene *::after { animation: none !important; transition: none !important; }
+}

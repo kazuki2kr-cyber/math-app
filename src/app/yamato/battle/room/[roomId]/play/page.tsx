@@ -2,6 +2,8 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { BattleScene } from '../../../BattleScene';
+import styles from '../../../battle-scene.module.css';
 import { onValue, ref } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, CheckCircle2, Clock, Eraser, Undo2 } from 'lucide-react';
@@ -363,11 +365,11 @@ export default function KanjiBattlePlayPage() {
 
   if (room?.status === 'completed') {
     return (
-      <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
-        <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col items-center justify-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
+      <BattleScene variant="play">
+        <main className={`mx-auto flex min-h-[70vh] w-full max-w-md flex-col items-center justify-center gap-4 p-8 text-center ${styles.panel}`}>
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
           <div>
-            <h1 className="text-xl font-black text-gray-900">
+            <h1 className="text-xl font-black text-[#f3d593]">
               {ocrSubmitting ? '手書き回答を採点しています...' : ocrSubmitted ? '結果を集計しています...' : '対戦終了'}
             </h1>
             <p className="mt-2 text-sm font-bold text-muted-foreground">
@@ -385,19 +387,19 @@ export default function KanjiBattlePlayPage() {
             </div>
           )}
         </main>
-      </div>
+      </BattleScene>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAEB] flex flex-col md:py-10 p-4">
+    <BattleScene variant="play">
       <main className="max-w-3xl mx-auto w-full space-y-6">
-        <div className="flex items-center justify-between gap-3 mb-4">
+        <div className={`flex items-center justify-between gap-3 mb-4 ${styles.playTop}`}>
           <Button variant="ghost" size="sm" onClick={leaveBattle} className="text-muted-foreground hover:text-destructive transition-colors">
             <ArrowLeft className="w-5 h-5 mr-1.5" strokeWidth={1.5} />
             <span className="font-medium">対戦トップへ</span>
           </Button>
-          <div className={`flex items-center font-mono text-lg sm:text-xl px-3 sm:px-4 py-1.5 rounded-full border shadow-inner ${
+          <div role="timer" aria-label="回答の残り時間" className={`${styles.timer} flex items-center font-mono text-lg sm:text-xl px-3 sm:px-4 py-1.5 rounded-full border shadow-inner ${
             room?.phase === 'countdown'
               ? 'border-green-200 bg-green-50 text-green-700'
               : inBuffer
@@ -417,8 +419,8 @@ export default function KanjiBattlePlayPage() {
           </div>
         </div>
 
-        <div className="w-full bg-black/5 h-2.5 rounded-full overflow-hidden shadow-inner">
-          <div className="bg-primary h-full transition-all duration-500 ease-out" style={{ width: `${questionProgressPercent}%` }} />
+        <div className={styles.progressTrack} role="progressbar" aria-label="対戦の進捗" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(questionProgressPercent)}>
+          <div className={styles.progressFill} style={{ width: `${questionProgressPercent}%` }} />
         </div>
 
         {error && (
@@ -428,7 +430,7 @@ export default function KanjiBattlePlayPage() {
         )}
 
         {room && room.phase !== 'loading' && !answerWindow && (
-          <div role="status" className="rounded-2xl border border-amber-100 bg-white p-10 text-center">
+          <div role="status" className={styles.status}>
             {!synchronized ? '接続・時刻を確認しています…' : inBuffer
               ? 'まもなく問題を表示します'
               : room.phase === 'countdown' ? '次の問題を準備しています' : '回答受付を終了しました'}
@@ -436,20 +438,20 @@ export default function KanjiBattlePlayPage() {
         )}
         {loading || !currentQuestion || room?.phase === 'loading' ? (
           <div className="flex justify-center py-20">
-            <div className="flex flex-col items-center gap-4 rounded-2xl border border-amber-100 bg-white p-8 text-center shadow-sm">
+            <div className={`flex flex-col items-center gap-4 p-8 text-center ${styles.panel}`}>
               <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
               <div>
-                <h1 className="text-lg font-black text-gray-900">1問目を準備しています</h1>
+                <h1 className="text-lg font-black text-[#f3d593]">1問目を準備しています</h1>
                 <p className="mt-1 text-sm font-bold text-muted-foreground">全員の準備後、3秒のカウントダウンで問題を表示します。</p>
               </div>
             </div>
           </div>
         ) : !room ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 p-12 text-center text-sm font-bold text-muted-foreground">
+          <div className="rounded-2xl border border-dashed border-[#526976] bg-[#172d3b] p-12 text-center text-sm font-bold text-muted-foreground">
             ルームが見つかりません。
           </div>
         ) : (
-          <Card hidden={!answerWindow} style={!answerWindow ? { display: 'none' } : undefined} className="shadow-2xl border-0 overflow-hidden bg-white/95 backdrop-blur-sm">
+          <Card hidden={!answerWindow} style={!answerWindow ? { display: 'none' } : undefined} className={`overflow-hidden ${styles.answerCard}`}>
             <div className="h-2 w-full bg-primary/80" />
             <CardHeader className="px-8 pt-8 pb-4">
               <CardDescription className="font-bold text-primary tracking-widest uppercase text-sm mb-2">
@@ -529,7 +531,7 @@ export default function KanjiBattlePlayPage() {
                     size="sm"
                     disabled={!inputEnabled}
                     onClick={() => canvasRef.current?.undo()}
-                    className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
+                    className="flex-1 bg-white dark:bg-white text-orange-900 border-orange-200 hover:bg-orange-50"
                   >
                     <Undo2 className="w-4 h-4 mr-1" />
                     戻す
@@ -539,7 +541,7 @@ export default function KanjiBattlePlayPage() {
                     size="sm"
                     disabled={!inputEnabled}
                     onClick={() => { canvasRef.current?.clear(); setHasStrokes(false); }}
-                    className="flex-1 text-orange-900 border-orange-200 hover:bg-orange-50"
+                    className="flex-1 bg-white dark:bg-white text-orange-900 border-orange-200 hover:bg-orange-50"
                   >
                     <Eraser className="w-4 h-4 mr-1" />
                     クリア
@@ -569,6 +571,6 @@ export default function KanjiBattlePlayPage() {
           </Card>
         )}
       </main>
-    </div>
+    </BattleScene>
   );
 }
