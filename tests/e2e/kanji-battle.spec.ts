@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, TestInfo } from '@playwright/test';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -39,6 +39,12 @@ async function draw(page: Page) {
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.7, { steps: 5 });
   await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 5 });
   await page.mouse.up();
+}
+
+async function captureScreen(page: Page, testInfo: TestInfo, name: string, fullPage = false) {
+  const path = testInfo.outputPath(`${name}.png`);
+  await page.screenshot({ path, fullPage });
+  await testInfo.attach(name, { path, contentType: 'image/png' });
 }
 test('two users choose a room, cannot write during waiting, finish ten questions despite clock skew', async ({ browser }, testInfo) => {
   test.setTimeout(180000);
@@ -85,16 +91,29 @@ test('two users choose a room, cannot write during waiting, finish ten questions
     await expect(listing).toContainText('1/4人');
     await listing.getByRole('button', { name: 'このルームに参加' }).click();
     await guest.waitForURL(new RegExp('/room/' + roomId + '$'));
+    await expect(guest.getByRole('heading', { name: '準備ができたら、いざ勝負。' })).toBeVisible();
+    await expect(guest.getByText('参加者を待っています')).toHaveCount(2);
+    expect(await guest.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await captureScreen(guest, testInfo, 'lobby-mobile', true);
+    await captureScreen(host, testInfo, 'lobby-desktop', true);
     await Promise.all([host.getByRole('button', { name: '準備完了', exact: true }).click(), guest.getByRole('button', { name: '準備完了', exact: true }).click()]);
     await host.getByRole('button', { name: '対戦を開始', exact: true }).click();
     await expect(guest.locator('canvas')).toHaveCount(0);
     await Promise.all([host.waitForURL(/\/play$/), guest.waitForURL(/\/play$/)]);
     await expect(guest.getByText('まもなく問題を表示します')).toBeVisible();
     await expect(guest.locator('canvas')).not.toBeVisible();
-    await testInfo.attach('waiting-mobile', { body: await guest.screenshot(), contentType: 'image/png' });
+    await captureScreen(guest, testInfo, 'waiting-mobile');
     for (let i = 0; i < 10; i++) {
       await Promise.all([draw(host), draw(guest)]);
-      if (i === 0) await testInfo.attach('answering-desktop', { body: await host.screenshot(), contentType: 'image/png' });
+      if (i === 0) {
+        for (const page of [host, guest]) {
+          // Artwork must stay outside the opaque answer card, and ink must remain usable.
+          await expect(page.locator('[data-slot="card"]').filter({ has: page.locator('canvas') })).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        }
+        await captureScreen(host, testInfo, 'answering-desktop');
+        await captureScreen(guest, testInfo, 'answering-mobile', true);
+      }
       await host.getByRole('button', { name: '回答する', exact: true }).click();
       await expect(host.getByRole('button', { name: '送信済み', exact: true })).toBeVisible();
       await guest.getByRole('button', { name: '回答する', exact: true }).click();
@@ -102,6 +121,11 @@ test('two users choose a room, cannot write during waiting, finish ten questions
       await expect(guest.locator('canvas')).not.toBeVisible();
     }
     await Promise.all([host.waitForURL(/\/result$/, { timeout: 30000 }), guest.waitForURL(/\/result$/, { timeout: 30000 })]);
+    await expect(guest.getByRole('heading', { name: '対戦結果', exact: true })).toBeVisible();
+    await expect(guest.getByRole('heading', { name: '問題別スコア', exact: true })).toBeVisible();
+    expect(await guest.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await captureScreen(host, testInfo, 'result-desktop', true);
+    await captureScreen(guest, testInfo, 'result-mobile', true);
     const r = (await database.ref(`kanjiBattleRooms/${roomId}`).get()).val();
     expect(r.finalizedAt).toBeTruthy();
     expect(Object.keys(r.results)).toHaveLength(2);

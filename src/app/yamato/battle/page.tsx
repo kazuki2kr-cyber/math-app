@@ -17,12 +17,13 @@ import {
   KanjiRoomListing,
 } from '@/lib/kanjiBattle';
 import { useBattleClock } from '@/hooks/useBattleClock';
-import { ArrowLeft, Lock, Medal, Swords, Trophy, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, Lock, Medal, RotateCcw, ScrollText, Sparkles, Swords, Trophy, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
+import styles from './battle-home.module.css';
 
 
 interface BattleUnit {
@@ -76,8 +77,15 @@ export default function KanjiBattlePage() {
   const [listingLimit, setListingLimit] = useState(30);
   const [listingLoading, setListingLoading] = useState(false);
   const [listingRefresh, setListingRefresh] = useState(0);
+  const modeContentRef = useRef<HTMLDivElement>(null);
   const createRequestRef = useRef<{ unitId: string; requestId: string } | null>(null);
   const { nowMs, synchronized } = useBattleClock();
+
+  useEffect(() => {
+    if (!mode) return;
+    modeContentRef.current?.focus({ preventScroll: true });
+    modeContentRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== 'join' || !user) return;
@@ -288,19 +296,19 @@ export default function KanjiBattlePage() {
   }, [battleProfile, battleRanking, user]);
 
   const battleRankingPanel = !showRanking ? (
-    <Card className="overflow-hidden border border-orange-900/10 border-t-4 border-t-amber-400 bg-white/95 shadow-sm">
+    <Card className="overflow-hidden border border-[#3a5260] border-t-4 border-t-[#efc97c] bg-[#172d3b] shadow-sm">
       <CardContent className="flex flex-col items-center gap-4 p-6">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-50">
-          <Trophy className="h-8 w-8 text-amber-500" />
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#263c46]">
+          <Trophy className="h-8 w-8 text-[#efc97c]" />
         </div>
         <div className="text-center">
-          <h2 className="text-base font-black text-gray-900">対戦スコアランキング</h2>
+          <h2 className="text-base font-black text-[#f0f4f7]">対戦スコアランキング</h2>
           <p className="mt-1 text-xs font-semibold text-muted-foreground">対戦XPの上位10名を表示します。</p>
         </div>
         <Button
           onClick={loadBattleRanking}
           disabled={rankingLoading}
-          className="w-full bg-amber-500 font-bold text-white shadow-sm hover:bg-amber-600"
+          className="w-full bg-[#efc97c] font-bold text-[#291e0d] shadow-sm hover:bg-[#ffdb94]"
         >
           {rankingLoading ? (
             <><div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> 読み込み中...</>
@@ -311,23 +319,23 @@ export default function KanjiBattlePage() {
       </CardContent>
     </Card>
   ) : (
-    <Card className="overflow-hidden border border-orange-900/10 border-t-4 border-t-amber-400 bg-white/95 shadow-lg">
+    <Card className="overflow-hidden border border-[#3a5260] border-t-4 border-t-[#efc97c] bg-[#172d3b] shadow-lg">
       <CardContent className="flex flex-col p-0">
         {myRankInfo && (
-          <div className="flex items-center justify-between border-b border-amber-100 bg-amber-50 p-4">
+          <div className="flex items-center justify-between border-b border-[#3a5260] bg-[#263c46] p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500 text-sm font-black text-white shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#efc97c] text-sm font-black text-[#291e0d] shadow-sm">
                 {myRankInfo.rank > 10 ? '圏外' : myRankInfo.rank}
               </div>
               <div>
-                <p className="text-xs font-bold tracking-wider text-amber-800">
+                <p className="text-xs font-bold tracking-wider text-[#f3d593]">
                   {myRankInfo.rank > 10 ? 'Top 10圏外' : 'あなたの現在の順位'}
                 </p>
-                <p className="mt-1 text-xl font-black leading-none text-amber-900">
+                <p className="mt-1 text-xl font-black leading-none text-[#f3d593]">
                   {Number(myRankInfo.data.xp || 0).toLocaleString()}
                   <span className="ml-1 text-xs font-bold opacity-70">XP</span>
                 </p>
-                <p className="mt-1 text-[10px] font-black text-amber-900/60">
+                <p className="mt-1 text-[11px] font-black text-[#bacbd7]">
                   {getBattleRank(Number(myRankInfo.data.xp || 0)).icon} {getBattleRank(Number(myRankInfo.data.xp || 0)).title}
                 </p>
               </div>
@@ -340,7 +348,7 @@ export default function KanjiBattlePage() {
             まだ対戦スコアがありません。
           </div>
         ) : (
-          <div className="divide-y divide-orange-900/5">
+          <div className="divide-y divide-[#38505f]">
             {battleRanking.map((rankUser, index) => {
               const rank = index + 1;
               const isCurrentUser = rankUser.uid === user?.uid;
@@ -350,39 +358,39 @@ export default function KanjiBattlePage() {
               return (
                 <div
                   key={rankUser.uid}
-                  className={`relative flex items-center px-5 py-4 transition-colors ${isCurrentUser ? 'bg-amber-50/60' : 'hover:bg-gray-50'}`}
+                  className={`relative flex items-center px-5 py-4 transition-colors ${isCurrentUser ? 'bg-[#29404a]' : 'hover:bg-[#223e4d]'}`}
                 >
-                  {isCurrentUser && <div className="absolute bottom-0 left-0 top-0 w-1 bg-amber-400" />}
+                  {isCurrentUser && <div className="absolute bottom-0 left-0 top-0 w-1 bg-[#efc97c]" />}
                   <div className="mr-3 w-8 flex-shrink-0 text-center font-black">
-                    {rank === 1 ? <Medal className="mx-auto h-6 w-6 text-yellow-500" /> :
-                      rank === 2 ? <Medal className="mx-auto h-5 w-5 text-gray-400" /> :
-                        rank === 3 ? <Medal className="mx-auto h-5 w-5 text-amber-700" /> :
-                          <span className="text-gray-400">{rank}</span>}
+                    {rank === 1 ? <Medal className="mx-auto h-6 w-6 text-[#f3d593]" /> :
+                      rank === 2 ? <Medal className="mx-auto h-5 w-5 text-[#bacbd7]" /> :
+                        rank === 3 ? <Medal className="mx-auto h-5 w-5 text-[#f3d593]" /> :
+                          <span className="text-[#bacbd7]">{rank}</span>}
                   </div>
                   <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 text-lg font-black text-amber-800">
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#263c46] text-lg font-black text-[#f3d593]">
                       {battleRank.icon}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-gray-800">
+                      <p className="truncate text-sm font-bold text-[#f0f4f7]">
                         {rankUser.name || 'Player'}
                         {getKanjiSeasonBadges(rankUser).map((badge) => (
                           <span key={badge.seasonId} className="relative ml-1 inline-block h-5 w-5 align-middle" title={badge.label}>
                             <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="20px" className="object-contain" />
                           </span>
                         ))}
-                        {isCurrentUser && <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] uppercase text-amber-800">You</span>}
+                        {isCurrentUser && <span className="ml-2 rounded-full bg-[#3d3b2e] px-1.5 py-0.5 text-[11px] uppercase text-[#f3d593]">You</span>}
                       </p>
-                      <p className="font-mono text-[10px] font-semibold text-amber-900/60">
+                      <p className="font-mono text-[11px] font-semibold text-[#bacbd7]">
                         {battleRank.title}
                       </p>
                     </div>
                   </div>
                   <div className="flex-shrink-0 text-right">
-                    <p className="text-lg font-black leading-none text-amber-950">
+                    <p className="text-lg font-black leading-none text-[#f3d593]">
                       {battleXp.toLocaleString()}
                     </p>
-                    <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
+                    <p className="mt-1 text-[11px] font-bold uppercase tracking-widest text-[#bacbd7]">XP</p>
                   </div>
                 </div>
               );
@@ -434,44 +442,78 @@ export default function KanjiBattlePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <div className="flex flex-col gap-4 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
+    <div className={styles.home}>
+      <main className={styles.container}>
+        <header className={styles.header}>
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#263c46] text-[#efc97c]">
               <Swords className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight text-gray-900">漢字対戦モード</h1>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Kanji battle</p>
+              <p className={styles.wordmark}>漢字対戦<span>KANJI ARENA</span></p>
             </div>
           </div>
-          <Button variant="ghost" onClick={() => router.push('/yamato')} className="justify-start text-muted-foreground">
+          <Button variant="ghost" onClick={() => router.push('/yamato')} className={styles.backButton}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             漢字モードへ戻る
           </Button>
-        </div>
+        </header>
 
-        <div className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+        <section className={styles.arena} aria-labelledby="arena-title">
+          <Image src="/images/kanji-battle/arena.webp" alt="" fill priority sizes="(max-width: 1280px) 100vw, 1280px" className={styles.arenaImage} />
+          <div className={styles.arenaShade} />
+          <div className={styles.arenaCopy}>
+            <h1 id="arena-title">その一画で、<br /><span>勝利をつかむ。</span></h1>
+            <p className={styles.intro}>覚えた漢字を、いまこそ力に。全10問の手書きバトル。</p>
+            <div className={styles.ruleChips}>
+              <span><Users size={15} aria-hidden="true" />2〜4人対戦</span>
+              <span><ScrollText size={15} aria-hidden="true" />全10問</span>
+              <span><Sparkles size={15} aria-hidden="true" />手書きで回答</span>
+            </div>
+          </div>
+          <span className={styles.arenaCaption} aria-hidden="true">漢字の力を、解き放て。</span>
+        </section>
+
+        <section className={styles.actionSection} aria-label="対戦をはじめる">
+          <div className={styles.actionGrid}>
+            <Button aria-label="ルームを作る" aria-pressed={mode === 'create'} aria-controls="battle-mode-content" className={`${styles.actionButton} ${styles.createAction}`} onClick={() => { setMode('create'); setError(null); }}>
+              <span className={styles.actionIcon}><Swords aria-hidden="true" /></span>
+              <span className={styles.actionText}><strong>ルームを作る</strong><span>出題範囲を選んで、仲間を募集</span></span>
+              <ArrowRight aria-hidden="true" />
+            </Button>
+            <Button aria-label="ルームに参加する" aria-pressed={mode === 'join'} aria-controls="battle-mode-content" className={`${styles.actionButton} ${styles.joinAction}`} onClick={() => { setMode('join'); setError(null); }}>
+              <span className={styles.actionIcon}><Users aria-hidden="true" /></span>
+              <span className={styles.actionText}><strong>ルームに参加する</strong><span>募集中のルームから、対戦へ</span></span>
+              <ArrowRight aria-hidden="true" />
+            </Button>
+          </div>
+          <Button variant="ghost" className={styles.resumeButton} onClick={() => {
+            const id = sessionStorage.getItem('kanji-battle-current-room');
+            if (id) router.push('/yamato/battle/room/' + id);
+            else setError('参加中のルームはありません。');
+          }}><RotateCcw size={14} aria-hidden="true" />参加中のルームに戻る<ChevronRight size={14} aria-hidden="true" /></Button>
+        </section>
+
+        <section className={styles.profile} aria-label="あなたの対戦成績">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-4xl font-black text-amber-800 shadow-inner">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#263c46] text-4xl font-black text-[#f3d593] shadow-inner">
                 {currentRank.icon}
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-black uppercase tracking-widest text-amber-600">Battle Profile</p>
-                <h2 className="truncate text-2xl font-black text-gray-900">
+                <p className="text-xs font-black tracking-widest text-[#f3d593]">あなたの戦績</p>
+                <h2 className="truncate text-2xl font-black text-[#f0f4f7]">
                   {user?.displayName || user?.email || 'ゲスト'} <span className="text-sm font-bold text-muted-foreground">さん</span>
                 </h2>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+                  <span className="rounded-full bg-[#3d3b2e] px-3 py-1 text-xs font-black text-[#f3d593]">
                     Rank {currentRankIndex + 1}
                   </span>
-                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-700">
+                  <span className="rounded-full bg-[#29404e] px-3 py-1 text-xs font-black text-[#ccd9e1]">
                     {currentRank.title}
                   </span>
                   {getKanjiSeasonBadges(userData).map((badge) => (
-                    <span key={badge.seasonId} className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-black text-amber-800">
+                    <span key={badge.seasonId} className="inline-flex items-center gap-1.5 rounded-full border border-[#6c6044] bg-[#263c46] px-2 py-1 text-xs font-black text-[#f3d593]">
                       <span className="relative h-6 w-6">
                         <Image src={badge.badgeImageUrl} alt={badge.label} fill sizes="24px" className="object-contain" />
                       </span>
@@ -482,18 +524,18 @@ export default function KanjiBattlePage() {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[480px]">
-              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+            <div className="grid grid-cols-3 gap-2 lg:min-w-[440px]">
+              <div className="rounded-xl border border-[#38505f] bg-[#132733] p-4">
                 <p className="text-xs font-bold text-muted-foreground">通算優勝</p>
-                <p className="mt-1 text-2xl font-black text-gray-900">{battleProfile.wins.toLocaleString()}回</p>
+                <p className="mt-1 text-2xl font-black text-[#f0f4f7]">{battleProfile.wins.toLocaleString()}回</p>
               </div>
-              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-xl border border-[#38505f] bg-[#132733] p-4">
                 <p className="text-xs font-bold text-muted-foreground">対戦XP</p>
-                <p className="mt-1 text-2xl font-black text-gray-900">{battleProfile.xp.toLocaleString()}</p>
+                <p className="mt-1 text-2xl font-black text-[#f0f4f7]">{battleProfile.xp.toLocaleString()}</p>
               </div>
-              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-xl border border-[#38505f] bg-[#132733] p-4">
                 <p className="text-xs font-bold text-muted-foreground">次のランクまで</p>
-                <p className="mt-1 text-2xl font-black text-gray-900">
+                <p className="mt-1 text-2xl font-black text-[#f0f4f7]">
                   {nextRank ? `${xpToNextRank.toLocaleString()} XP` : '到達済み'}
                 </p>
               </div>
@@ -501,27 +543,28 @@ export default function KanjiBattlePage() {
           </div>
 
           <div className="mt-5">
-            <div className="mb-2 flex items-center justify-between text-xs font-black text-gray-500">
+            <div className="mb-2 flex items-center justify-between text-xs font-black text-[#bacbd7]">
               <span>{currentRank.title}</span>
               <span>{nextRank ? nextRank.title : '最高ランク'}</span>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${rankProgressPercent}%` }} />
+            <div role="progressbar" aria-label="次のランクへの進捗" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(rankProgressPercent)} className="h-2 overflow-hidden rounded-full bg-[#29404e]">
+              <div className="h-full rounded-full bg-[#efc97c] transition-all" style={{ width: `${rankProgressPercent}%` }} />
             </div>
           </div>
-        </div>
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          <div className="min-w-0 space-y-6">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Button className="h-20 text-lg" variant={mode === 'create' ? 'default' : 'outline'} onClick={() => { setMode('create'); setError(null); }}>ルームを作る</Button>
-            <Button className="h-20 text-lg" variant={mode === 'join' ? 'default' : 'outline'} onClick={() => { setMode('join'); setError(null); }}>ルームに参加する</Button>
-          </div>
-          <Button variant="ghost" onClick={() => {
-            const id = sessionStorage.getItem('kanji-battle-current-room');
-            if (id) router.push('/yamato/battle/room/' + id);
-            else setError('参加中のルームはありません。');
-          }}>参加中のルームに戻る</Button>
+          <div ref={modeContentRef} id="battle-mode-content" tabIndex={-1} role="region" aria-label={mode === 'create' ? '出題範囲を選ぶ' : mode === 'join' ? 'ルームを選ぶ' : '対戦の遊び方'} className={`min-w-0 space-y-6 scroll-mt-6 ${styles.modeContent}`}>
+          {mode === null && <section className={styles.guide} aria-labelledby="battle-guide-title">
+            <p className={styles.sectionLabel}>HOW TO PLAY</p>
+            <h2 id="battle-guide-title">準備ができたら、いざ対戦。</h2>
+            <ol>
+              <li><span>01</span><div><strong>仲間と集まる</strong><p>ルームを作るか、募集中のルームに参加。</p></div></li>
+              <li><span>02</span><div><strong>漢字を書いて回答</strong><p>全員の準備ができたら、全10問の勝負へ。</p></div></li>
+              <li><span>03</span><div><strong>結果を見て、次の一戦へ</strong><p>正確さと回答の速さでスコアが決まります。</p></div></li>
+            </ol>
+          </section>}
+          {mode === 'create' && <div className={styles.modeHeading}><p className={styles.sectionLabel}>CREATE ROOM</p><h2>対戦する出題範囲を選ぼう</h2><p>全単元からランダム、または好きな単元で対戦できます。</p></div>}
           {mode === 'join' && (
             <section aria-label="参加できるルーム" className="space-y-3">
               <div className="flex justify-between items-center"><h2 className="text-lg font-bold">参加できるルーム</h2>
@@ -542,7 +585,7 @@ export default function KanjiBattlePage() {
           )}
 
           {false && (
-          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-[#38505f] bg-[#172d3b] p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row">
               <select
                 value={selectedSubject}
@@ -550,7 +593,7 @@ export default function KanjiBattlePage() {
                   setSelectedSubject(event.target.value);
                   setSelectedCategory('all');
                 }}
-                className="h-14 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm font-bold outline-none focus:border-amber-400"
+                className="h-14 w-full rounded-xl border border-[#38505f] bg-[#132733] px-4 text-sm font-bold outline-none focus:border-amber-400"
               >
                 <option value="all">全教科</option>
                 {subjects.map(subject => (
@@ -560,7 +603,7 @@ export default function KanjiBattlePage() {
               <select
                 value={selectedCategory}
                 onChange={(event) => setSelectedCategory(event.target.value)}
-                className="h-14 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm font-bold outline-none focus:border-amber-400"
+                className="h-14 w-full rounded-xl border border-[#38505f] bg-[#132733] px-4 text-sm font-bold outline-none focus:border-amber-400"
               >
                 <option value="all">全分野</option>
                 {categories.map(category => (
@@ -572,22 +615,22 @@ export default function KanjiBattlePage() {
           )}
 
         {error && (
-          <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-bold text-red-700">
+          <div role="alert" className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-bold text-red-700">
             {error}
           </div>
         )}
 
         {mode === 'create' && (
-          <Card className="border-amber-200 bg-amber-50">
+          <Card className="border-[#6c6044] bg-[#263c46]">
             <CardHeader>
               <CardTitle>全単元出題（ランダム10問）</CardTitle>
             </CardHeader>
-            <CardContent className="text-sm text-gray-700">
+            <CardContent className="text-sm text-[#ccd9e1]">
               全単元をまとめた問題セットから、毎回ランダムに10問出題します。2〜4人で対戦できます。
-              {!allUnitQuestionsLoading && !allUnitQuestionsAvailable && <p className="mt-2 font-bold text-amber-800">問題データが10問以上登録されるまで作成できません。</p>}
+              {!allUnitQuestionsLoading && !allUnitQuestionsAvailable && <p className="mt-2 font-bold text-[#f3d593]">問題データが10問以上登録されるまで作成できません。</p>}
             </CardContent>
             <CardFooter>
-              <Button className="bg-amber-500 font-bold text-white hover:bg-amber-600"
+              <Button className="bg-[#efc97c] font-bold text-[#291e0d] hover:bg-[#ffdb94]"
                 disabled={creatingUnitId !== null || allUnitQuestionsLoading || !allUnitQuestionsAvailable}
                 onClick={() => createRoom({ id: 'kanji-all-random', title: '全単元出題（ランダム10問）' })}>
                 {creatingUnitId === 'kanji-all-random' ? '作成中...' : allUnitQuestionsLoading ? '問題を確認中...' : '全単元でルーム作成'}
@@ -598,10 +641,10 @@ export default function KanjiBattlePage() {
 
         {mode === 'create' && (loading ? (
           <div className="flex justify-center py-20">
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#3a5260] border-t-amber-500" />
           </div>
         ) : filteredUnits.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 p-12 text-center text-sm font-bold text-muted-foreground">
+          <div className="rounded-2xl border border-dashed border-[#38505f] bg-[#172d3b] p-12 text-center text-sm font-bold text-muted-foreground">
             漢字の単元がありません。
           </div>
         ) : (
@@ -610,18 +653,18 @@ export default function KanjiBattlePage() {
               const totalQuestions = unit.totalQuestions || 0;
               const canCreateRoom = totalQuestions >= 10;
               return (
-                <Card key={unit.id} className="flex flex-col overflow-hidden border-transparent bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-lg">
-                  <CardHeader className="border-b bg-amber-50/40">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
+                <Card key={unit.id} className="flex flex-col overflow-hidden border-transparent bg-[#172d3b] shadow-sm transition hover:-translate-y-0.5 hover:border-[#c7a669] hover:shadow-lg">
+                  <CardHeader className="border-b bg-[#1d3542]">
+                    <div className="text-[11px] font-black uppercase tracking-widest text-[#efc97c]">
                       {unit.baseSubject || unit.subject || '漢字'} / {unit.category || '漢字対戦'}
                     </div>
-                    <CardTitle className="text-lg font-black leading-tight text-gray-900">
+                    <CardTitle className="text-lg font-black leading-tight text-[#f0f4f7]">
                       {unit.title.replace(/^単元\s*/, '')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="flex-1 p-5">
-                    <div className="flex items-center gap-2 text-sm font-bold text-gray-600">
-                      <Users className="h-4 w-4 text-amber-500" />
+                    <div className="flex items-center gap-2 text-sm font-bold text-[#ccd9e1]">
+                      <Users className="h-4 w-4 text-[#efc97c]" />
                       2〜4人 / 10問
                     </div>
                     <div className="mt-3 text-xs font-semibold text-muted-foreground">
@@ -630,7 +673,7 @@ export default function KanjiBattlePage() {
                   </CardContent>
                   <CardFooter className="p-5 pt-0">
                     <Button
-                      className="w-full bg-amber-500 font-bold text-white shadow-sm hover:bg-amber-600"
+                      className="w-full bg-[#efc97c] font-bold text-[#291e0d] shadow-sm hover:bg-[#ffdb94]"
                       disabled={!canCreateRoom || creatingUnitId !== null}
                       onClick={() => createRoom(unit)}
                     >
@@ -648,10 +691,10 @@ export default function KanjiBattlePage() {
           <aside className="space-y-6 lg:sticky lg:top-6">
             {battleRankingPanel}
             {(selectedArchive?.topBattleRankings?.length ?? 0) > 0 && (
-              <Card className="overflow-hidden border border-amber-200 bg-white/95 shadow-sm">
-                <CardHeader className="border-b border-amber-100 bg-amber-50/70 pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-black text-amber-950">
-                    <Trophy className="h-5 w-5 text-amber-600" /> Season {selectedArchive.seasonNumber} 対戦XP上位
+              <Card className="overflow-hidden border border-[#6c6044] bg-[#172d3b] shadow-sm">
+                <CardHeader className="border-b border-[#3a5260] bg-[#1d3542] pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base font-black text-[#f3d593]">
+                    <Trophy className="h-5 w-5 text-[#efc97c]" /> Season {selectedArchive.seasonNumber} 対戦XP上位
                   </CardTitle>
                   {seasonArchives.length > 1 && (
                     <div className="flex gap-2 pt-2">
@@ -664,23 +707,23 @@ export default function KanjiBattlePage() {
                   )}
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="divide-y divide-amber-100/80">
+                  <div className="divide-y divide-[#38505f]">
                     {selectedArchive.topBattleRankings.slice(0, 10).map((rankUser: BattleRankingEntry, index: number) => {
                       const finalRank = getBattleRank(Number(rankUser.xp || 0));
                       return (
                         <div key={rankUser.uid || index} className="flex items-center gap-3 px-4 py-3">
-                          <div className="w-7 text-center text-sm font-black text-amber-700">{index + 1}</div>
-                          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 text-lg" title={finalRank.title}>
+                          <div className="w-7 text-center text-sm font-black text-[#f3d593]">{index + 1}</div>
+                          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#263c46] text-lg" title={finalRank.title}>
                             {finalRank.icon}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-bold text-gray-800">{rankUser.name || 'Player'}</p>
-                            <p className="truncate text-[10px] font-black text-amber-800">{finalRank.title}</p>
-                            <p className="text-[9px] font-semibold text-amber-900/50">優勝 {Number(rankUser.wins || 0).toLocaleString()}回</p>
+                            <p className="truncate text-sm font-bold text-[#f0f4f7]">{rankUser.name || 'Player'}</p>
+                            <p className="truncate text-[11px] font-black text-[#f3d593]">{finalRank.title}</p>
+                            <p className="text-[11px] font-semibold text-[#bacbd7]">優勝 {Number(rankUser.wins || 0).toLocaleString()}回</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-base font-black leading-none text-amber-950">{Number(rankUser.xp || 0).toLocaleString()}</p>
-                            <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-amber-900/40">XP</p>
+                            <p className="text-base font-black leading-none text-[#f3d593]">{Number(rankUser.xp || 0).toLocaleString()}</p>
+                            <p className="mt-1 text-[11px] font-bold uppercase tracking-widest text-[#bacbd7]">XP</p>
                           </div>
                         </div>
                       );

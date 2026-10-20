@@ -57,8 +57,23 @@ jobs:
       - name: Run unit and Firestore security tests
         run: npm test
 
-      - name: Install browser for scratch paper regression test
+      - name: Install browser for regression tests
         run: npx playwright install --with-deps chromium
 
       - name: Verify scratch paper editing and result submission
         run: npm run test:e2e:emu -- tests/e2e/drill.spec.ts --grep 計算用紙は問題ごと
+
+      - name: Verify kanji battle lobby, handwriting and results
+        env:
+          # The browser and Admin SDK must address the same emulated RTDB namespace.
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app
+        run: npm run test:e2e:emu -- tests/e2e/kanji-battle.spec.ts --reporter=list
+
+      - name: Save kanji battle UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanji-battle-ui
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
