@@ -1,9 +1,58 @@
 import {
   getMathSymbolGuides,
   normalizeMathTextForDisplay,
+  splitMathText,
 } from '@/lib/mathText';
+import katex from 'katex';
 
 describe('math text display normalization', () => {
+  const cases = String.raw`\begin{cases}8x+3y=2000 \\ \frac{7}{10}x \times 10 + \frac{1}{2}y \times 4=1700\end{cases}`;
+
+  it.each([
+    ['brackets with spaces', `\\[ ${cases} \\]`, 'block'],
+    ['brackets with newlines', `\\[\n${cases}\n\\]`, 'block'],
+    ['dollars with newlines', `$$\n${cases}\n$$`, 'block'],
+    ['inline parentheses', `\\(${cases}\\)`, 'inline'],
+    ['inline dollars', `$${cases}$`, 'inline'],
+    ['bare environment', cases, 'block'],
+    ['equation before environment', `\\[ f(x) = ${cases} \\]`, 'block'],
+  ])('renders %s without introducing nested delimiters', (_name, input, type) => {
+    const normalized = normalizeMathTextForDisplay(`答案：${input}\n以上。`);
+    expect(normalizeMathTextForDisplay(normalized)).toBe(normalized);
+    const parts = splitMathText(normalized);
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', content: '答案：' });
+    expect(parts[1].type).toBe(type);
+    expect(parts[1].content).toContain(cases);
+    expect(parts[2]).toEqual({ type: 'text', content: '\n以上。' });
+    expect(() => katex.renderToString(parts[1].content, {
+      displayMode: type === 'block', throwOnError: true,
+    })).not.toThrow();
+  });
+
+  it('preserves separate environments, prose, and an intentionally wrong equation', () => {
+    const input = `\\[\n${cases}\n\\]\n途中式：$3y=250$\n$$\nx=220\n$$`;
+    const normalized = normalizeMathTextForDisplay(input);
+    expect(normalized).toBe(input);
+    expect(splitMathText(normalized).filter(part => part.type !== 'text').map(part => part.type))
+      .toEqual(['block', 'inline', 'block']);
+  });
+
+  it('cleans nested inline markers in a bare aligned environment before splitting', () => {
+    const input = String.raw`\begin{aligned}\(3x\)&=9\\x&=3\end{aligned}`;
+    const normalized = normalizeMathTextForDisplay(input);
+    expect(normalizeMathTextForDisplay(normalized)).toBe(normalized);
+    const parts = splitMathText(normalized);
+    expect(parts).toHaveLength(1);
+    expect(() => katex.renderToString(parts[0].content, { throwOnError: true })).not.toThrow();
+  });
+
+  it('leaves incomplete math untouched instead of guessing missing symbols', () => {
+    const input = String.raw`答案：\[\begin{cases}x`;
+    expect(normalizeMathTextForDisplay(input)).toBe(input);
+    expect(splitMathText(input)).toEqual([{ type: 'text', content: input }]);
+  });
+
   it('replaces bare LaTeX commands in Japanese prose instead of exposing command text', () => {
     expect(normalizeMathTextForDisplay('この \\times はかけ算です。')).toBe('この × はかけ算です。');
     expect(normalizeMathTextForDisplay('6 \\div 2 は3です。')).not.toContain('\\div');
