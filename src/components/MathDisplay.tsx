@@ -3,7 +3,7 @@ import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { normalizeMathTextForDisplay } from '@/lib/mathText';
+import { normalizeMathTextForDisplay, splitMathText } from '@/lib/mathText';
 
 // utility function typically from lib/utils.ts, but injected here or using existing
 export function cn(...inputs: ClassValue[]) {
@@ -29,31 +29,7 @@ export const MathDisplay: React.FC<MathDisplayProps> = ({
 
   const displayMath = normalizeMathTextForDisplay(math);
 
-  const parts: { type: 'text' | 'inline' | 'block'; content: string }[] = [];
-  let lastIndex = 0;
-  // match $$ ... $$, \[ ... \], $ ... $, \( ... \)
-  const regex = /\$\$(.*?)\$\$|\\\[([\s\S]*?)\\\]|\$(.*?)\$|\\\(([\s\S]*?)\\\)/g;
-  let match;
-
-  while ((match = regex.exec(displayMath)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: displayMath.substring(lastIndex, match.index) });
-    }
-    if (match[1] !== undefined) {
-      parts.push({ type: 'block', content: match[1] });
-    } else if (match[2] !== undefined) {
-      parts.push({ type: 'block', content: match[2] });
-    } else if (match[3] !== undefined) {
-      parts.push({ type: 'inline', content: match[3] });
-    } else if (match[4] !== undefined) {
-      parts.push({ type: 'inline', content: match[4] });
-    }
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < displayMath.length) {
-    parts.push({ type: 'text', content: displayMath.substring(lastIndex) });
-  }
+  const parts = splitMathText(displayMath);
 
   // Backup for pure math without delimiters (previous behavior)
   if (parts.length === 1 && parts[0].type === 'text') {

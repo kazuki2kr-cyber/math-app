@@ -17,18 +17,31 @@ const SYMBOL_GUIDES: Array<MathSymbolGuide & { pattern: RegExp }> = [
 ];
 
 function normalizeMathEnvironments(text: string) {
-  return text.replace(
-    /\\begin\{(aligned\*?|gathered|cases)\}([\s\S]*?)\\end\{\1\}/g,
-    (match, environment: string, body: string, offset: number, source: string) => {
-      const cleanedBody = body.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
-      const cleanedEnvironment = `\\begin{${environment}}${cleanedBody}\\end{${environment}}`;
-      const before = source.slice(Math.max(0, offset - 2), offset);
-      const after = source.slice(offset + match.length, offset + match.length + 2);
-      return (before === '\\[' && after === '\\]') || (before === '$$' && after === '$$')
-        ? cleanedEnvironment
-        : `\\[${cleanedEnvironment}\\]`;
-    },
-  );
+  const environmentPattern = /\\begin\{(aligned\*?|gathered|cases)\}([\s\S]*?)\\end\{\1\}/g;
+  const cleanEnvironment = (_match: string, environment: string, body: string) => {
+    const cleanedBody = body.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+    return `\\begin{${environment}}${cleanedBody}\\end{${environment}}`;
+  };
+  // Consume existing math spans first, including whitespace around environments.
+  // Bare environments must also be consumed whole before their nested delimiters.
+  const tokens = /\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^$\n]+?\$|\\begin\{(aligned\*?|gathered|cases)\}[\s\S]*?\\end\{\1\}/g;
+  return text.replace(tokens, (token) => {
+    const cleaned = token.replace(environmentPattern, cleanEnvironment);
+    return token.startsWith('\\begin{') ? `\\[${cleaned}\\]` : cleaned;
+  });
+}
+
+export type MathTextPart = { type: 'text' | 'inline' | 'block'; content: string };
+
+/** Split normalized text using the same delimiter rules as normalization. */
+export function splitMathText(text: string): MathTextPart[] {
+  return text.split(DELIMITED_MATH_PATTERN).flatMap((part, index): MathTextPart[] => {
+    if (!part) return [];
+    if (index % 2 === 0) return [{ type: 'text', content: part }];
+    const block = part.startsWith('$$') || part.startsWith('\\[');
+    const delimiterLength = part.startsWith('$') && !block ? 1 : 2;
+    return [{ type: block ? 'block' : 'inline', content: part.slice(delimiterLength, -delimiterLength) }];
+  });
 }
 
 function normalizeOutsideMath(text: string) {

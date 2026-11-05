@@ -63,6 +63,9 @@ jobs:
       - name: Verify scratch paper editing and result submission
         run: npm run test:e2e:emu -- tests/e2e/drill.spec.ts --grep 計算用紙は問題ごと
 
+      - name: Verify written answer math display
+        run: npm run test:e2e:emu -- tests/e2e/written-math-display.spec.ts --reporter=list
+
       - name: Verify kanji battle lobby, handwriting and results
         env:
           # The browser and Admin SDK must address the same emulated RTDB namespace.
