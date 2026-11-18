@@ -27,7 +27,8 @@ import {
   decideWrittenAttemptReservation,
 } from "./writtenAttemptState";
 import { getEarnedWrittenIconReward } from "./iconRewards";
-import { filterActiveQuestionsServer } from "./questionAvailability";
+import { publicRankingName } from "./publicRankingName";
+import { completeActiveAnswers, filterActiveQuestionsServer } from "./questionAvailability";
 import {
   preserveTotalScoreForWrittenAttempt,
   WRITTEN_INCLUDE_IN_TOTAL_SCORE,
@@ -748,16 +749,12 @@ function selectKanjiBattleQuestions(unitQuestions: any[], roomId: string): any[]
   return seededFisherYatesShuffle(unitQuestions, `kanji-battle:${roomId}`).slice(0, BATTLE_QUESTION_COUNT);
 }
 
-async function loadUnitQuestions(unitId: string, unitData: any): Promise<any[]> {
+async function loadUnitQuestions(unitId: string, unitData: any, includeInactive = false): Promise<any[]> {
   const embeddedQuestions = Array.isArray(unitData.questions) ? unitData.questions : [];
-  if (embeddedQuestions.length > 0) {
-    return sortQuestionsServer(filterActiveQuestionsServer(embeddedQuestions));
-  }
-
-  const qSnap = await db.collection(`units/${unitId}/questions`).get();
-  return sortQuestionsServer(filterActiveQuestionsServer(
-    qSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-  ));
+  const questions = embeddedQuestions.length > 0
+    ? embeddedQuestions
+    : (await db.collection(`units/${unitId}/questions`).get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  return sortQuestionsServer(includeInactive ? questions : filterActiveQuestionsServer(questions));
 }
 
 function buildKanjiBattleOptions(question: any, allQuestions: any[], roomId: string): { options: string[]; answerIndex: number } {
@@ -1206,7 +1203,7 @@ export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onC
 
       const leaderboardEntry = {
         uid: entry.uid,
-        name: entry.name || userData.displayName || userData.email || "Player",
+        name: publicRankingName(entry.name || userData.displayName),
         xp: nextXp,
         wins: nextWins,
         totalBattles: nextTotalBattles,
@@ -1281,7 +1278,7 @@ export const processDrillResult = functions
   console.log(`[processDrillResult] Started for unitId: ${unitId}, uid: ${context.auth.uid}`);
   console.log(`[processDrillResult] Data summary: time=${time}, answers=${answers?.length}`);
 
-  const safeAnswers: Array<{
+  let safeAnswers: Array<{
     questionId: string;
     answerType: "selected" | "unknown";
     selectedOptionText?: string;
@@ -1304,7 +1301,7 @@ export const processDrillResult = functions
   }
 
   const uid = context.auth.uid;
-  const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+  const userName = publicRankingName(context.auth.token.name);
   const now = Timestamp.now();
   const dateStr = now.toDate().toISOString();
 
@@ -1323,7 +1320,7 @@ export const processDrillResult = functions
   const unitTitle: string = unitData.title || unitId;
   const unitSubject: string = unitData.subject || "数学";
   const unitCategory: string = unitData.category || "その他";
-  const unitQuestions = await loadUnitQuestions(unitId, unitData);
+  const unitQuestions = await loadUnitQuestions(unitId, unitData, drillMode === "all");
   if (safeAnswers.length > unitQuestions.length) {
     throw new functions.https.HttpsError("invalid-argument", "回答数が問題数を超えています。");
   }
@@ -1386,6 +1383,14 @@ export const processDrillResult = functions
   const uniqueQuestionIds = new Set(safeAnswers.map((answer) => answer.questionId));
   if (uniqueQuestionIds.size !== safeAnswers.length) {
     throw new functions.https.HttpsError("invalid-argument", "同じ問題に複数回答することはできません。");
+  }
+
+  if (drillMode === "all") {
+    const activeAnswers = completeActiveAnswers(unitQuestions, safeAnswers);
+    if (!activeAnswers) {
+      throw new functions.https.HttpsError("failed-precondition", "全問分の回答がそろっていません。問題が更新された場合は演習を開き直してください。");
+    }
+    safeAnswers = activeAnswers;
   }
 
   const hasInvalidSelectedOption = safeAnswers.some((answer) => {
@@ -1721,6 +1726,12 @@ export const processDrillResult = functions
       return acc + Number(stat.drillCount || 0);
     }, 0);
     userUpdate.totalScore = recalculatedTotalScore;
+    if (isHighScore || isLevelUp || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)) {
+      await updateLeaderboard(transaction, {
+        uid, userName, icon: currentIcon, level: newLevel, xp: newTotalXp,
+        totalScore: recalculatedTotalScore, incrementParticipantCount: isFirstParticipation,
+      });
+    }
 
     const shouldSampleIntegrity = integrityAssessment.flagged
       && shouldSampleIntegrityEvent(guard.lastSampledAtMs, now.toMillis());
@@ -1835,23 +1846,6 @@ export const processDrillResult = functions
       newTotalXp,
       xpDetails: xpDetailsResult,
       ...questionResults,
-      // XPは100単位で同期し、レベル間隔が広い帯でもランキング表示の遅延を抑える。
-      // ハイスコア・レベルアップ時の既存同期も維持する。
-      _leaderboardUpdate: (
-        isHighScore
-        || isLevelUp
-        || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)
-      )
-        ? {
-            uid,
-            userName,
-            icon: currentIcon,
-            level: newLevel,
-            xp: newTotalXp,
-            totalScore: recalculatedTotalScore,
-            incrementParticipantCount: isFirstParticipation,
-          }
-        : null,
       _rapidSubmission: _rapidSubmissionSec,
     };
   });
@@ -1870,18 +1864,9 @@ export const processDrillResult = functions
     );
   }
 
-  // リーダーボード更新（ハイスコア・レベルアップ・100XP境界到達時）
-  if (resultAny._leaderboardUpdate) {
-    try {
-      await updateLeaderboard(resultAny._leaderboardUpdate);
-    } catch (leaderboardErr) {
-      console.error("[processDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
-    }
-  }
 
   // 内部フィールドはクライアントに返さない
   const clientResult = { ...resultAny };
-  delete clientResult._leaderboardUpdate;
   delete clientResult._rapidSubmission;
   delete clientResult._blocked;
   return clientResult;
@@ -2108,7 +2093,7 @@ export const submitWrittenDrillResult = functions
     }
 
     const uid = context.auth.uid;
-    const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+    const userName = publicRankingName(context.auth.token.name);
     const now = Timestamp.now();
     const dateStr = now.toDate().toISOString();
 
@@ -2405,6 +2390,13 @@ export const submitWrittenDrillResult = functions
           }
         : null;
 
+      if (isLevelUp || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)) {
+        await updateLeaderboard(transaction, {
+          uid, userName, icon: currentIcon, level: newLevelData.level, xp: newTotalXp,
+          totalScore: preserveTotalScoreForWrittenAttempt(userData.totalScore), incrementParticipantCount: false,
+        });
+      }
+
       transaction.set(userRef, {
         xp: newTotalXp,
         level: newLevelData.level,
@@ -2514,6 +2506,7 @@ export const submitWrittenDrillResult = functions
         isLevelUp,
         oldLevel: oldLevelData.level,
         newLevel: newLevelData.level,
+        score: grading.score,
         xpGain: finalXpGain,
         newTotalXp,
         remainingAttempts,
@@ -2532,33 +2525,10 @@ export const submitWrittenDrillResult = functions
               newlyUnlocked: isNewIconReward,
             }
           : null,
-        _leaderboardUpdate: (
-          isLevelUp
-          || Math.floor(currentXp / 100) < Math.floor(newTotalXp / 100)
-        )
-          ? {
-              uid,
-              userName,
-              icon: currentIcon,
-              level: newLevelData.level,
-              xp: newTotalXp,
-              totalScore: preserveTotalScoreForWrittenAttempt(userData.totalScore),
-              incrementParticipantCount: false,
-            }
-          : null,
       };
     });
 
-    const resultAny = result as any;
-    if (resultAny._leaderboardUpdate) {
-      try {
-        await updateLeaderboard(resultAny._leaderboardUpdate);
-      } catch (leaderboardErr) {
-        console.error("[submitWrittenDrillResult] Leaderboard update failed (non-critical):", leaderboardErr);
-      }
-    }
-    const { _leaderboardUpdate: _lb, ...clientResult } = resultAny;
-    return { ...clientResult, score: grading.score };
+    return result;
   });
 
 export const setUnitQuestionsActive = functions
@@ -2954,7 +2924,7 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
 // ==========================================
 // 3. updateLeaderboard — リーダーボード更新ヘルパー
 // ==========================================
-async function updateLeaderboard(info: {
+async function updateLeaderboard(transaction: FirebaseFirestore.Transaction, info: {
   uid: string;
   userName: string;
   icon: string;
@@ -2964,58 +2934,52 @@ async function updateLeaderboard(info: {
   incrementParticipantCount: boolean;
 }) {
   const leaderboardRef = db.doc("leaderboards/overall");
-  const result = await db.runTransaction(async (transaction) => {
-    const leaderboardSnap = await transaction.get(leaderboardRef);
-    const leaderboardData = leaderboardSnap.exists ? leaderboardSnap.data() || {} : {};
-    let rankings: any[] = Array.isArray(leaderboardData.rankings)
-      ? [...leaderboardData.rankings]
-      : [];
-    const previousRankingCount = rankings.length;
+  const leaderboardSnap = await transaction.get(leaderboardRef);
+  const leaderboardData = leaderboardSnap.exists ? leaderboardSnap.data() || {} : {};
+  let rankings: any[] = Array.isArray(leaderboardData.rankings)
+    ? [...leaderboardData.rankings]
+    : [];
+  const previousRankingCount = rankings.length;
 
-    const existingIndex = rankings.findIndex((ranking: any) => ranking.uid === info.uid);
-    const entry = {
-      uid: info.uid,
-      name: info.userName,
-      totalScore: Math.max(0, Number(info.totalScore) || 0),
-      xp: Math.max(0, Number(info.xp) || 0),
-      icon: info.icon || "📐",
-      level: Math.max(1, Number(info.level) || 1),
-    };
+  rankings = rankings.map(ranking => ({ ...ranking, name: publicRankingName(ranking.name) }));
+  const existingIndex = rankings.findIndex((ranking: any) => ranking.uid === info.uid);
+  const entry = {
+    uid: info.uid,
+    name: info.userName,
+    totalScore: Math.max(0, Number(info.totalScore) || 0),
+    xp: Math.max(0, Number(info.xp) || 0),
+    icon: info.icon || "📐",
+    level: Math.max(1, Number(info.level) || 1),
+  };
 
-    if (existingIndex >= 0) {
-      rankings[existingIndex] = entry;
-    } else {
-      rankings.push(entry);
+  if (existingIndex >= 0) {
+    rankings[existingIndex] = entry;
+  } else {
+    rankings.push(entry);
+  }
+
+  rankings.sort((left: any, right: any) => {
+    if (Number(right.totalScore || 0) !== Number(left.totalScore || 0)) {
+      return Number(right.totalScore || 0) - Number(left.totalScore || 0);
     }
-
-    rankings.sort((left: any, right: any) => {
-      if (Number(right.totalScore || 0) !== Number(left.totalScore || 0)) {
-        return Number(right.totalScore || 0) - Number(left.totalScore || 0);
-      }
-      return Number(right.xp || 0) - Number(left.xp || 0);
-    });
-    rankings = rankings.slice(0, 40);
-
-    const previousParticipantCount = Math.max(
-      Number(leaderboardData.totalParticipants) || 0,
-      previousRankingCount,
-    );
-    const nextParticipantCount = info.incrementParticipantCount && existingIndex < 0
-      ? previousParticipantCount + 1
-      : previousParticipantCount;
-    const totalParticipants = Math.max(nextParticipantCount, rankings.length);
-
-    transaction.set(leaderboardRef, {
-      rankings,
-      totalParticipants,
-      updatedAt: new Date().toISOString(),
-    });
-    return { rankingCount: rankings.length, totalParticipants };
+    return Number(right.xp || 0) - Number(left.xp || 0);
   });
+  rankings = rankings.slice(0, 40);
 
-  console.log(
-    `[updateLeaderboard] Updated: ${result.rankingCount} entries, ${result.totalParticipants} total participants`,
+  const previousParticipantCount = Math.max(
+    Number(leaderboardData.totalParticipants) || 0,
+    previousRankingCount,
   );
+  const nextParticipantCount = info.incrementParticipantCount && existingIndex < 0
+    ? previousParticipantCount + 1
+    : previousParticipantCount;
+  const totalParticipants = Math.max(nextParticipantCount, rankings.length);
+
+  transaction.set(leaderboardRef, {
+    rankings,
+    totalParticipants,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 // ==========================================
@@ -3092,4 +3056,3 @@ export const listAppAccessAccounts = functions.region("us-central1").https.onCal
 
   return { accounts, invites };
 });
-

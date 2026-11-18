@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-const { segment, localMetadata, saveRecord } = require('../../scripts/pull-written-answers');
+const { segment, localMetadata, saveRecord, rebuildCatalog } = require('../../scripts/pull-written-answers');
 
 describe('written answer local archive', () => {
   const record = {
@@ -27,6 +27,23 @@ describe('written answer local archive', () => {
     expect(local.attemptGroupKey).toMatch(/^[a-f0-9]{20}$/);
     expect(local.image).toEqual({ filename: 'answer.png', contentType: 'image/png', bytes: 12, sha256: 'a'.repeat(64) });
     expect(localMetadata(record).learnerKey).toBe(local.learnerKey);
+  });
+
+  it('preserves the previous catalog when a previously indexed answer is missing', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'written-catalog-'));
+    try {
+      const directory = path.join(root, 'attempt');
+      await fs.mkdir(directory);
+      await fs.writeFile(path.join(directory, 'record.json'), JSON.stringify(record));
+      await expect(rebuildCatalog(root)).resolves.toBe(1);
+      const catalog = path.join(root, 'catalog.jsonl');
+      const previous = await fs.readFile(catalog);
+      await fs.rename(path.join(directory, 'record.json'), path.join(directory, 'unavailable'));
+      await expect(rebuildCatalog(root)).rejects.toThrow('欠落');
+      expect(await fs.readFile(catalog)).toEqual(previous);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('acknowledges the cloud copy only after a matching image is saved locally', async () => {
