@@ -87,23 +87,28 @@ async function saveRecord(record, token, request = call, targetRoot = root) {
   }, token);
   return alreadySaved ? 'verified' : 'downloaded';
 }
-async function rebuildCatalog() {
+async function rebuildCatalog(targetRoot = root) {
   const rows = [];
   async function walk(directory) {
-    let entries;
-    try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch { return; }
+    const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
       const filename = path.join(directory, entry.name);
       if (entry.isDirectory()) await walk(filename);
       else if (entry.name === 'record.json') {
         const record = JSON.parse(await fs.readFile(filename, 'utf8'));
-        rows.push({ ...record, relativePath: path.relative(root, path.dirname(filename)).replaceAll('\\', '/') });
+        rows.push({ ...record, relativePath: path.relative(targetRoot, path.dirname(filename)).replaceAll('\\', '/') });
       }
     }
   }
-  await walk(root);
+  await walk(targetRoot);
+  const catalog = path.join(targetRoot, 'catalog.jsonl');
+  const { readCatalog } = require('./build-written-analysis-db');
+  const ids = new Set(rows.map(row => row.attemptId));
+  if (ids.size !== rows.length || readCatalog(targetRoot).some(row => !ids.has(row.attemptId))) {
+    throw new Error('答案IDの重複または欠落を検出したため、既存の索引を保持しました。');
+  }
   rows.sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)) || a.attemptId.localeCompare(b.attemptId));
-  await writeAtomic(path.join(root, 'catalog.jsonl'), rows.map(row => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''));
+  await writeAtomic(catalog, rows.map(row => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''));
   return rows.length;
 }
 async function syncExposures(token, request = call, targetRoot = root) {
@@ -196,7 +201,7 @@ async function main() {
   console.log(`アーカイブ検証: ${health.status}, 1・2回目の結合可能グループ=${health.counts.pairedGroups}`);
   console.log(`クラウド一時保管の残件=${pending}`);
   console.log(`保存先: ${root}`);
-  if (pending > 0) process.exitCode = 1;
+  if (pending > 0 || health.status !== 'ok') process.exitCode = 1;
 }
 if (require.main === module) {
   main().catch(error => { console.error(`答案回収に失敗しました: ${error.message}`); process.exitCode = 1; });

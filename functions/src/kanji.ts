@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { randomUUID } from "node:crypto";
 import { Timestamp } from "firebase-admin/firestore";
+import { publicRankingName } from "./publicRankingName";
 import vision from "@google-cloud/vision";
 import {
   OcrQuestionLayout,
@@ -166,7 +167,7 @@ export const recognizeKanjiBatch = functions
     }
 
     const uid = context.auth.uid;
-    const userName = context.auth.token?.name || context.auth.token?.email || "名無し";
+    const userName = publicRankingName(context.auth.token.name);
     const accessSnap = await db.doc(`users/${uid}`).get();
     const accessData = accessSnap.exists ? accessSnap.data() || {} : {};
     if (accessData.kanjiAccessBlocked === true || accessData.kanjiAccessGranted !== true) {
@@ -192,6 +193,43 @@ export const recognizeKanjiBatch = functions
         return { kind: "processing" as const };
       }
 
+      // 2. 単元情報の取得
+      let questions: any[] = [];
+      if (unitId === 'sample-kanji-1') {
+        questions = [
+          { id: 'k1-1', question_text: '明日は<u>がっこう</u>に行く。', answer: '学校', options: ['学校'] },
+          { id: 'k1-2', question_text: '<u>せんせい</u>に挨拶する。', answer: '先生', options: ['先生'] },
+          { id: 'k1-3', question_text: '<u>こくご</u>の辞書を引く。', answer: '国語', options: ['国語'] },
+        ];
+      } else {
+        const unitDoc = await transaction.get(db.doc(`units/${unitId}`));
+        if (!unitDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "単元が見つかりません。");
+        }
+        const unitData = unitDoc.data()!;
+        if (unitData.subject !== "kanji") {
+          throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji mode.");
+        }
+        let allQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
+        if (allQuestions.length === 0) {
+          const qSnap = await transaction.get(db.collection(`units/${unitId}/questions`));
+          allQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+
+        questions = allQuestions;
+      }
+
+      if (questionIds !== undefined) {
+        if (!Array.isArray(questionIds) || !questionIds.length || new Set(questionIds).size !== questionIds.length) {
+          throw new functions.https.HttpsError("invalid-argument", "出題された問題を確認できません。");
+        }
+        const questionMap = new Map(questions.map(question => [question.id, question]));
+        questions = questionIds.map(id => questionMap.get(id));
+      }
+      if (!questions.length || questions.some(question => !question)) {
+        throw new functions.https.HttpsError("failed-precondition", "単元の問題が更新されています。演習を開き直してください。");
+      }
+
       transaction.set(idempotencyRef, {
         attemptId,
         uid,
@@ -200,12 +238,14 @@ export const recognizeKanjiBatch = functions
         status: "processing",
         startedAt: Timestamp.now(),
       });
-      return { kind: "claimed" as const };
+      return { kind: "claimed" as const, questions };
     });
     if (claimResult.kind === "completed") return claimResult.response;
     if (claimResult.kind === "processing") {
       throw new functions.https.HttpsError("aborted", "この提出は現在処理中です。しばらく待ってから再試行してください。");
     }
+
+    const { questions } = claimResult;
 
     // base64のプレフィックスを取り除く
     const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -229,37 +269,6 @@ export const recognizeKanjiBatch = functions
         }
       });
       throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
-    }
-
-    // 2. 単元情報の取得
-    let questions: any[] = [];
-    if (unitId === 'sample-kanji-1') {
-      questions = [
-        { id: 'k1-1', question_text: '明日は<u>がっこう</u>に行く。', answer: '学校', options: ['学校'] },
-        { id: 'k1-2', question_text: '<u>せんせい</u>に挨拶する。', answer: '先生', options: ['先生'] },
-        { id: 'k1-3', question_text: '<u>こくご</u>の辞書を引く。', answer: '国語', options: ['国語'] },
-      ];
-    } else {
-      const unitDoc = await db.doc(`units/${unitId}`).get();
-      if (!unitDoc.exists) {
-        throw new functions.https.HttpsError("not-found", "単元が見つかりません。");
-      }
-      const unitData = unitDoc.data()!;
-      if (unitData.subject !== "kanji") {
-        throw new functions.https.HttpsError("failed-precondition", "This unit is not available in kanji mode.");
-      }
-      let allQuestions: any[] = Array.isArray(unitData.questions) ? unitData.questions : [];
-      if (allQuestions.length === 0) {
-        const qSnap = await db.collection(`units/${unitId}/questions`).get();
-        allQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }
-
-      if (questionIds && Array.isArray(questionIds) && questionIds.length > 0) {
-        const questionMap = new Map(allQuestions.map((q: any) => [q.id, q]));
-        questions = questionIds.map(id => questionMap.get(id)).filter(Boolean);
-      } else {
-        questions = allQuestions;
-      }
     }
 
     // 3. Vision API の認識結果から文字を抽出（kanjiOcrCore の共通関数を使用）
@@ -512,7 +521,9 @@ async function updateKanjiLeaderboard(uid: string, userName: string, icon: strin
   const leaderboardSnap = await leaderboardRef.get();
   let rankings: any[] = [];
   if (leaderboardSnap.exists) {
-    rankings = leaderboardSnap.data()?.rankings || [];
+    rankings = (leaderboardSnap.data()?.rankings || []).map((ranking: { name?: string }) => ({
+      ...ranking, name: publicRankingName(ranking.name),
+    }));
   }
 
   const existingIdx = rankings.findIndex((r: any) => r.uid === uid);
