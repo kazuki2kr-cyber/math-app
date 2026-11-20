@@ -1,14 +1,10 @@
 /**
- * Cloud Function (functions/src/index.ts) に埋め込まれたスコア・XP 計算ロジックのユニットテスト。
+ * Cloud Function (functions/src/index.ts) のスコア・XP 計算ロジックのユニットテスト。
  *
- * Cloud Function 本体は Firebase Admin SDK に依存するため直接インポートせず、
- * 純粋なロジック部分を関数として再現してテストする。
- * ロジックを変更した際はここも更新すること。
+ * 逓減レートは本番の functions/src/drillAbuseGuard.ts の getRepeatedUnitXpRate を直接インポートして検証する。
  */
 
-// ─────────────────────────────────────────────────────────
-// functions/src/index.ts から抜き出した純粋ロジック
-// ─────────────────────────────────────────────────────────
+import { getRepeatedUnitXpRate } from '../../../functions/src/drillAbuseGuard';
 
 const STANDARD_XP_QUESTION_COUNT = 10;
 
@@ -23,13 +19,10 @@ function calculateScore(correctCount: number, totalAnswered: number, mode: Drill
   return Math.min(100, correctCount * 10);
 }
 
-/** XP 逓減レート: drillCount（0始まり）と全問正解フラグに基づく乗算係数 */
-function getXpRateMultiplier(drillCount: number, isPerfect = false): number {
+/** XP 逓減レート: drillCount（0始まり）から本番関数 getRepeatedUnitXpRate(attemptNumber) を呼び出す */
+function getXpRateMultiplier(drillCount: number): number {
   const attemptNumber = drillCount + 1; // 1始まり
-  if (attemptNumber <= 3) return 1.0;   // 1〜3回目: 100%
-  if (attemptNumber <= 5) return 0.7;   // 4〜5回目:  70%
-  if (attemptNumber <= 10) return 0.3;  // 6〜10回目: 30%
-  return isPerfect ? 0.2 : 0.1;        // 11回目以降: 全問正解20%, それ以外10%
+  return getRepeatedUnitXpRate(attemptNumber);
 }
 
 /** 正解率に基づくスコア倍率 */
@@ -78,7 +71,7 @@ function calculateXpComponents(answerOrder: boolean[]): {
 /** 最終 XP: floor((base + combo) × 倍率 × 逓減レート) */
 function calculateFinalXp(answerOrder: boolean[], drillCount: number): number {
   const { baseTotal, comboTotal, multiplier } = calculateXpComponents(answerOrder);
-  const xpRateMultiplier = getXpRateMultiplier(drillCount, multiplier === 1.5);
+  const xpRateMultiplier = getXpRateMultiplier(drillCount);
   return Math.floor((baseTotal + comboTotal) * multiplier * xpRateMultiplier);
 }
 
@@ -142,23 +135,22 @@ describe('ランキングXP同期', () => {
   });
 });
 
-describe('XP 逓減レート (getXpRateMultiplier)', () => {
+describe('XP 逓減レート (getXpRateMultiplier / getRepeatedUnitXpRate)', () => {
   test.each([
-    [0,  1.0, false, '1回目'],
-    [1,  1.0, false, '2回目'],
-    [2,  1.0, false, '3回目'],
-    [3,  0.7, false, '4回目'],
-    [4,  0.7, false, '5回目'],
-    [5,  0.3, false, '6回目'],
-    [6,  0.3, false, '7回目'],
-    [9,  0.3, false, '10回目'],
-    [10, 0.1, false, '11回目(非全問正解)'],
-    [20, 0.1, false, '21回目(非全問正解)'],
-    [99, 0.1, false, '100回目(非全問正解)'],
-    [10, 0.2, true,  '11回目(全問正解ボーナス)'],
-    [20, 0.2, true,  '21回目(全問正解ボーナス)'],
-  ] as const)('drillCount=%i isPerfect=%s → %d (%s)', (drillCount, expected, isPerfect, _label) => {
-    expect(getXpRateMultiplier(drillCount, isPerfect)).toBe(expected);
+    [0,  1.0, '1回目'],
+    [1,  1.0, '2回目'],
+    [2,  1.0, '3回目'],
+    [3,  0.7, '4回目'],
+    [4,  0.7, '5回目'],
+    [5,  0.3, '6回目'],
+    [6,  0.3, '7回目'],
+    [9,  0.3, '10回目'],
+    [10, 0.1, '11回目'],
+    [19, 0.1, '20回目'],
+    [20, 0.0, '21回目(上限到達)'],
+    [99, 0.0, '100回目(上限到達)'],
+  ] as const)('drillCount=%i → %d (%s)', (drillCount, expected, _label) => {
+    expect(getXpRateMultiplier(drillCount)).toBe(expected);
   });
 });
 
@@ -229,10 +221,14 @@ describe('最終 XP 計算 (calculateFinalXp)', () => {
     expect(xp).toBe(Math.floor(155 * 1.5 * 0.7));
   });
 
-  test('全問正解・11回目 (drillCount=10): 全問正解ボーナス適用で XP>0', () => {
+  test('全問正解・11回目 (drillCount=10): 逓減 0.1 適用で XP = floor(155 * 1.5 * 0.1) = 23', () => {
     const xp = calculateFinalXp(Array(10).fill(true), 10);
-    // floor((100+55) * 1.5 * 0.2) = floor(46.5) = 46
-    expect(xp).toBe(46);
+    expect(xp).toBe(23);
+  });
+
+  test('21回目以降 (drillCount=20): XP = 0', () => {
+    const xp = calculateFinalXp(Array(10).fill(true), 20);
+    expect(xp).toBe(0);
   });
 
   test('非全問正解・11回目 (drillCount=10): 最小フロア適用で XP>0', () => {

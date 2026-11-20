@@ -257,11 +257,12 @@ export function buildCorrectedTextFromAnswer(
 
   const rawText = buildRecognizedTextFromLayout(questionChars, questionLayout);
   const rawNormalized = normalizeKanjiText(rawText);
-  if (rawNormalized === normalizedAnswer) {
+  if (questionChars.length === answerChars.length && rawNormalized === normalizedAnswer) {
     return normalizedAnswer;
   }
 
   const usedIndices = new Set<number>();
+  const chosenChars: RecognizedCharacter[] = [];
   const correctedChars = answerChars.map((expectedChar, index) => {
     const slot = slots[Math.min(index, slots.length - 1)] || {
       x: questionLayout.x,
@@ -275,8 +276,11 @@ export function buildCorrectedTextFromAnswer(
         char,
         charIndex,
         score: scoreCharForSlot(char, slot, expectedChar),
+        nearSlot:
+          isWithinBox(char, slot, slot.width * 0.35, slot.height * 0.25) ||
+          getOverlapRatio(char, slot) > 0,
       }))
-      .filter(({ score }) => score > -1.25)
+      .filter(({ score, nearSlot }) => nearSlot && score > -1.25)
       .sort((a, b) => b.score - a.score);
 
     const exactCandidate = candidates.find(({ char, charIndex }) =>
@@ -284,6 +288,7 @@ export function buildCorrectedTextFromAnswer(
     );
     if (exactCandidate) {
       usedIndices.add(exactCandidate.charIndex);
+      chosenChars.push(exactCandidate.char);
       return exactCandidate.char.text;
     }
 
@@ -294,18 +299,36 @@ export function buildCorrectedTextFromAnswer(
     if (bestCandidate.score < fallbackThreshold) return "";
 
     usedIndices.add(bestCandidate.charIndex);
+    chosenChars.push(bestCandidate.char);
     return bestCandidate.char.text;
   }).join("");
 
+  if (questionChars.length !== answerChars.length) {
+    const orderedAll = [...questionChars]
+      .sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y))
+      .map((char) => char.text)
+      .join("");
+    return orderedAll || rawText;
+  }
+
+  const isChosenOrderValid =
+    chosenChars.length === answerChars.length &&
+    chosenChars.every((char, idx) => idx === 0 || char.x >= chosenChars[idx - 1].x);
+
   const correctedNormalized = normalizeKanjiText(correctedChars);
-  if (correctedNormalized === normalizedAnswer) return normalizedAnswer;
+  if (isChosenOrderValid && correctedNormalized === normalizedAnswer) {
+    return normalizedAnswer;
+  }
 
-  const exactCoverage = answerChars.every((expectedChar) =>
-    questionChars.some((char) => normalizeKanjiText(char.text) === expectedChar)
+  const sortedByPosition = [...questionChars].sort((a, b) =>
+    a.x !== b.x ? a.x - b.x : a.y - b.y
   );
-  if (exactCoverage) return normalizedAnswer;
+  const exactOrderedMatch = sortedByPosition.every(
+    (char, index) => normalizeKanjiText(char.text) === answerChars[index]
+  );
+  if (exactOrderedMatch) return normalizedAnswer;
 
-  return correctedChars || rawText;
+  return sortedByPosition.map((char) => char.text).join("") || rawText;
 }
 
 /**

@@ -564,31 +564,52 @@ async function buildDerivedTables(bigquery: BigQuery, config: AnalyticsConfig) {
 async function fetchUnitMetadata(): Promise<Map<string, UnitMetadata>> {
   const unitsSnapshot = await db.collection("units").get();
   const metadata = new Map<string, UnitMetadata>();
+  const CONCURRENCY = 10;
 
-  for (const unitDoc of unitsSnapshot.docs) {
-    const unitData = unitDoc.data() as any;
-    const questionsSnapshot = await unitDoc.ref.collection("questions").orderBy("order", "asc").get();
-    metadata.set(unitDoc.id, {
-      unitId: unitDoc.id,
-      unitTitle: unitData.title || unitDoc.id,
-      subject: unitData.subject || "数学",
-      category: unitData.category || "\u305d\u306e\u4ed6",
-      questions: questionsSnapshot.docs.map((questionDoc) => {
-        const questionData = questionDoc.data() as any;
-        return {
-          questionId: questionDoc.id,
-          questionOrder: Number(questionData.order || 0),
-          questionText: questionData.question_text || questionData.questionText || questionDoc.id,
-        };
-      }),
-    });
+  for (let i = 0; i < unitsSnapshot.docs.length; i += CONCURRENCY) {
+    const chunk = unitsSnapshot.docs.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      chunk.map(async (unitDoc) => {
+        const unitData = unitDoc.data() as any;
+        let questions: UnitMetadata["questions"];
+        if (Array.isArray(unitData.questions) && unitData.questions.length > 0) {
+          questions = [...unitData.questions]
+            .sort((a: any, b: any) => Number(a?.order || 0) - Number(b?.order || 0))
+            .map((questionData: any, index: number) => ({
+              questionId: String(questionData?.id || `q_${index}`),
+              questionOrder: Number(questionData?.order || 0),
+              questionText: String(
+                questionData?.question_text || questionData?.questionText || questionData?.id || `q_${index}`
+              ),
+            }));
+        } else {
+          const questionsSnapshot = await unitDoc.ref.collection("questions").orderBy("order", "asc").get();
+          questions = questionsSnapshot.docs.map((questionDoc) => {
+            const questionData = questionDoc.data() as any;
+            return {
+              questionId: questionDoc.id,
+              questionOrder: Number(questionData.order || 0),
+              questionText: questionData.question_text || questionData.questionText || questionDoc.id,
+            };
+          });
+        }
+
+        metadata.set(unitDoc.id, {
+          unitId: unitDoc.id,
+          unitTitle: unitData.title || unitDoc.id,
+          subject: unitData.subject || "数学",
+          category: unitData.category || "\u305d\u306e\u4ed6",
+          questions,
+        });
+      })
+    );
   }
 
   return metadata;
 }
 
 async function fetchUserNames(): Promise<Map<string, string>> {
-  const usersSnapshot = await db.collection("users").get();
+  const usersSnapshot = await db.collection("users").select("displayName", "name", "email").get();
   const names = new Map<string, string>();
 
   for (const userDoc of usersSnapshot.docs) {
@@ -614,7 +635,7 @@ async function backfillAnalyticsEventsInternal(options?: {
   const cursor = options?.cursor;
 
   const unitMetadata = await fetchUnitMetadata();
-  let query: FirebaseFirestore.Query<FirebaseFirestore.QueryDocumentSnapshot> = db
+  let query: FirebaseFirestore.Query = db
     .collectionGroup("attempts")
     .orderBy(admin.firestore.FieldPath.documentId())
     .limit(batchSize);
@@ -2195,20 +2216,46 @@ async function buildUnitSummaries(
   metadata: Map<string, UnitMetadata>
 ) {
   const rows = await runQuery(bigquery, config, `
+WITH unit_question_attempts AS (
+  SELECT
+    unit_id,
+    uid,
+    question_id,
+    is_correct,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS question_attempt_order
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+),
+first_retry AS (
+  SELECT
+    unit_id,
+    AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100 AS first_attempt_accuracy,
+    (
+      AVG(IF(question_attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+      AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL))
+    ) * 100 AS retry_improvement_rate
+  FROM unit_question_attempts
+  GROUP BY unit_id
+)
 SELECT
-  unit_id,
-  ANY_VALUE(unit_title) AS unit_title,
-  ANY_VALUE(subject) AS subject,
-  ANY_VALUE(category) AS category,
-  SUM(total_attempts) AS total_attempts,
-  SUM(unique_users) AS unique_users,
-  SAFE_DIVIDE(SUM(total_correct), NULLIF(SUM(total_answered), 0)) * 100 AS avg_accuracy,
-  AVG(avg_time_sec) AS avg_time_sec,
-  AVG(first_attempt_accuracy) AS first_attempt_accuracy,
-  AVG(retry_improvement_rate) AS retry_improvement_rate,
-  AVG(improvement_priority_score) AS improvement_priority_score
-FROM ${tableRef(config, "agg_unit_daily")}
-GROUP BY unit_id
+  attempts.unit_id,
+  ANY_VALUE(attempts.unit_title) AS unit_title,
+  ANY_VALUE(attempts.subject) AS subject,
+  ANY_VALUE(attempts.category) AS category,
+  COUNT(*) AS total_attempts,
+  COUNT(DISTINCT attempts.uid) AS unique_users,
+  SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100 AS avg_accuracy,
+  AVG(attempts.time_sec) AS avg_time_sec,
+  COALESCE(ANY_VALUE(fr.first_attempt_accuracy), 0) AS first_attempt_accuracy,
+  COALESCE(ANY_VALUE(fr.retry_improvement_rate), 0) AS retry_improvement_rate,
+  (100 - SAFE_DIVIDE(SUM(attempts.correct_count), NULLIF(SUM(attempts.answered_count), 0)) * 100)
+    * LOG10(COUNT(*) + 10) AS improvement_priority_score
+FROM ${tableRef(config, "fact_attempts")} attempts
+LEFT JOIN first_retry fr
+  ON fr.unit_id = attempts.unit_id
+GROUP BY attempts.unit_id
 ORDER BY total_attempts DESC
   `);
 
@@ -2216,10 +2263,10 @@ ORDER BY total_attempts DESC
 SELECT
   unit_id,
   question_id,
-  SUM(total) AS total,
-  SUM(correct) AS correct,
-  SAFE_DIVIDE(SUM(correct), NULLIF(SUM(total), 0)) * 100 AS accuracy
-FROM ${tableRef(config, "agg_question_daily")}
+  COUNT(*) AS total,
+  SUM(CAST(is_correct AS INT64)) AS correct,
+  SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100 AS accuracy
+FROM ${tableRef(config, "fact_attempt_question_results")}
 GROUP BY unit_id, question_id
   `);
 
@@ -2281,19 +2328,40 @@ async function buildQuestionAnalysisDocs(
   metadata: Map<string, UnitMetadata>
 ) {
   const rows = await runQuery(bigquery, config, `
+WITH enriched AS (
+  SELECT
+    unit_id,
+    uid,
+    attempt_id,
+    question_id,
+    question_order,
+    is_correct,
+    SAFE_DIVIDE(time_sec, NULLIF(COUNT(*) OVER (PARTITION BY attempt_id), 0)) AS question_time_sec,
+    ROW_NUMBER() OVER (
+      PARTITION BY uid, unit_id, question_id
+      ORDER BY occurred_at, attempt_id
+    ) AS question_attempt_order,
+    AVG(CAST(is_correct AS INT64)) OVER (PARTITION BY uid, unit_id) AS user_unit_accuracy
+  FROM ${tableRef(config, "fact_attempt_question_results")}
+)
 SELECT
   unit_id,
   question_id,
   ANY_VALUE(question_order) AS question_order,
-  SUM(total) AS total,
-  SUM(correct) AS correct,
-  SAFE_DIVIDE(SUM(correct), NULLIF(SUM(total), 0)) * 100 AS accuracy,
-  AVG(first_attempt_accuracy) AS first_attempt_accuracy,
-  AVG(retry_improvement_rate) AS retry_improvement_rate,
-  AVG(avg_time_sec) AS avg_time_sec,
-  AVG(discrimination_index) AS discrimination_index,
-  AVG(improvement_priority_score) AS improvement_priority_score
-FROM ${tableRef(config, "agg_question_daily")}
+  COUNT(*) AS total,
+  SUM(CAST(is_correct AS INT64)) AS correct,
+  SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100 AS accuracy,
+  COALESCE(AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL)) * 100, 0) AS first_attempt_accuracy,
+  COALESCE((
+    AVG(IF(question_attempt_order > 1, CAST(is_correct AS INT64), NULL)) -
+    AVG(IF(question_attempt_order = 1, CAST(is_correct AS INT64), NULL))
+  ) * 100, 0) AS retry_improvement_rate,
+  COALESCE(AVG(question_time_sec), 0) AS avg_time_sec,
+  COALESCE(CORR(CAST(is_correct AS INT64), user_unit_accuracy), 0) AS discrimination_index,
+  (100 - SAFE_DIVIDE(SUM(CAST(is_correct AS INT64)), NULLIF(COUNT(*), 0)) * 100)
+    * LOG10(COUNT(*) + 10)
+    + COALESCE(AVG(question_time_sec), 0) AS improvement_priority_score
+FROM enriched
 GROUP BY unit_id, question_id
 ORDER BY unit_id, question_order
   `);
@@ -2564,6 +2632,7 @@ async function runAnalyticsAggregationInternal() {
 
 export const runAnalyticsAggregation = functions
   .region("us-central1")
+  .runWith({ timeoutSeconds: 300, memory: "512MB" })
   .https.onCall(async (_data, context) => {
     if (!context.auth?.token?.admin) {
       throw new functions.https.HttpsError("permission-denied", "Admin only.");
@@ -2588,6 +2657,7 @@ export const runAnalyticsAggregation = functions
 
 export const aggregateAnalyticsDaily = functions
   .region("us-central1")
+  .runWith({ timeoutSeconds: 300, memory: "512MB" })
   .pubsub.schedule("0 4 * * *")
   .timeZone("Asia/Tokyo")
   .onRun(async () => {

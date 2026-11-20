@@ -27,6 +27,7 @@ import {
   decideWrittenAttemptReservation,
 } from "./writtenAttemptState";
 import { getEarnedWrittenIconReward } from "./iconRewards";
+import { resolveWrittenGradingConfig } from "./writtenGradingConfig";
 import { publicRankingName } from "./publicRankingName";
 import { completeActiveAnswers, filterActiveQuestionsServer } from "./questionAvailability";
 import {
@@ -234,7 +235,7 @@ function getTitleForLevelServer(level: number): string {
   if (level >= 30) return "論理の探求者";
   if (level >= 20) return "計算の達人";
   if (level >= 10) return "数学ビギナー";
-  return "計算卒業生";
+  return "算数卒業生";
 }
 
 function clampBattleResponseMs(value: unknown): number {
@@ -378,6 +379,7 @@ export * from "./analyticsAggregation";
 export * from "./cleanup";
 export * from "./kanjiBattle";
 export * from "./pushNotifications";
+export * from "./adminActions";
 
 export const setAdminClaim = functions.region("us-central1").https.onCall(async (data, context) => {
   // 呼び出し元が管理者であることを確認
@@ -573,9 +575,8 @@ export const claimAppAccessFromInvite = functions.region("us-central1").https.on
 });
 
 export const submitFeedback = functions.region("us-central1").https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
-  }
+  assertAppAccess(context);
+  const authContext = context.auth!;
 
   const message = clampString((data as any)?.message, 1000);
   const pagePath = clampString((data as any)?.pagePath, 200) || "/";
@@ -592,9 +593,9 @@ export const submitFeedback = functions.region("us-central1").https.onCall(async
     userAgent,
     source: "formix",
     status: "new",
-    uid: context.auth.uid,
-    userName: context.auth.token?.name || "",
-    userEmail: context.auth.token?.email || "",
+    uid: authContext.uid,
+    userName: authContext.token?.name || "",
+    userEmail: authContext.token?.email || "",
     createdAt: now,
     updatedAt: now,
   });
@@ -610,9 +611,8 @@ export const submitWrittenGradingFeedback = functions
   .region("us-central1")
   .runWith({ invoker: "public" })
   .https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
-  }
+  assertAppAccess(context);
+  const authContext = context.auth!;
 
   const payload = data as any;
   const unitId = clampString(payload?.unitId, 120);
@@ -638,7 +638,7 @@ export const submitWrittenGradingFeedback = functions
     throw new functions.https.HttpsError("invalid-argument", "フィードバック項目が不正です。");
   }
 
-  const uid = context.auth.uid;
+  const uid = authContext.uid;
   const attemptRef = db.doc(`users/${uid}/attempts/${attemptId}`);
   const attemptSnap = await attemptRef.get();
   if (!attemptSnap.exists || attemptSnap.data()?.type !== "written" || attemptSnap.data()?.unitId !== unitId) {
@@ -646,12 +646,12 @@ export const submitWrittenGradingFeedback = functions
   }
 
   const now = Timestamp.now();
-  await db.collection("written_grading_feedback").add({
+  await db.collection("written_grading_feedback").doc(`${uid}_${attemptId}`).set({
     feedbackType: "written_grading",
     status: "new",
     uid,
-    userName: context.auth.token?.name || "",
-    userEmail: context.auth.token?.email || "",
+    userName: authContext.token?.name || "",
+    userEmail: authContext.token?.email || "",
     unitId,
     unitTitle,
     questionId,
@@ -796,10 +796,8 @@ async function loadKanjiRoomQuestions(room: any, roomId: string): Promise<any[]>
 }
 
 export const getKanjiBattleQuestions = functions.region("us-central1").https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
-  }
-  const callerUid = context.auth.uid;
+  assertAppAccess(context);
+  const callerUid = context.auth!.uid;
   await assertKanjiBattleAccess(callerUid);
 
   const roomId = clampString((data as any)?.roomId, 12);
@@ -824,7 +822,7 @@ export const getKanjiBattleQuestions = functions.region("us-central1").https.onC
   }
 
   // 正解（answer/answer_index）はクライアントに送らない。問題文・画像・文字数のみ返す
-  const includeAnswerForAdmin = context.auth.token?.admin === true;
+  const includeAnswerForAdmin = context.auth?.token?.admin === true;
   const questions = selectedQuestions.map((question) => {
     let resolvedAnswer = "";
     if (question.answer_index !== undefined && Array.isArray(question.options)) {
@@ -868,10 +866,8 @@ export const submitKanjiBattleOcr = functions
   .region("us-central1")
   .runWith({ timeoutSeconds: 120, memory: "1GB" })
   .https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
-    }
-    const callerUid = context.auth.uid;
+    assertAppAccess(context);
+    const callerUid = context.auth!.uid;
     await assertKanjiBattleAccess(callerUid);
 
     const { roomId: rawRoomId, composedImageBase64, layout, questionIds } = data as {
@@ -885,7 +881,14 @@ export const submitKanjiBattleOcr = functions
     if (!/^\d{4,8}$/.test(roomId)) {
       throw new functions.https.HttpsError("invalid-argument", "Invalid room id.");
     }
-    if (!composedImageBase64 || !Array.isArray(layout) || !Array.isArray(questionIds)) {
+    if (
+      typeof composedImageBase64 !== "string" ||
+      composedImageBase64.length === 0 ||
+      composedImageBase64.length > 4_500_000 ||
+      !Array.isArray(layout) ||
+      layout.length > 20 ||
+      !Array.isArray(questionIds)
+    ) {
       throw new functions.https.HttpsError("invalid-argument", "composedImageBase64, layout, questionIds are required.");
     }
 
@@ -922,20 +925,23 @@ export const submitKanjiBattleOcr = functions
     // 3. 入力検証後、Vision API の前に処理権をトランザクションで確保する。
     const idempotencyRef = db.doc(`kanji_battle_ocr/${roomId}_${callerUid}`);
     const claimId = randomUUID();
+    const roomMatchId = String(room.matchId || "");
     const claimResult = await db.runTransaction(async (transaction) => {
       const markerSnap = await transaction.get(idempotencyRef);
       const marker = markerSnap.exists ? markerSnap.data() || {} : {};
-      if (marker.status === "completed") return "completed" as const;
+      const isSameMatch = !roomMatchId || !marker.matchId || marker.matchId === roomMatchId;
+      if (isSameMatch && marker.status === "completed") return "completed" as const;
 
       const startedAtMs = marker.startedAt instanceof Timestamp
         ? marker.startedAt.toMillis()
         : 0;
-      if (marker.status === "processing" && Date.now() - startedAtMs < 3 * 60 * 1000) {
+      if (isSameMatch && marker.status === "processing" && Date.now() - startedAtMs < 3 * 60 * 1000) {
         return "processing" as const;
       }
 
       transaction.set(idempotencyRef, {
         roomId,
+        matchId: roomMatchId,
         uid: callerUid,
         claimId,
         status: "processing",
@@ -950,101 +956,108 @@ export const submitKanjiBattleOcr = functions
       throw new functions.https.HttpsError("aborted", "OCR submission is already being processed.");
     }
 
-    // 4. Vision API 呼び出し（recognizeKanjiBatch と同一の設定）
-    const visionClient = new ImageAnnotatorClient();
-    const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
-    let visionResult: any;
-    try {
-      const [result] = await visionClient.documentTextDetection({
-        image: { content: base64Data },
-        imageContext: { languageHints: ["ja"] },
-      });
-      visionResult = result;
-    } catch (e: any) {
-      console.error("Vision API Error (battle OCR):", e);
+    const releaseIdempotencyClaim = async () => {
       await db.runTransaction(async (transaction) => {
         const markerSnap = await transaction.get(idempotencyRef);
         if (markerSnap.data()?.claimId === claimId && markerSnap.data()?.status === "processing") {
           transaction.delete(idempotencyRef);
         }
+      }).catch(() => undefined);
+    };
+
+    try {
+      // 4. Vision API 呼び出し（recognizeKanjiBatch と同一の設定）
+      const visionClient = new ImageAnnotatorClient();
+      const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
+      let visionResult: any;
+      try {
+        const [result] = await visionClient.documentTextDetection({
+          image: { content: base64Data },
+          imageContext: { languageHints: ["ja"] },
+        });
+        visionResult = result;
+      } catch (e: any) {
+        console.error("Vision API Error (battle OCR):", e);
+        throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
+      }
+
+      // 5. 文字抽出 → 正誤判定（kanjiOcrCore の共通関数を使用）
+      const recognizedCharacters = extractRecognizedCharacters(visionResult);
+      const ocrResults: KanjiOcrQuestionResult[] =
+        processKanjiOcrResult(recognizedCharacters, orderedQuestions, layout);
+
+      // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）
+      const responseMsPromises = questionIds.map((_, qi) =>
+        realtimeDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/${qi}/${callerUid}`).get()
+      );
+      const responseMsSnaps = await Promise.all(responseMsPromises);
+      const responseMsMap: number[] = responseMsSnaps.map((snap) =>
+        clampBattleResponseMs(snap.exists() && (room.schemaVersion !== 2 || snap.val()?.serverVerified === true) ? snap.val()?.responseMs : null)
+      );
+
+      // 7. 問題ごとのスコア計算
+      let totalScore = 0;
+      let correctCount = 0;
+      let totalTimeMs = 0;
+      const questionResults = ocrResults.map((result, qi) => {
+        const responseMs = responseMsMap[qi] ?? BATTLE_ANSWER_LIMIT_MS;
+        const accepted = room.schemaVersion !== 2 || responseMsSnaps[qi]?.val()?.serverVerified === true;
+        result.isCorrect = result.isCorrect && accepted;
+        const baseScore = result.isCorrect ? BATTLE_BASE_SCORE : 0;
+        const speedBonus = result.isCorrect ? calculateBattleSpeedBonus(responseMs) : 0;
+        const questionScore = baseScore + speedBonus;
+
+        totalScore += questionScore;
+        if (result.isCorrect) correctCount += 1;
+        totalTimeMs += responseMs;
+
+        return {
+          questionId: result.questionId,
+          questionText: String(orderedQuestions[qi]?.question_text || ""),
+          recognizedText: result.recognizedText,
+          correctText: result.correctText,
+          isCorrect: result.isCorrect,
+          responseMs,
+          baseScore,
+          speedBonus,
+          questionScore,
+        };
       });
-      throw new functions.https.HttpsError("internal", "画像認識処理中にエラーが発生しました。");
+
+      // 8. RTDB の playerScores に書き込む
+      await realtimeDb.ref(`kanjiBattleRooms/${roomId}/playerScores/${callerUid}`).set({
+        score: totalScore,
+        correctCount,
+        totalQuestions: BATTLE_QUESTION_COUNT,
+        totalTimeMs,
+        questionResults,
+        submittedAt: ServerValue.TIMESTAMP,
+      });
+
+      // 9. べき等マーカーを Firestore に書き込む
+      await idempotencyRef.set({
+        roomId,
+        matchId: roomMatchId,
+        uid: callerUid,
+        status: "completed",
+        score: totalScore,
+        correctCount,
+        submittedAt: Timestamp.now(),
+      });
+
+      return { success: true, alreadySubmitted: false };
+    } catch (err) {
+      await releaseIdempotencyClaim();
+      throw err;
     }
-
-    // 5. 文字抽出 → 正誤判定（kanjiOcrCore の共通関数を使用）
-    const recognizedCharacters = extractRecognizedCharacters(visionResult);
-    const ocrResults: KanjiOcrQuestionResult[] =
-      processKanjiOcrResult(recognizedCharacters, orderedQuestions, layout);
-
-    // 6. 問題ごとのresponseMs をRTDBから読む（クライアント送信値は信頼しない）
-    const responseMsPromises = questionIds.map((_, qi) =>
-      realtimeDb.ref(`kanjiBattleRooms/${roomId}/questionAnswers/${qi}/${callerUid}`).get()
-    );
-    const responseMsSnaps = await Promise.all(responseMsPromises);
-    const responseMsMap: number[] = responseMsSnaps.map((snap) =>
-      clampBattleResponseMs(snap.exists() && (room.schemaVersion !== 2 || snap.val()?.serverVerified === true) ? snap.val()?.responseMs : null)
-    );
-
-    // 7. 問題ごとのスコア計算
-    let totalScore = 0;
-    let correctCount = 0;
-    let totalTimeMs = 0;
-    const questionResults = ocrResults.map((result, qi) => {
-      const responseMs = responseMsMap[qi] ?? BATTLE_ANSWER_LIMIT_MS;
-      const accepted = room.schemaVersion !== 2 || responseMsSnaps[qi]?.val()?.serverVerified === true;
-      result.isCorrect = result.isCorrect && accepted;
-      const baseScore = result.isCorrect ? BATTLE_BASE_SCORE : 0;
-      const speedBonus = result.isCorrect ? calculateBattleSpeedBonus(responseMs) : 0;
-      const questionScore = baseScore + speedBonus;
-
-      totalScore += questionScore;
-      if (result.isCorrect) correctCount += 1;
-      totalTimeMs += responseMs;
-
-      return {
-        questionId: result.questionId,
-        questionText: String(orderedQuestions[qi]?.question_text || ""),
-        recognizedText: result.recognizedText,
-        correctText: result.correctText,
-        isCorrect: result.isCorrect,
-        responseMs,
-        baseScore,
-        speedBonus,
-        questionScore,
-      };
-    });
-
-    // 8. RTDB の playerScores に書き込む
-    await realtimeDb.ref(`kanjiBattleRooms/${roomId}/playerScores/${callerUid}`).set({
-      score: totalScore,
-      correctCount,
-      totalQuestions: BATTLE_QUESTION_COUNT,
-      totalTimeMs,
-      questionResults,
-      submittedAt: ServerValue.TIMESTAMP,
-    });
-
-    // 9. べき等マーカーを Firestore に書き込む
-    await idempotencyRef.set({
-      roomId,
-      uid: callerUid,
-      status: "completed",
-      score: totalScore,
-      correctCount,
-      submittedAt: Timestamp.now(),
-    });
-
-    return { success: true, alreadySubmitted: false };
   });
 
 // ==========================================
 // finalizeKanjiBattleRoom — playerScores を集計して結果・XP を確定する
 // ==========================================
 export const finalizeKanjiBattleRoom = functions.region("us-central1").https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Authentication is required.");
-  }
-  const callerUid = context.auth.uid;
+  assertAppAccess(context);
+  const callerUid = context.auth!.uid;
   await assertKanjiBattleAccess(callerUid);
 
   const roomId = clampString((data as any)?.roomId, 12);
@@ -1264,6 +1277,10 @@ export const processDrillResult = functions
   }
 
   const { attemptId, unitId: rawUnitId, time: rawTime, answers, mode: rawMode } = data as any;
+  const rawAttemptId = typeof attemptId === "string" ? attemptId.trim() : "";
+  if (rawAttemptId && !/^[A-Za-z0-9_-]{8,120}$/.test(rawAttemptId)) {
+    throw new functions.https.HttpsError("invalid-argument", "attemptId の形式が不正です。");
+  }
   const unitId = (rawUnitId || "").trim();
   const drillMode: DrillMode = rawMode === "all" ? "all" : rawMode === "wrong" ? "wrong" : "standard";
 
@@ -1316,6 +1333,9 @@ export const processDrillResult = functions
     throw new functions.https.HttpsError("not-found", "指定された単元が見つかりません。");
   }
   const unitData = unitDoc.data()!;
+  if (unitData.drillType === "written" || isKanjiUnit(unitData)) {
+    throw new functions.https.HttpsError("failed-precondition", "この単元は通常の数学演習では提出できません。");
+  }
   // unitTitle はサーバー側の値を使用（クライアント送信値は信頼しない）
   const unitTitle: string = unitData.title || unitId;
   const unitSubject: string = unitData.subject || "数学";
@@ -1323,6 +1343,12 @@ export const processDrillResult = functions
   const unitQuestions = await loadUnitQuestions(unitId, unitData, drillMode === "all");
   if (safeAnswers.length > unitQuestions.length) {
     throw new functions.https.HttpsError("invalid-argument", "回答数が問題数を超えています。");
+  }
+  if (drillMode === "standard") {
+    const expectedStandardCount = Math.min(STANDARD_XP_QUESTION_COUNT, unitQuestions.length);
+    if (safeAnswers.length !== expectedStandardCount) {
+      throw new functions.https.HttpsError("invalid-argument", "標準演習の回答数が規定数と一致しません。");
+    }
   }
 
   // 問題ID → 問題データ（parsedOptions 付き）のマップ
@@ -1484,7 +1510,7 @@ export const processDrillResult = functions
     correctQuestions: safeCorrectQuestions,
     wrongQuestions: safeWrongQuestions,
   };
-  const attemptDocId = attemptId || db.collection(`users/${uid}/attempts`).doc().id;
+  const attemptDocId = rawAttemptId || db.collection(`users/${uid}/attempts`).doc().id;
 
   try {
     // --- 2. トランザクションによるデータ更新 ---
@@ -1495,9 +1521,10 @@ export const processDrillResult = functions
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
     const analyticsEventRef = db.collection("analytics_events").doc(`submit_${attemptDocId}`);
 
-    const [userSnap, attemptSnap] = await Promise.all([
+    const [userSnap, attemptSnap, analyticsEventSnap] = await Promise.all([
       transaction.get(userRef),
-      transaction.get(attemptRef)
+      transaction.get(attemptRef),
+      transaction.get(analyticsEventRef),
     ]);
 
     if (attemptSnap.exists) {
@@ -1511,6 +1538,10 @@ export const processDrillResult = functions
         _rapidSubmission: null,
         ...questionResults,
       };
+    }
+
+    if (analyticsEventSnap.exists && analyticsEventSnap.data()?.uid && analyticsEventSnap.data()?.uid !== uid) {
+      throw new functions.https.HttpsError("invalid-argument", "attemptId が既に使用されています。");
     }
 
     const userData = userSnap.data() || {};
@@ -2079,6 +2110,10 @@ export const submitWrittenDrillResult = functions
     }
 
     const { attemptId, unitId: rawUnitId, questionId: rawQuestionId, time: rawTime, answerImageDataUrl } = data as any;
+    const rawAttemptId = typeof attemptId === "string" ? attemptId.trim() : "";
+    if (rawAttemptId && !/^[A-Za-z0-9_-]{8,120}$/.test(rawAttemptId)) {
+      throw new functions.https.HttpsError("invalid-argument", "attemptId の形式が不正です。");
+    }
     const unitId = clampString(rawUnitId, 120);
     const questionId = clampString(rawQuestionId, 120);
     const imageDataUrl = typeof answerImageDataUrl === "string" ? answerImageDataUrl : "";
@@ -2124,11 +2159,20 @@ export const submitWrittenDrillResult = functions
       throw new functions.https.HttpsError("invalid-argument", "不正な問題IDが含まれています。");
     }
 
-    const modelAnswerText = String(question.modelAnswer || question.model_answer || question.explanation || "");
+    const gradingConfigSnap = await db.doc(`units/${unitId}/grading_configs/${questionId}`).get();
+    const resolvedConfig = resolveWrittenGradingConfig(
+      question as Record<string, unknown>,
+      gradingConfigSnap.exists ? (gradingConfigSnap.data() as Record<string, unknown>) : null,
+      unitData as Record<string, unknown>
+    );
+    const modelAnswerText = resolvedConfig.modelAnswer;
+    const resolvedGradingRubric = resolvedConfig.gradingRubric;
+    const resolvedIconReward = resolvedConfig.iconReward;
     const limit = Math.max(2, Math.trunc(Number(unitData.writtenAttemptLimit) || 2));
     const limitRef = db.doc(`users/${uid}/writtenAttemptLimits/${unitId}`);
-    const attemptDocId = clampString(attemptId, 120) || db.collection(`users/${uid}/attempts`).doc().id;
+    const attemptDocId = rawAttemptId || db.collection(`users/${uid}/attempts`).doc().id;
     const attemptRef = db.collection(`users/${uid}/attempts`).doc(attemptDocId);
+    const gradingClaimId = randomUUID();
     const reservation = await db.runTransaction(async (transaction) => {
       const userRef = db.doc(`users/${uid}`);
       const [userSnap, attemptTxnSnap, limitTxnSnap] = await Promise.all([
@@ -2137,31 +2181,43 @@ export const submitWrittenDrillResult = functions
         transaction.get(limitRef),
       ]);
       const limitData = limitTxnSnap.data() || {};
+      const lastAttemptId = clampString(limitData.lastAttemptId, 120) || null;
+      const lastAttemptRef =
+        !attemptTxnSnap.exists && lastAttemptId && lastAttemptId !== attemptDocId
+          ? db.collection(`users/${uid}/attempts`).doc(lastAttemptId)
+          : null;
+      const lastAttemptSnap = lastAttemptRef ? await transaction.get(lastAttemptRef) : null;
       const attemptGroupId = `${uid}:${unitId}:${questionId}`;
       const decision = decideWrittenAttemptReservation({
         existingAttempt: attemptTxnSnap.exists ? attemptTxnSnap.data() || {} : null,
+        lastAttempt: lastAttemptSnap?.exists ? lastAttemptSnap.data() || {} : null,
+        lastAttemptId,
         usedAttempts: limitData.usedAttempts,
         limit,
         fallbackGroupId: attemptGroupId,
-        previousAttemptId: clampString(limitData.lastAttemptId, 120) || null,
+        previousAttemptId: lastAttemptId,
+        nowMs: now.toMillis(),
       });
 
       if (decision.kind === "already_processed") {
         return {
           kind: "already_processed" as const,
           existing: decision.existing,
+          gradingClaimId,
           ...decision.metadata,
         };
       }
       if (decision.kind === "retry") {
         transaction.update(attemptRef, {
           status: "grading",
+          gradingClaimId,
           gradingErrorCode: FieldValue.delete(),
           retryStartedAt: now,
           updatedAt: now,
         });
         return {
           kind: "reserved" as const,
+          gradingClaimId,
           ...decision.metadata,
         };
       }
@@ -2170,6 +2226,15 @@ export const submitWrittenDrillResult = functions
       }
       if (decision.kind === "exhausted") {
         throw new functions.https.HttpsError("resource-exhausted", "この記述式イベントの提出回数上限に達しています。");
+      }
+
+      if (decision.kind === "reclaim_failed_slot" && lastAttemptRef && lastAttemptSnap?.exists) {
+        transaction.update(lastAttemptRef, {
+          status: "superseded",
+          supersededBy: attemptDocId,
+          gradingClaimId: FieldValue.delete(),
+          updatedAt: now,
+        });
       }
 
       const userData = userSnap.exists ? userSnap.data() || {} : {};
@@ -2181,6 +2246,10 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt,
       } = decision.metadata;
       const expireAt = new Date(now.toDate().getTime() + 90 * 24 * 60 * 60 * 1000);
+      const nextAttemptCount =
+        decision.kind === "reclaim_failed_slot"
+          ? Math.max(1, Number(existingWrittenStats.attemptCount) || attemptOrdinal)
+          : (existingWrittenStats.attemptCount || 0) + 1;
 
       transaction.set(userRef, {
         updatedAt: dateStr,
@@ -2188,7 +2257,7 @@ export const submitWrittenDrillResult = functions
           [unitId]: {
             maxScore: Number(existingWrittenStats.maxScore) || 0,
             bestAttemptId: existingWrittenStats.bestAttemptId || null,
-            attemptCount: (existingWrittenStats.attemptCount || 0) + 1,
+            attemptCount: nextAttemptCount,
             totalXpEarned: Number(existingWrittenStats.totalXpEarned) || 0,
             remainingAttempts,
             limit,
@@ -2210,6 +2279,7 @@ export const submitWrittenDrillResult = functions
         userName,
         type: "written",
         status: "grading",
+        gradingClaimId,
         unitId,
         unitTitle: String(unitData.title || unitId),
         questionId,
@@ -2231,6 +2301,7 @@ export const submitWrittenDrillResult = functions
 
       return {
         kind: "reserved" as const,
+        gradingClaimId,
         attemptOrdinal,
         attemptLimit: limit,
         attemptGroupId,
@@ -2257,6 +2328,9 @@ export const submitWrittenDrillResult = functions
         isFinalAllowedAttempt: existing.isFinalAllowedAttempt || false,
         grading: existing.grading || null,
         modelAnswer: modelAnswerText,
+        iconReward: existing.iconReward
+          ? { ...(existing.iconReward as Record<string, unknown>), newlyUnlocked: false }
+          : null,
       };
     }
     let grading: Awaited<ReturnType<typeof gradeWrittenAnswerWithGemini>>;
@@ -2266,7 +2340,7 @@ export const submitWrittenDrillResult = functions
         unitTitle: String(unitData.title || unitId),
         questionText: String(question.question_text || ""),
         modelAnswer: modelAnswerText,
-        gradingRubric: question.gradingRubric || question.grading_rubric || unitData.gradingRubric || [],
+        gradingRubric: resolvedGradingRubric,
         answerImageDataUrl: imageDataUrl,
       });
       archive = await stageWrittenArchive({
@@ -2280,7 +2354,7 @@ export const submitWrittenDrillResult = functions
         questionId,
         questionText: String(question.question_text || ""),
         modelAnswer: modelAnswerText,
-        rubric: normalizeWrittenRubric(question.gradingRubric || question.grading_rubric || unitData.gradingRubric || []),
+        rubric: normalizeWrittenRubric(resolvedGradingRubric),
         submittedAt: dateStr,
         grading,
         gradingVersion: grading.usageMetadata.promptHash,
@@ -2299,32 +2373,47 @@ export const submitWrittenDrillResult = functions
         typeof gradingErr.code === "string"
           ? gradingErr.code
           : "internal";
-      await attemptRef.set({
-        status: "grading_failed",
-        gradingErrorCode: clampString(gradingErrorCode, 80),
-        updatedAt: Timestamp.now(),
-      }, { merge: true });
+      await db.runTransaction(async (transaction) => {
+        const currentSnap = await transaction.get(attemptRef);
+        const currentData = currentSnap.data() || {};
+        if (
+          currentSnap.exists &&
+          currentData.status === "grading" &&
+          currentData.gradingClaimId === reservation.gradingClaimId
+        ) {
+          transaction.update(attemptRef, {
+            status: "grading_failed",
+            gradingErrorCode: clampString(gradingErrorCode, 80),
+            updatedAt: Timestamp.now(),
+          });
+        }
+      }).catch(() => undefined);
       throw gradingErr;
     }
     const finalXpGain = calculateWrittenXp(grading.score, Number(unitData.writtenXpBase) || 232);
-    const earnedIconReward = getEarnedWrittenIconReward(question.iconReward, grading.score);
+    const earnedIconReward = getEarnedWrittenIconReward(resolvedIconReward, grading.score);
 
     const result = await db.runTransaction(async (transaction) => {
       const userRef = db.doc(`users/${uid}`);
       const analyticsEventRef = db.collection("analytics_events").doc(`written_${attemptDocId}`);
-      const [userSnap, attemptTxnSnap] = await Promise.all([
+      const [userSnap, attemptTxnSnap, analyticsEventSnap] = await Promise.all([
         transaction.get(userRef),
         transaction.get(attemptRef),
+        transaction.get(analyticsEventRef),
       ]);
 
       if (!attemptTxnSnap.exists) {
         throw new functions.https.HttpsError("internal", "予約済み答案が見つかりません。");
+      }
+      if (analyticsEventSnap.exists && analyticsEventSnap.data()?.uid && analyticsEventSnap.data()?.uid !== uid) {
+        throw new functions.https.HttpsError("invalid-argument", "attemptId が既に使用されています。");
       }
       const attemptTxnData = attemptTxnSnap.data() || {};
       const finalization = decideWrittenAttemptFinalization({
         attempt: attemptTxnData,
         reservation,
         limit,
+        expectedClaimId: reservation.gradingClaimId,
       });
       if (finalization.kind === "already_processed") {
         return {
@@ -2346,6 +2435,9 @@ export const submitWrittenDrillResult = functions
             ? { ...attemptTxnData.iconReward, newlyUnlocked: false }
             : null,
         };
+      }
+      if (finalization.kind === "stale_claim") {
+        throw new functions.https.HttpsError("aborted", "別の再試行によって採点が引き継がれました。");
       }
       if (finalization.kind === "invalid_status") {
         throw new functions.https.HttpsError("failed-precondition", "この答案は採点できない状態です。");
@@ -2894,6 +2986,59 @@ export const resetWrittenEventData = functions.region("us-central1").https.onCal
     });
 
     await batch.commit();
+  }
+
+  if (restoreXp && touchedUidList.length > 0) {
+    const leaderboardRef = db.doc("leaderboards/overall");
+    await db.runTransaction(async (transaction) => {
+      const leaderboardSnap = await transaction.get(leaderboardRef);
+      if (!leaderboardSnap.exists) return;
+      const existingRankings = Array.isArray(leaderboardSnap.data()?.rankings)
+        ? leaderboardSnap.data()!.rankings
+        : [];
+      const rankedUids = new Set(
+        existingRankings
+          .map((entry: any) => String(entry?.uid || ""))
+          .filter(Boolean)
+      );
+      const impactedRankedUids = touchedUidList.filter((uid) => rankedUids.has(uid));
+      if (impactedRankedUids.length === 0) return;
+
+      const userSnaps = await Promise.all(
+        impactedRankedUids.map((uid) => transaction.get(db.doc(`users/${uid}`)))
+      );
+      const updatedUserByUid = new Map<string, { xp: number; level: number }>();
+      userSnaps.forEach((snap, idx) => {
+        if (!snap.exists) return;
+        const uData = snap.data() || {};
+        const safeXp = Math.max(0, Number(uData.xp) || 0);
+        const levelData = calculateLevelAndProgressServer(safeXp);
+        updatedUserByUid.set(impactedRankedUids[idx], { xp: safeXp, level: levelData.level });
+      });
+
+      const nextRankings = existingRankings
+        .map((entry: any) => {
+          const updated = updatedUserByUid.get(String(entry?.uid || ""));
+          if (!updated) return entry;
+          return {
+            ...entry,
+            name: publicRankingName(entry?.name),
+            xp: updated.xp,
+            level: updated.level,
+          };
+        })
+        .sort((left: any, right: any) => {
+          if (Number(right.totalScore || 0) !== Number(left.totalScore || 0)) {
+            return Number(right.totalScore || 0) - Number(left.totalScore || 0);
+          }
+          return Number(right.xp || 0) - Number(left.xp || 0);
+        });
+
+      transaction.update(leaderboardRef, {
+        rankings: nextRankings,
+        updatedAt: Timestamp.now().toDate().toISOString(),
+      });
+    });
   }
 
   await db.collection("analytics_events").doc(`reset_written_${safeAnalyticsEventIdPart(unitId)}_${Date.now()}`).set({

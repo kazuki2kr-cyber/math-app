@@ -10,6 +10,7 @@ import { ArrowLeft, CheckCircle2, Clock, Eraser, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
+import { KanjiQuestionText } from '@/components/KanjiQuestionText';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
 import {
@@ -474,7 +475,7 @@ export default function KanjiBattlePlayPage() {
                 />
               </div>
               <CardTitle className="text-2xl leading-relaxed text-gray-900 font-medium">
-                <span dangerouslySetInnerHTML={{ __html: currentQuestion.question_text }} />
+                <KanjiQuestionText text={currentQuestion.question_text} />
               </CardTitle>
             </CardHeader>
             <CardContent className="px-8 pb-4">

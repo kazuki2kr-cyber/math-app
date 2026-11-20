@@ -2,8 +2,9 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, deleteField, doc, FieldPath, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import * as fs from 'fs';
+const { buildLiteralDottedFieldDeleteUpdateArgs } = require('../scripts/lib/unitStatsRepair');
 
 let testEnv: RulesTestEnvironment;
 
@@ -755,5 +756,82 @@ describe('Firestore Security Rules', () => {
       await expect(setDoc(inboxStateRef, { campaigns: ['client-data'] })).rejects.toThrow();
       await expect(deleteDoc(inboxStateRef)).rejects.toThrow();
     }
+  });
+
+  test('ドットを含む汚染トップレベルキーの削除で正規の unitStats が残る', async () => {
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+    const userRef = doc(adminContext.firestore(), 'users', aliceId);
+
+    await setDoc(userRef, {
+      uid: aliceId,
+      displayName: 'Alice',
+      unitStats: {
+        '1.正負の数の加減': { maxScore: 90, drillCount: 2 },
+      },
+      'unitStats.1.正負の数の加減': { maxScore: 40, drillCount: 1 },
+      'lastAttemptTimes.1.正負の数の加減': '2026-10-01T00:00:00.000Z',
+    });
+
+    const beforeSnap = await getDoc(userRef);
+    const { updateArgs } = buildLiteralDottedFieldDeleteUpdateArgs(
+      beforeSnap.data(),
+      FieldPath,
+      { delete: deleteField },
+      { totalScore: 90 }
+    );
+
+    await (updateDoc as unknown as (ref: unknown, ...args: unknown[]) => Promise<void>)(
+      userRef,
+      ...updateArgs
+    );
+
+    const afterSnap = await getDoc(userRef);
+    const afterData = afterSnap.data() || {};
+    expect(afterData['unitStats.1.正負の数の加減']).toBeUndefined();
+    expect(afterData['lastAttemptTimes.1.正負の数の加減']).toBeUndefined();
+    expect(afterData.unitStats).toEqual({
+      '1.正負の数の加減': { maxScore: 90, drillCount: 2 },
+    });
+    expect(afterData.totalScore).toBe(90);
+  });
+
+  test('記述式の採点設定 (grading_configs) は生徒が読み書きできず、管理者のみ読み書きできる', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'units', 'written_1'), {
+        id: 'written_1',
+        drillType: 'written',
+        subject: '数学甲',
+        title: '記述式テスト',
+      });
+      await setDoc(doc(context.firestore(), 'units', 'written_1', 'questions', 'q_0'), {
+        id: 'q_0',
+        order: 0,
+        question_text: '面積を求めよ。',
+        questionType: 'written',
+      });
+      await setDoc(doc(context.firestore(), 'units', 'written_1', 'grading_configs', 'q_0'), {
+        modelAnswer: '24 cm^2',
+        gradingRubric: [{ label: '式', maxScore: 60 }, { label: '答え', maxScore: 40 }],
+      });
+    });
+
+    const schoolStudent = testEnv.authenticatedContext(aliceId, { email: 'alice@shibaurafzk.com' });
+    const invitedStudent = testEnv.authenticatedContext(bobId, { email: 'bob@example.com', appAccess: true });
+    const adminContext = testEnv.authenticatedContext(adminId, { admin: true });
+
+    for (const ctx of [schoolStudent, invitedStudent]) {
+      const publicQuestionRef = doc(ctx.firestore(), 'units', 'written_1', 'questions', 'q_0');
+      const secretConfigRef = doc(ctx.firestore(), 'units', 'written_1', 'grading_configs', 'q_0');
+      await expect(getDoc(publicQuestionRef)).resolves.toBeDefined();
+      await expect(getDoc(secretConfigRef)).rejects.toThrow();
+      await expect(setDoc(secretConfigRef, { modelAnswer: 'hacked' })).rejects.toThrow();
+    }
+
+    const adminConfigRef = doc(adminContext.firestore(), 'units', 'written_1', 'grading_configs', 'q_0');
+    const adminSnap = await getDoc(adminConfigRef);
+    expect(adminSnap.data()?.modelAnswer).toBe('24 cm^2');
+    await expect(
+      setDoc(adminConfigRef, { modelAnswer: 'updated', gradingRubric: [] }, { merge: true })
+    ).resolves.toBeUndefined();
   });
 });

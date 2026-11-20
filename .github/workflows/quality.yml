@@ -54,8 +54,19 @@ jobs:
       - name: Build Functions
         run: npm --prefix functions run build
 
+      - name: Verify written grading contract
+        run: npm --prefix functions run test:contracts
+
       - name: Run unit and Firestore security tests
         run: npm test
+
+      - name: Run Storage security rules tests
+        run: npm run test:storage
+
+      - name: Run Kanji battle RTDB rules and integration tests
+        env:
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: https://math-app-26c77-default-rtdb.asia-southeast1.firebasedatabase.app
+        run: npm run test:kanji-battle
 
       - name: Install browser for regression tests
         run: npx playwright install --with-deps chromium

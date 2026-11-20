@@ -1,8 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 
-export const KANJI_BATTLE_ACCESS_STORAGE_KEY = 'kanji_battle_mode_access_granted';
-export const KANJI_BATTLE_ACCESS_PASSWORD = process.env.NEXT_PUBLIC_KANJI_BATTLE_ACCESS_PASSWORD || 'test';
 export const BATTLE_QUESTION_COUNT = 10;
 export const BATTLE_ANSWER_LIMIT_MS = 30_000;
 export const BATTLE_NEXT_QUESTION_COUNTDOWN_MS = 3_000;

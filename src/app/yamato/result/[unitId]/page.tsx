@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Trophy, TrendingUp, XCircle, CheckCircle, ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import Image from 'next/image';
+import { KanjiQuestionText } from '@/components/KanjiQuestionText';
 
 interface ResultData {
   score: number;
@@ -137,7 +138,7 @@ export default function KanjiResultPage({ params }: { params: Promise<{ unitId: 
                 <ul className="space-y-4">
                   {wrongQuestions.map((q, idx) => (
                     <li key={idx} className="bg-orange-50/50 p-4 rounded-xl border border-orange-100">
-                      <div className="text-sm text-gray-500 mb-1" dangerouslySetInnerHTML={{ __html: q.question_text || '' }}></div>
+                      <div className="text-sm text-gray-500 mb-1"><KanjiQuestionText text={q.question_text} /></div>
                       <div className="flex items-center gap-4">
                         <div className="flex-1 bg-white p-2 rounded border border-red-200 text-center">
                           <span className="text-xs text-red-400 block mb-1">判定結果</span>
@@ -169,7 +170,7 @@ export default function KanjiResultPage({ params }: { params: Promise<{ unitId: 
                 <ul className="space-y-4">
                   {correctQuestions.map((q, idx) => (
                     <li key={idx} className="bg-green-50/30 p-4 rounded-xl border border-green-100/50">
-                      <div className="text-sm text-gray-500 mb-1" dangerouslySetInnerHTML={{ __html: q.question_text || '' }}></div>
+                      <div className="text-sm text-gray-500 mb-1"><KanjiQuestionText text={q.question_text} /></div>
                       <div className="flex items-center gap-4">
                         <div className="w-full bg-white p-2 rounded border border-green-200 text-center flex justify-center items-center gap-4">
                           <span className="text-xs text-green-600 font-bold block">あなたの字は <span className="text-xl font-black mx-2">{q.recognizedText}</span> と判定されました！</span>

@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter }
 import { Clock, ArrowRight, XCircle, ChevronLeft, NotebookPen, Eraser, PenLine, RotateCcw, Trash2, CircleHelp } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { filterActiveQuestions } from '@/lib/questionAvailability';
+import { getLearningUnitStat } from '@/lib/learningProgress';
 import {
   cleanupScratchAttempts,
   deleteScratchAttempt,
@@ -122,7 +123,19 @@ function writeCachedDrillData(unitId: string, rawUnit: any, questions: RawQuesti
       drillType: rawUnit.drillType === 'written' ? 'written' : 'multiple_choice',
       questionAvailabilityRevision: Number(rawUnit.questionAvailabilityRevision) || 0,
     },
-    questions: questions.map(({ answer_index, explanation, ...question }) => question),
+    questions: questions.map((raw) => {
+      const {
+        answer_index: _answerIndex,
+        explanation: _explanation,
+        modelAnswer: _modelAnswer,
+        model_answer: _modelAnswerSnake,
+        gradingRubric: _gradingRubric,
+        grading_rubric: _gradingRubricSnake,
+        iconReward: _iconReward,
+        ...question
+      } = raw as RawQuestion & Record<string, unknown>;
+      return question;
+    }),
   };
 
   try {
@@ -245,8 +258,8 @@ export default function DrillPage() {
           if (mode === 'wrong' && user && drillType !== 'written') {
             const userDocRef = doc(db, 'users', user.uid);
             const userSnap = await getDoc(userDocRef);
-            if (userSnap.exists() && userSnap.data().unitStats?.[unitId]) {
-              const wrongIds = userSnap.data().unitStats[unitId].wrongQuestionIds || [];
+            if (userSnap.exists() && getLearningUnitStat(userSnap.data().unitStats, unitId).wrongQuestionIds) {
+              const wrongIds = getLearningUnitStat(userSnap.data().unitStats, unitId).wrongQuestionIds || [];
               filteredQuestions = filteredQuestions.filter(q => wrongIds.includes(q.id));
               if (filteredQuestions.length === 0) {
                 setError('間違えた問題がありません。復習完了です！');
@@ -402,7 +415,7 @@ export default function DrillPage() {
     setSubmittedAnswers(allAnswers);
 
     if (currentIndex < (unit.questions?.length || 0) - 1) {
-      setSelectedOption(null);
+      setSelectedOption(questionSelections[currentIndex + 1] ?? null);
       setCurrentIndex(currentIndex + 1);
     } else {
       // 最終問題 — 連打防止
@@ -572,8 +585,15 @@ export default function DrillPage() {
 
     isCompletingRef.current = true;
     setIsCompleting(true);
-    sessionStorage.setItem('drillResult', JSON.stringify(writtenResult));
-    router.push(`/result/${unitId}`);
+    try {
+      sessionStorage.setItem('drillResult', JSON.stringify(writtenResult));
+      router.push(`/result/${unitId}`);
+    } catch (storageErr) {
+      console.error('Failed to store written drill result in sessionStorage:', storageErr);
+      isCompletingRef.current = false;
+      setIsCompleting(false);
+      alert('解答データの一時保存に失敗しました。不要なタブを閉じるか、ブラウザの空き容量を確認して再度お試しください。');
+    }
   };
 
   const cancelDrill = () => {

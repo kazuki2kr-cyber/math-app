@@ -24,17 +24,32 @@ function iso(value: unknown): string | null {
   return value instanceof admin.firestore.Timestamp ? value.toDate().toISOString() : null;
 }
 
+function assertAppAccess(context: functions.https.CallableContext) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+  }
+  const token = context.auth.token || {};
+  const email = typeof token.email === "string" ? token.email.trim().toLowerCase() : "";
+  const allowed =
+    token.admin === true ||
+    token.appAccess === true ||
+    email.endsWith("@shibaurafzk.com");
+  if (!allowed) {
+    throw new functions.https.HttpsError("permission-denied", "利用権限がありません。");
+  }
+}
+
 export const recordWrittenResultExposure = functions.region("us-central1")
   .runWith({ invoker: "public" })
   .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+    assertAppAccess(context);
     const attemptId = data?.attemptId;
     const feedbackShown = data?.feedbackShown === true;
     const modelAnswerShown = data?.modelAnswerShown === true;
     if (!validId(attemptId) || (!feedbackShown && !modelAnswerShown)) {
       throw new functions.https.HttpsError("invalid-argument", "表示記録が不正です。");
     }
-    const uid = context.auth.uid;
+    const uid = context.auth!.uid;
     const attemptRef = db().doc(`users/${uid}/attempts/${attemptId}`);
     const exposureRef = db().doc(writtenExposurePath(uid, attemptId));
     await db().runTransaction(async transaction => {

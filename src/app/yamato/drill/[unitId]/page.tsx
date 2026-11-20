@@ -7,6 +7,8 @@ import { db, functions } from '@/lib/firebase';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { HandwritingCanvas, HandwritingCanvasRef } from '@/components/HandwritingCanvas';
+import { KanjiQuestionText } from '@/components/KanjiQuestionText';
+import { filterActiveQuestions } from '@/lib/questionAvailability';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ArrowRight, Eraser, Check, Loader2, Undo2, X } from 'lucide-react';
@@ -115,11 +117,11 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
 
         let qs: Question[] = [];
         if (data.questions && Array.isArray(data.questions)) {
-          qs = data.questions;
+          qs = filterActiveQuestions(data.questions as Array<Question & { active?: boolean }>);
         } else {
           // fetch from subcollection if not in array
           const subQs = await getDocs(collection(db, `units/${decodedUnitId}/questions`));
-          qs = subQs.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+          qs = filterActiveQuestions(subQs.docs.map(d => ({ id: d.id, ...d.data() } as Question & { active?: boolean })));
         }
 
         // Filtering for 'wrong' mode
@@ -243,8 +245,12 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
         time: timeSpent
       }));
 
-      // デバッグ用に提出した画像も一部表示できるよう保存
-      sessionStorage.setItem('kanji_composed_image', composedImageBase64);
+      // デバッグ用に提出した画像も一部表示できるよう保存（容量超過時は結果画面への遷移を優先）
+      try {
+        sessionStorage.setItem('kanji_composed_image', composedImageBase64);
+      } catch (storageErr) {
+        console.warn('Skipped caching kanji_composed_image in sessionStorage:', storageErr);
+      }
 
       completed = true;
       router.push(`/yamato/result/${unitId}`);
@@ -337,10 +343,10 @@ function KanjiDrillPage({ params }: { params: Promise<{ unitId: string }> }) {
       <main className="flex-1 flex flex-col items-center justify-start p-4 overflow-y-auto">
         <Card className="w-full max-w-xl border-orange-900/20 shadow-xl bg-white">
           <div className="p-8 text-center bg-orange-50/50 border-b border-orange-100 min-h-[140px] flex items-center justify-center flex-col">
-            {/* 漢字問題のテキスト。問題によってはフリガナや対象文字をハイライトする処理を後で入れる想定 */}
-            <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center"
-                dangerouslySetInnerHTML={{ __html: text.replace(/([一-龠]+)/g, '<span class="text-orange-900 border-b-2 border-orange-400">$1</span>') }}
-            />
+            {/* 漢字問題のテキスト */}
+            <h2 className="text-2xl md:text-3xl font-black text-gray-900 leading-relaxed tracking-widest text-center">
+              <KanjiQuestionText text={text} highlightKanji />
+            </h2>
 
           </div>
           

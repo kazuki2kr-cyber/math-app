@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, Trash2 } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { doc, deleteDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { KanjiQuestionText } from '@/components/KanjiQuestionText';
 
 interface KanjiUnitsTabProps {
   units: any[];
@@ -84,7 +85,7 @@ export default function KanjiUnitsTab({ units, loading, refreshUnits, setMessage
                       {qs.map((q: any) => (
                         <div key={q.id} className="text-xs flex gap-2 items-start text-gray-600 pb-2 border-b border-gray-50 last:border-0">
                           <span className="font-mono text-gray-400 w-16 flex-shrink-0">{q.id}</span>
-                          <span className="flex-1" dangerouslySetInnerHTML={{ __html: q.question_text }} />
+                          <KanjiQuestionText text={q.question_text} className="flex-1" />
                           <span className="font-bold text-orange-700 bg-orange-50 px-2 rounded min-w-[30px] text-center">
                             {q.answer || '(解答なし)'}
                           </span>

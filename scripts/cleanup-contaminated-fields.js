@@ -1,8 +1,10 @@
 const admin = require('firebase-admin');
-const { FieldValue } = require('firebase-admin/firestore');
+const { FieldPath, FieldValue } = require('firebase-admin/firestore');
+const { buildLiteralDottedFieldDeleteUpdateArgs } = require('./lib/unitStatsRepair');
 
 // 使用前にプロジェクトIDが正しいか確認
 const projectId = 'math-app-26c77';
+const isDryRun = !process.argv.includes('--apply');
 admin.initializeApp({ projectId });
 const db = admin.firestore();
 
@@ -21,7 +23,7 @@ const usersToFix = [
 ];
 
 async function cleanup() {
-  console.log('--- クリーンアップ開始 ---');
+  console.log(`--- クリーンアップ開始 (${isDryRun ? 'DRY-RUN: --apply 未指定のため書き込みなし' : 'APPLY'}) ---`);
   
   for (const uid of usersToFix) {
     const userRef = db.collection('users').doc(uid);
@@ -33,39 +35,37 @@ async function cleanup() {
     }
     
     const data = snap.data();
-    const updates = {};
-    const fieldsToDelete = [];
-    
-    // トップレベルの unitStats.x.y や lastAttemptTimes.x.y を探す
-    for (const key of Object.keys(data)) {
-      if (key.startsWith('unitStats.') || key.startsWith('lastAttemptTimes.')) {
-        // フィールド名にドットが含まれているトップレベルフィールド
-        fieldsToDelete.push(key);
-        updates[key] = FieldValue.delete();
+    // unitStats マップ内のデータを保護しつつ、トータルスコアを再計算
+    const unitStats = data.unitStats || {};
+    let totalScore = 0;
+    for (const stats of Object.values(unitStats)) {
+      if (stats && typeof stats === 'object' && stats.maxScore) {
+        totalScore += stats.maxScore;
       }
     }
+
+    const extraFields = {
+      updatedAt: new Date().toISOString(),
+      ...(data.totalScore !== totalScore ? { totalScore } : {}),
+    };
+
+    const { fieldsToDelete, updateArgs } = buildLiteralDottedFieldDeleteUpdateArgs(
+      data,
+      FieldPath,
+      FieldValue,
+      extraFields,
+      (key) => key.startsWith('unitStats.') || key.startsWith('lastAttemptTimes.')
+    );
     
     if (fieldsToDelete.length > 0) {
       console.log(`User: ${data.displayName || uid} (${uid})`);
-      console.log(`  Deleting fields: ${fieldsToDelete.join(', ')}`);
-      
-      // unitStats マップ内のデータを保護しつつ、トータルスコアを再計算
-      const unitStats = data.unitStats || {};
-      let totalScore = 0;
-      for (const stats of Object.values(unitStats)) {
-        if (stats && typeof stats === 'object' && stats.maxScore) {
-          totalScore += stats.maxScore;
-        }
-      }
-      
+      console.log(`  Deleting literal top-level fields: ${fieldsToDelete.join(', ')}`);
       if (data.totalScore !== totalScore) {
         console.log(`  Correcting totalScore: ${data.totalScore} -> ${totalScore}`);
-        updates.totalScore = totalScore;
       }
-      
-      updates.updatedAt = new Date().toISOString();
-      
-      await userRef.update(updates);
+      if (!isDryRun) {
+        await userRef.update(...updateArgs);
+      }
       console.log('  Done.');
     } else {
       console.log(`User: ${data.displayName || uid} (${uid}) - No contaminated fields found.`);

@@ -152,6 +152,10 @@ service cloud.firestore {
         // admin 以外は Cloud Functions 経由で間接的に更新
         allow write: if isAdmin();
       }
+
+      match /grading_configs/{qId} {
+        allow read, write: if isAdmin();
+      }
     }
 
     // ------------------------------------------

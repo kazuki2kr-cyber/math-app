@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { randomUUID } from "node:crypto";
 import { Timestamp } from "firebase-admin/firestore";
 import { publicRankingName } from "./publicRankingName";
+import { filterActiveQuestionsServer } from "./questionAvailability";
 import vision from "@google-cloud/vision";
 import {
   OcrQuestionLayout,
@@ -15,6 +16,24 @@ import {
 const db = admin.firestore();
 const visionClient = new vision.ImageAnnotatorClient();
 const KANJI_ACCESS_MAX_FAILURES = 3;
+
+function assertAppAccess(context: functions.https.CallableContext): void {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
+  }
+  const token = context.auth.token || {};
+  const email = typeof token.email === "string" ? token.email.trim().toLowerCase() : "";
+  const allowed =
+    token.admin === true ||
+    token.appAccess === true ||
+    email.endsWith("@shibaurafzk.com");
+  if (!allowed) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "このサービスの対象外アカウントです。"
+    );
+  }
+}
 
 // ==========================================
 // 漢字のレベル計算ユーティリティ (literary themes)
@@ -81,11 +100,9 @@ function getKanjiAccessPassword(): string {
 export const verifyKanjiAccessPassword = functions
   .region("us-central1")
   .https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
-    }
+    assertAppAccess(context);
 
-    const uid = context.auth.uid;
+    const uid = context.auth!.uid;
     const password = String((data as { password?: unknown })?.password || "");
     const userRef = db.doc(`users/${uid}`);
     const expectedPassword = getKanjiAccessPassword();
@@ -151,9 +168,7 @@ export const recognizeKanjiBatch = functions
   .region("us-central1")
   .runWith({ timeoutSeconds: 120, memory: '1GB' })
   .https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "認証が必要です。");
-    }
+    assertAppAccess(context);
 
     const { attemptId, unitId, composedImageBase64, questionIds, layout } = data as {
       attemptId: string;
@@ -162,12 +177,19 @@ export const recognizeKanjiBatch = functions
       questionIds?: string[];
       layout?: OcrQuestionLayout[];
     };
-    if (!/^[A-Za-z0-9_-]{16,80}$/.test(String(attemptId || "")) || !unitId || !composedImageBase64) {
+    if (
+      !/^[A-Za-z0-9_-]{16,80}$/.test(String(attemptId || "")) ||
+      !unitId ||
+      typeof composedImageBase64 !== "string" ||
+      composedImageBase64.length === 0 ||
+      composedImageBase64.length > 4_500_000 ||
+      (layout !== undefined && (!Array.isArray(layout) || layout.length > 20))
+    ) {
       throw new functions.https.HttpsError("invalid-argument", "attemptId、unitId と画像のBase64データが必要です。");
     }
 
-    const uid = context.auth.uid;
-    const userName = publicRankingName(context.auth.token.name);
+    const uid = context.auth!.uid;
+    const userName = publicRankingName(context.auth!.token.name);
     const accessSnap = await db.doc(`users/${uid}`).get();
     const accessData = accessSnap.exists ? accessSnap.data() || {} : {};
     if (accessData.kanjiAccessBlocked === true || accessData.kanjiAccessGranted !== true) {
@@ -216,9 +238,10 @@ export const recognizeKanjiBatch = functions
           allQuestions = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         }
 
-        questions = allQuestions;
+        questions = filterActiveQuestionsServer(allQuestions);
       }
 
+      const expectedStandardCount = Math.min(10, questions.length);
       if (questionIds !== undefined) {
         if (!Array.isArray(questionIds) || !questionIds.length || new Set(questionIds).size !== questionIds.length) {
           throw new functions.https.HttpsError("invalid-argument", "出題された問題を確認できません。");
@@ -230,6 +253,21 @@ export const recognizeKanjiBatch = functions
         throw new functions.https.HttpsError("failed-precondition", "単元の問題が更新されています。演習を開き直してください。");
       }
 
+      const isFullStandardSession = questions.length >= expectedStandardCount;
+      if (!isFullStandardSession) {
+        const storedWrongIds: string[] = Array.isArray(accessData.kanjiUnitStats?.[unitId]?.wrongQuestionIds)
+          ? accessData.kanjiUnitStats[unitId].wrongQuestionIds.map(String)
+          : [];
+        const wrongIdSet = new Set(storedWrongIds);
+        const allFromWrongList = questions.every((q) => wrongIdSet.has(String(q.id)));
+        if (!allFromWrongList) {
+          throw new functions.https.HttpsError(
+            "invalid-argument",
+            "通常演習の出題数が規定数と一致しません。"
+          );
+        }
+      }
+
       transaction.set(idempotencyRef, {
         attemptId,
         uid,
@@ -238,14 +276,14 @@ export const recognizeKanjiBatch = functions
         status: "processing",
         startedAt: Timestamp.now(),
       });
-      return { kind: "claimed" as const, questions };
+      return { kind: "claimed" as const, questions, isFullStandardSession };
     });
     if (claimResult.kind === "completed") return claimResult.response;
     if (claimResult.kind === "processing") {
       throw new functions.https.HttpsError("aborted", "この提出は現在処理中です。しばらく待ってから再試行してください。");
     }
 
-    const { questions } = claimResult;
+    const { questions, isFullStandardSession } = claimResult;
 
     // base64のプレフィックスを取り除く
     const base64Data = composedImageBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -393,7 +431,10 @@ export const recognizeKanjiBatch = functions
         }
 
       const existingMaxScore = existingKanjiStats.maxScore || 0;
-      isHighScore = existingMaxScore === undefined || serverScore > existingMaxScore;
+      const nextMaxScore = isFullStandardSession
+        ? Math.max(existingMaxScore, serverScore)
+        : existingMaxScore;
+      isHighScore = isFullStandardSession && (existingKanjiStats.maxScore === undefined || serverScore > existingMaxScore);
 
       newTotalXp = currentKanjiXp + finalXpGain;
       const oldLevelData = calculateKanjiLevel(currentKanjiXp);
@@ -419,7 +460,7 @@ export const recognizeKanjiBatch = functions
       const nextKanjiUnitStats = {
         ...previousKanjiUnitStats,
         [unitId]: {
-          maxScore: Math.max(existingMaxScore, serverScore),
+          maxScore: nextMaxScore,
           drillCount: (existingKanjiStats.drillCount || 0) + 1,
           wrongQuestionIds: newWrongQuestionIds
         }
@@ -439,7 +480,7 @@ export const recognizeKanjiBatch = functions
         kanjiUnitStats: {
           ...(userSnap.exists ? userSnap.data()!.kanjiUnitStats || {} : {}),
           [unitId]: {
-            maxScore: Math.max(existingMaxScore, serverScore),
+            maxScore: nextMaxScore,
             drillCount: (existingKanjiStats.drillCount || 0) + 1,
             wrongQuestionIds: newWrongQuestionIds
           }
@@ -497,63 +538,68 @@ export const recognizeKanjiBatch = functions
 // ==========================================
 async function updateKanjiLeaderboard(uid: string, userName: string, icon: string, level: number, xp: number) {
   const leaderboardRef = db.doc("leaderboards/kanji");
+  const userRef = db.doc(`users/${uid}`);
 
-  const userSnap = await db.doc(`users/${uid}`).get();
-  const userData = userSnap.data();
-  if (!userData) return;
+  await db.runTransaction(async (transaction) => {
+    const [userSnap, leaderboardSnap] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(leaderboardRef),
+    ]);
+    const userData = userSnap.data();
+    if (!userData) return;
 
-  const totalScore = userData.kanjiTotalScore || 0;
-  const storedBadges = userData.kanjiSeasonBadges && typeof userData.kanjiSeasonBadges === "object"
-    ? Object.values(userData.kanjiSeasonBadges) as any[]
-    : [];
-  const badges = [...storedBadges];
-  if (!badges.some((badge: any) => badge?.seasonId === "season1") && (userData.kanjiSeason1Badge || userData.kanjiSeason1Certified === true)) {
-    badges.push(userData.kanjiSeason1Badge || {
-      seasonId: "season1",
-      seasonNumber: 1,
-      label: "Season 1 認証",
-      badgeImageUrl: "/images/kanji-season1-badge.png",
+    const totalScore = userData.kanjiTotalScore || 0;
+    const storedBadges = userData.kanjiSeasonBadges && typeof userData.kanjiSeasonBadges === "object"
+      ? Object.values(userData.kanjiSeasonBadges) as any[]
+      : [];
+    const badges = [...storedBadges];
+    if (!badges.some((badge: any) => badge?.seasonId === "season1") && (userData.kanjiSeason1Badge || userData.kanjiSeason1Certified === true)) {
+      badges.push(userData.kanjiSeason1Badge || {
+        seasonId: "season1",
+        seasonNumber: 1,
+        label: "Season 1 認証",
+        badgeImageUrl: "/images/kanji-season1-badge.png",
+      });
+    }
+    badges.sort((a: any, b: any) => Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0));
+    const latestBadge = badges[0] || null;
+
+    let rankings: any[] = [];
+    if (leaderboardSnap.exists) {
+      rankings = (leaderboardSnap.data()?.rankings || []).map((ranking: { name?: string }) => ({
+        ...ranking, name: publicRankingName(ranking.name),
+      }));
+    }
+
+    const existingIdx = rankings.findIndex((r: any) => r.uid === uid);
+    const entry = {
+      uid,
+      name: userName,
+      totalScore,
+      xp,
+      icon,
+      level,
+      badges,
+      certified: badges.length > 0,
+      badgeImageUrl: latestBadge?.badgeImageUrl || null,
+    };
+
+    if (existingIdx >= 0) {
+      rankings[existingIdx] = entry;
+    } else {
+      rankings.push(entry);
+    }
+
+    rankings.sort((a: any, b: any) => {
+      if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+      return b.xp - a.xp;
     });
-  }
-  badges.sort((a: any, b: any) => Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0));
-  const latestBadge = badges[0] || null;
 
-  const leaderboardSnap = await leaderboardRef.get();
-  let rankings: any[] = [];
-  if (leaderboardSnap.exists) {
-    rankings = (leaderboardSnap.data()?.rankings || []).map((ranking: { name?: string }) => ({
-      ...ranking, name: publicRankingName(ranking.name),
-    }));
-  }
+    rankings = rankings.slice(0, 40);
 
-  const existingIdx = rankings.findIndex((r: any) => r.uid === uid);
-  const entry = {
-    uid,
-    name: userName,
-    totalScore,
-    xp,
-    icon,
-    level,
-    badges,
-    certified: badges.length > 0,
-    badgeImageUrl: latestBadge?.badgeImageUrl || null,
-  };
-
-  if (existingIdx >= 0) {
-    rankings[existingIdx] = entry;
-  } else {
-    rankings.push(entry);
-  }
-
-  rankings.sort((a: any, b: any) => {
-    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-    return b.xp - a.xp;
-  });
-
-  rankings = rankings.slice(0, 40);
-
-  await leaderboardRef.set({
-    rankings,
-    updatedAt: new Date().toISOString(),
+    transaction.set(leaderboardRef, {
+      rankings,
+      updatedAt: new Date().toISOString(),
+    });
   });
 }

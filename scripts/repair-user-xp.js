@@ -18,9 +18,12 @@ const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'math-app-26c77
 const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const adminEmail = process.env.TEST_USER_EMAIL;
 const adminPassword = process.env.TEST_USER_PASSWORD;
-const isDryRun = process.argv.includes('--dry-run');
+// 安全のため、90日TTLの attempts サブコレクションから生涯累計XPを上書きする処理は停止し、常に DRY-RUN（監査のみ）とする。
+const isDryRun = true;
+const requestedWrite = process.argv.includes('--apply') || process.argv.includes('--write');
 const MAX_LEVEL = 100;
 const LEVEL_XP_CAP_LEVEL = 40;
+const { sanitizeRankingName } = require('./lib/unitStatsRepair');
 
 function ensureConfig() {
   if (!apiKey || !adminEmail || !adminPassword) {
@@ -50,16 +53,16 @@ function calculateLevelAndProgress(totalXp) {
 
 function getTitleForLevel(level) {
   if (level >= 100) return 'Grandmaster';
-  if (level >= 90) return '数学のオイラー';
-  if (level >= 80) return '数学の星';
+  if (level >= 90) return '次世代のオイラー';
+  if (level >= 80) return '数学の覇者';
   if (level >= 70) return '数学マスター';
   if (level >= 60) return '数学の賢者';
-  if (level >= 50) return '化学の数学ハンター';
+  if (level >= 50) return '芝浦の数理ハンター';
   if (level >= 40) return '数学のひらめき';
-  if (level >= 30) return '電気の計算職人';
+  if (level >= 30) return '論理の探求者';
   if (level >= 20) return '計算の達人';
   if (level >= 10) return '数学ビギナー';
-  return '算数勉強中';
+  return '算数卒業生';
 }
 
 function parseFirestoreValue(value) {
@@ -314,7 +317,7 @@ async function repairViaRest() {
     if ((data.totalScore && data.totalScore > 0) || (data.xp && data.xp > 0)) {
       allPlayers.push({
         uid: userDoc.id,
-        name: data.displayName || data.email || '名無し',
+        name: sanitizeRankingName(data.displayName),
         totalScore: Number(data.totalScore || 0),
         xp: Number(data.xp || 0),
         icon: data.icon || '📐',
@@ -414,7 +417,7 @@ async function repairViaAdmin() {
     if ((data.totalScore && data.totalScore > 0) || (data.xp && data.xp > 0)) {
       allPlayers.push({
         uid: doc.id,
-        name: data.displayName || data.email || '名無し',
+        name: sanitizeRankingName(data.displayName),
         totalScore: Number(data.totalScore || 0),
         xp: Number(data.xp || 0),
         icon: data.icon || '📐',
@@ -446,7 +449,12 @@ async function repairViaAdmin() {
 }
 
 async function main() {
-  console.log(`--- XP修復開始 (${isDryRun ? 'DRY-RUN' : 'REAL'}) ---`);
+  if (requestedWrite) {
+    throw new Error(
+      'users/{uid}/attempts は90日TTLで削除されるため、attempts合算による累計XPの上書きはデータ消失を防ぐため停止されています。'
+    );
+  }
+  console.log('--- XP差分監査開始 (READ-ONLY: attempts 90日TTLのため書き込みは停止中) ---');
 
   let result;
   try {

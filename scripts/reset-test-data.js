@@ -5,7 +5,15 @@ const admin = require('firebase-admin');
  * 
  * 学習履歴、スコア、統計、ランキングデータを一括削除・リセットします。
  * ユーザーアカウント（isAdmin含む）は保持されます。
+ * 本番データの誤削除を防ぐため、Firestore Emulator 接続時のみ実行を許可します。
  */
+
+if (!process.env.FIRESTORE_EMULATOR_HOST) {
+  console.error(
+    'Error: scripts/reset-test-data.js は FIRESTORE_EMULATOR_HOST が設定されたエミュレータ環境でのみ実行できます。本番データ保護のため終了します。'
+  );
+  process.exit(1);
+}
 
 admin.initializeApp({
   projectId: 'math-app-26c77'

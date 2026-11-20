@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { functions, getRealtimeDb } from '@/lib/firebase';
 import { BattleResultEntry, getBattleXpDelta, sortBattleResults } from '@/lib/kanjiBattle';
+import { KanjiQuestionText } from '@/components/KanjiQuestionText';
 
 const KANJI_BATTLE_ROOM_PATH = 'kanjiBattleRooms';
 const FINALIZE_TIMEOUT_MS = 90000;
@@ -63,7 +64,7 @@ export default function KanjiBattleResultPage() {
   }, []);
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !user) return;
     const realtimeDb = getRealtimeDb();
     const roomRef = ref(realtimeDb, `${KANJI_BATTLE_ROOM_PATH}/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -71,7 +72,7 @@ export default function KanjiBattleResultPage() {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [roomId]);
+  }, [roomId, user]);
 
   useEffect(() => {
     async function finalizeIfNeeded() {
@@ -261,8 +262,8 @@ export default function KanjiBattleResultPage() {
                         <p className="text-xs font-bold text-muted-foreground mb-0.5">Q{idx + 1}</p>
                         <p
                           className="break-words text-sm font-bold text-[#f0f4f7]"
-                          dangerouslySetInnerHTML={{ __html: qr.questionText }}
-                        />
+                          ><KanjiQuestionText text={qr.questionText} /></p>
+                        {/* rendered via KanjiQuestionText */}
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground font-semibold">
                           <span>認識: <span className={qr.isCorrect ? 'text-[#a5ebc6]' : 'text-[#ffb5b5]'}>{qr.recognizedText}</span></span>
                           {!qr.isCorrect && <span>正解: <span className="text-[#c5d4dd]">{qr.correctText}</span></span>}

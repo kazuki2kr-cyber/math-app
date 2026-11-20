@@ -18,7 +18,7 @@ import {
   getMathDashboardUnits,
   type DashboardUnit,
 } from '@/lib/dashboardUnits';
-import { buildLearningProgressReport, getLearningProgressReadiness } from '@/lib/learningProgress';
+import { buildLearningProgressReport, getLearningProgressReadiness, getLearningUnitStat } from '@/lib/learningProgress';
 import { UserAvatarIcon } from '@/components/UserAvatarIcon';
 import { getUnlockedRewardIcons, type UnlockedRewardIcon } from '@/lib/rewardIcons';
 import { normalizeMathSubject } from '@/lib/mathSubjects';
@@ -76,7 +76,7 @@ function clearDrillDataCache() {
 }
 
 export default function Home() {
-  const { user, logout, agreeToTerms } = useAuth();
+  const { user, isAdmin, logout, agreeToTerms } = useAuth();
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<'数学甲' | '数学乙'>('数学甲');
   const [selectedCategoryOverride, setSelectedCategoryOverride] = useState<string | null>(null);
@@ -208,8 +208,8 @@ export default function Home() {
           }
           if (ud.writtenStats) {
             soloUnitsData.forEach(unit => {
-              const stat = ud.writtenStats[unit.id];
-              if (stat) {
+              const stat = getLearningUnitStat(ud.writtenStats, unit.id) as WrittenStat;
+              if (stat && Object.keys(stat).length > 0) {
                 newWrittenStats[unit.id] = stat;
               }
             });
@@ -669,7 +669,7 @@ export default function Home() {
                 <Card className="border-dashed border-2 shadow-none bg-white/50">
                   <CardContent className="flex flex-col items-center justify-center p-16 text-muted-foreground">
                     <p className="text-lg">利用可能な単元がありません。</p>
-                    {(user?.email === 'kazuki2kr@gmail.com' || user?.email === 'ichikawa.kazuki@shibaurafzk.com') && (
+                    {isAdmin && (
                       <Button variant="link" onClick={() => router.push('/admin')} className="mt-4 text-primary">
                         管理画面でCSVアップロード
                       </Button>

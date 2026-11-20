@@ -61,6 +61,24 @@ async function deleteQueryBatch(
   return deleted;
 }
 
+export async function runCleanupStep(
+  label: string,
+  action: () => Promise<number>,
+  failures: Array<{ label: string; error: string }>
+): Promise<number> {
+  try {
+    return await action();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    failures.push({ label, error: message });
+    functions.logger.error(`[cleanupRetentionData] step failed: ${label}`, {
+      label,
+      error: message,
+    });
+    return 0;
+  }
+}
+
 export const cleanupRetentionData = functions
   .region("us-central1")
   .runWith({ timeoutSeconds: 540, memory: "512MB" })
@@ -75,30 +93,47 @@ export const cleanupRetentionData = functions
     const suspiciousCutoff = admin.firestore.Timestamp.fromDate(
       new Date(Date.now() - RETENTION.suspiciousActivitiesDays * 24 * 60 * 60 * 1000)
     );
+    const failures: Array<{ label: string; error: string }> = [];
 
-    const deletedAttempts = await deleteQueryBatch(
-      () => db.collectionGroup("attempts").where("expireAt", "<=", attemptsCutoff).orderBy("expireAt"),
-      "users/*/attempts"
+    const deletedAttempts = await runCleanupStep(
+      "users/*/attempts",
+      () => deleteQueryBatch(
+        () => db.collectionGroup("attempts").where("expireAt", "<=", attemptsCutoff).orderBy("expireAt"),
+        "users/*/attempts"
+      ),
+      failures
     );
 
-    const deletedAnalyticsEvents = await deleteQueryBatch(
-      () => db.collection("analytics_events").where("occurredAt", "<=", analyticsCutoff).orderBy("occurredAt"),
-      "analytics_events"
+    const deletedAnalyticsEvents = await runCleanupStep(
+      "analytics_events",
+      () => deleteQueryBatch(
+        () => db.collection("analytics_events").where("occurredAt", "<=", analyticsCutoff).orderBy("occurredAt"),
+        "analytics_events"
+      ),
+      failures
     );
 
-    const deletedSuspiciousActivities = await deleteQueryBatch(
-      () => db.collection("suspicious_activities").where("timestamp", "<=", suspiciousCutoff).orderBy("timestamp"),
-      "suspicious_activities"
+    const deletedSuspiciousActivities = await runCleanupStep(
+      "suspicious_activities",
+      () => deleteQueryBatch(
+        () => db.collection("suspicious_activities").where("timestamp", "<=", suspiciousCutoff).orderBy("timestamp"),
+        "suspicious_activities"
+      ),
+      failures
     );
 
-    const deletedIntegrityEvents = await deleteQueryBatch(
-      () => db.collection("integrity_events").where("expireAt", "<=", now).orderBy("expireAt"),
-      "integrity_events"
+    const deletedIntegrityEvents = await runCleanupStep(
+      "integrity_events",
+      () => deleteQueryBatch(
+        () => db.collection("integrity_events").where("expireAt", "<=", now).orderBy("expireAt"),
+        "integrity_events"
+      ),
+      failures
     );
 
     const [deletedKanjiBattleRooms, deletedKanjiBattleListings] = await Promise.all([
-      deleteExpiredRtdbRooms("kanjiBattleRooms"),
-      deleteExpiredRtdbRooms("kanjiBattleRoomListings"),
+      runCleanupStep("kanjiBattleRooms", () => deleteExpiredRtdbRooms("kanjiBattleRooms"), failures),
+      runCleanupStep("kanjiBattleRoomListings", () => deleteExpiredRtdbRooms("kanjiBattleRoomListings"), failures),
     ]);
 
     functions.logger.info("[cleanupRetentionData] completed", {
@@ -108,8 +143,15 @@ export const cleanupRetentionData = functions
       deletedIntegrityEvents,
       deletedKanjiBattleRooms,
       deletedKanjiBattleListings,
+      failures,
       retention: RETENTION,
     });
+
+    if (failures.length > 0) {
+      throw new Error(
+        `cleanupRetentionData partial failure: ${failures.map((f) => `${f.label} (${f.error})`).join("; ")}`
+      );
+    }
 
     return {
       deletedAttempts,

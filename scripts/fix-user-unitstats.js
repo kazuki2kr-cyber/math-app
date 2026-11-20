@@ -35,56 +35,12 @@ try {
 admin.initializeApp({ projectId: 'math-app-26c77' });
 const db = admin.firestore();
 
-const isDryRun = process.argv.includes('--dry-run');
-
-// 数学の単元IDリスト（既知の unitId のドット+漢字パターン）
-// スクリプト内で units コレクションから動的に取得するため、ここでは空
-// → ユーザーの unitStats から全キーを収集して使う
-
-/**
- * 3階層ネスト形式 (unitStats['1']['正負の数の加減']) のデータを
- * リテラルキー形式 ('1.正負の数の加減') に変換して返す。
- *
- * unitStats マップのトップレベルキーが 数字のみ (例: '1', '2', '3') の場合、
- * その値がオブジェクトであれば「数字 + '.' + サブキー」を新しいリテラルキーとみなす。
- */
-function extractNestedAsLiteralKeys(unitStats) {
-  const result = {};
-  for (const [topKey, topVal] of Object.entries(unitStats)) {
-    if (topKey.includes('.')) {
-      // すでにリテラルキー形式 (例: '1.正負の数の加減') — そのままコピー
-      result[topKey] = topVal;
-    } else if (typeof topVal === 'object' && topVal !== null && !topVal.maxScore) {
-      // トップキーにドットなし かつ {maxScore, drillCount, ...} でなければ
-      // 3階層ネスト形式 (topKey='1', topVal={'正負の数の加減': {...}}) とみなす
-      for (const [subKey, subVal] of Object.entries(topVal)) {
-        const literalKey = `${topKey}.${subKey}`;
-        result[literalKey] = subVal;
-      }
-    } else {
-      // トップキーにドットなし かつ 値が unitStats エントリー（maxScore あり）
-      // → 旧形式でドットなし単元ID (現状はなし) または想定外パターン
-      result[topKey] = topVal;
-    }
-  }
-  return result;
-}
-
-/**
- * 2つの unitStats エントリーをマージ。drillCount が大きい方を優先。
- */
-function mergeUnitData(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  const aCount = a.drillCount || 0;
-  const bCount = b.drillCount || 0;
-  // drillCount が多い方が最新（より多くプレイしている）
-  if (aCount >= bCount) {
-    return { ...b, ...a }; // a を優先、b で欠損フィールドを補完
-  } else {
-    return { ...a, ...b }; // b を優先
-  }
-}
+const isDryRun = !process.argv.includes('--apply');
+const {
+  extractNestedAsLiteralKeys,
+  mergeUnitData,
+  sanitizeRankingName,
+} = require('./lib/unitStatsRepair');
 
 async function fixUserUnitStats() {
   console.log(`\n====== unitStats マイグレーション ======`);
@@ -153,7 +109,7 @@ async function fixUserUnitStats() {
     // ランキング更新用データを収集
     leaderboardUpdates.push({
       uid,
-      name: data.displayName || '不明',
+      name: sanitizeRankingName(data.displayName),
       totalScore: correctTotalScore,
       xp: data.xp || 0,
       level: data.level || 1,

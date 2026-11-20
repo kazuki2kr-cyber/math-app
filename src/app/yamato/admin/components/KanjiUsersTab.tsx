@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Archive, Ban, Loader2, RotateCcw, Save, ShieldAlert, ShieldCheck, ShieldQuestion, UserMinus, X } from 'lucide-react';
-import { db } from '@/lib/firebase';
-import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { db, functions } from '@/lib/firebase';
+import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { CLOSING_KANJI_SEASON, getClosingSeasonBadgeFields, getKanjiSeasonBadges, KanjiSeasonArchive, NEXT_KANJI_SEASON_NUMBER } from '@/lib/kanjiSeasons';
 
 interface KanjiUsersTabProps {
@@ -30,16 +31,6 @@ const KANJI_DATA_FIELDS = {
   kanjiBattleStats: deleteField(),
   kanjiBattleWins: deleteField(),
   kanjiBattleXp: deleteField(),
-};
-
-const NEXT_SEASON_INITIAL_FIELDS = {
-  ...KANJI_DATA_FIELDS,
-  kanjiXp: 0,
-  kanjiLevel: 1,
-  kanjiTotalScore: 0,
-  kanjiBattleStats: { wins: 0, xp: 0, totalBattles: 0 },
-  kanjiBattleWins: 0,
-  kanjiBattleXp: 0,
 };
 
 const KANJI_ACCESS_FIELDS = {
@@ -390,30 +381,32 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
         setMessage(`Season ${CLOSING_KANJI_SEASON.number} の一括リセットは完了済みです。`);
         return;
       }
-      const certifiedUsers = new Map((archive.certifiedUsers || []).map((user) => [user.uid, user]));
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const allUids = usersSnap.docs.map((userDoc) => userDoc.id);
-      if (allUids.length + 3 > 500) throw new Error('対象ユーザーが一括更新の上限を超えています。初期化を中止しました。');
 
-      const completedAt = new Date().toISOString();
-      const batch = writeBatch(db);
-      for (const uid of allUids) {
-        const certifiedUser = certifiedUsers.get(uid);
-        const userRef = doc(db, 'users', uid);
-        batch.update(userRef, {
-          ...NEXT_SEASON_INITIAL_FIELDS,
-          ...(certifiedUser ? getClosingSeasonBadgeFields(certifiedUser, archive.archivedAt) : {}),
-        });
+      const resetKanjiSeasonFn = httpsCallable<
+        {
+          archiveDocumentId: string;
+          seasonId: string;
+          seasonNumber: number;
+          certificationLevel: number;
+          badgeImageUrl: string;
+        },
+        { alreadyCompleted?: boolean; resetUserCount: number; certifiedCount: number }
+      >(functions, 'adminResetAllKanjiData');
+      const response = await resetKanjiSeasonFn({
+        archiveDocumentId: CLOSING_KANJI_SEASON.archiveDocumentId,
+        seasonId: CLOSING_KANJI_SEASON.id,
+        seasonNumber: CLOSING_KANJI_SEASON.number,
+        certificationLevel: CLOSING_KANJI_SEASON.certificationLevel,
+        badgeImageUrl: CLOSING_KANJI_SEASON.badgeImageUrl,
+      });
+
+      if (response.data.alreadyCompleted) {
+        setMessage(`Season ${CLOSING_KANJI_SEASON.number} の一括リセットは完了済みです。`);
+        return;
       }
 
-      const lbRef = doc(db, 'leaderboards', 'kanji');
-      batch.set(lbRef, { rankings: [], updatedAt: completedAt }, { merge: true });
-      batch.set(doc(db, 'leaderboards', 'kanjiBattle'), { rankings: [], updatedAt: completedAt }, { merge: true });
-      batch.update(doc(db, 'leaderboards', CLOSING_KANJI_SEASON.archiveDocumentId), { resetCompletedAt: completedAt });
-      await batch.commit();
-
       await refreshUsers();
-      setMessage(`✅ Season ${CLOSING_KANJI_SEASON.number}を保存し、全員（${allUids.length}名）の漢字・対戦データを初期化しました。Season ${NEXT_KANJI_SEASON_NUMBER} はLv.1・0 XPから開始できます。認証バッジ対象: ${archive.certifiedUsers?.length || 0}名。`);
+      setMessage(`✅ Season ${CLOSING_KANJI_SEASON.number}を保存し、全員（${response.data.resetUserCount}名）の漢字・対戦データを初期化しました。Season ${NEXT_KANJI_SEASON_NUMBER} はLv.1・0 XPから開始できます。認証バッジ対象: ${response.data.certifiedCount}名。`);
     } catch (e: any) {
       console.error(e);
       setMessage(`エラー: ${e.message}`);

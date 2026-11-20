@@ -249,13 +249,13 @@ export const unregisterPushSubscription = functions.region('us-central1').https.
 export const getPushNotificationOverview = functions.region('us-central1').https.onCall(async (_data, context) => {
   assertAdmin(context);
   const db = admin.firestore();
-  const [subscriptions, campaigns] = await Promise.all([
-    db.collection(PUSH_SUBSCRIPTIONS_COLLECTION).get(),
+  const [subscriptionsCountSnap, campaigns] = await Promise.all([
+    db.collection(PUSH_SUBSCRIPTIONS_COLLECTION).count().get(),
     db.collection(NOTIFICATION_CAMPAIGNS_COLLECTION).orderBy('sentAt', 'desc').limit(MAX_INBOX_CANDIDATES).get(),
   ]);
 
   return {
-    subscriberCount: subscriptions.size,
+    subscriberCount: subscriptionsCountSnap.data().count,
     campaigns: campaigns.docs
       .filter((doc) => doc.data().deletedAt == null)
       .slice(0, MAX_ADMIN_HISTORY_ITEMS)

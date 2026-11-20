@@ -108,11 +108,68 @@ describe('decideWrittenAttemptReservation', () => {
 
   test('blocks a duplicate request while grading is in progress', () => {
     expect(decideWrittenAttemptReservation({
-      existingAttempt: { status: 'grading' },
+      existingAttempt: { status: 'grading', reservedAt: 1_000_000 },
       usedAttempts: 1,
       limit: 2,
       fallbackGroupId: groupId,
+      nowMs: 1_060_000,
     })).toEqual({ kind: 'in_progress' });
+  });
+
+  test('allows retrying the same attemptId when a grading lease has expired', () => {
+    expect(decideWrittenAttemptReservation({
+      existingAttempt: {
+        status: 'grading',
+        reservedAt: 1_000_000,
+        attemptOrdinal: 1,
+        attemptLimit: 2,
+        attemptGroupId: groupId,
+      },
+      usedAttempts: 1,
+      limit: 2,
+      fallbackGroupId: groupId,
+      nowMs: 1_000_000 + 150_000,
+    })).toEqual({
+      kind: 'retry',
+      metadata: {
+        attemptOrdinal: 1,
+        attemptLimit: 2,
+        attemptGroupId: groupId,
+        previousAttemptId: null,
+        isFinalAllowedAttempt: false,
+        remainingAttempts: 1,
+      },
+    });
+  });
+
+  test('reclaims the failed slot instead of consuming a new attempt when a new attemptId follows grading_failed', () => {
+    expect(decideWrittenAttemptReservation({
+      existingAttempt: null,
+      lastAttemptId: 'attempt-1-failed',
+      lastAttempt: {
+        status: 'grading_failed',
+        attemptOrdinal: 1,
+        attemptLimit: 2,
+        attemptGroupId: groupId,
+        previousAttemptId: null,
+      },
+      usedAttempts: 1,
+      limit: 2,
+      fallbackGroupId: groupId,
+      previousAttemptId: 'attempt-1-failed',
+      nowMs: 2_000_000,
+    })).toEqual({
+      kind: 'reclaim_failed_slot',
+      supersedeAttemptId: 'attempt-1-failed',
+      metadata: {
+        attemptOrdinal: 1,
+        attemptLimit: 2,
+        attemptGroupId: groupId,
+        previousAttemptId: null,
+        isFinalAllowedAttempt: false,
+        remainingAttempts: 1,
+      },
+    });
   });
 });
 
@@ -128,12 +185,24 @@ describe('decideWrittenAttemptFinalization', () => {
 
   test('finalizes a reserved grading attempt with stable metadata', () => {
     expect(decideWrittenAttemptFinalization({
-      attempt: { status: 'grading', ...reservation },
+      attempt: { status: 'grading', gradingClaimId: 'claim-current', ...reservation },
       reservation,
       limit: 2,
+      expectedClaimId: 'claim-current',
     })).toEqual({
       kind: 'ready',
       metadata: reservation,
+    });
+  });
+
+  test('rejects a late finalization from a superseded claim holder', () => {
+    expect(decideWrittenAttemptFinalization({
+      attempt: { status: 'grading', gradingClaimId: 'claim-newer', ...reservation },
+      reservation,
+      limit: 2,
+      expectedClaimId: 'claim-stale',
+    })).toEqual({
+      kind: 'stale_claim',
     });
   });
 

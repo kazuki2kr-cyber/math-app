@@ -43,7 +43,9 @@ export default function KanjiAdminPage() {
     setMessage('');
     try {
       const snap = await getDocs(collection(db, 'units'));
-      const unitsArray = snap.docs.map(d => d.data());
+      const unitsArray = snap.docs
+        .map(d => d.data())
+        .filter(u => u.subject === 'kanji' || u.subject === '漢字' || u.baseSubject === 'kanji' || u.baseSubject === '漢字');
       
       const arr = await Promise.all(unitsArray.map(async unit => {
         const qSnap = await getDocs(collection(db, 'units', unit.id, 'questions'));

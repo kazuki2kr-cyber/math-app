@@ -20,6 +20,11 @@ export type WrittenAttemptReservationDecision =
       metadata: WrittenAttemptMetadata;
     }
   | {
+      kind: "reclaim_failed_slot";
+      supersedeAttemptId: string;
+      metadata: WrittenAttemptMetadata;
+    }
+  | {
       kind: "in_progress";
     }
   | {
@@ -39,12 +44,48 @@ export type WrittenAttemptFinalizationDecision =
       kind: "invalid_status";
     }
   | {
+      kind: "stale_claim";
+    }
+  | {
       kind: "exhausted";
     }
   | {
       kind: "ready";
       metadata: WrittenAttemptMetadata;
     };
+
+export const DEFAULT_WRITTEN_GRADING_LEASE_MS = 150 * 1000;
+
+function toTimestampMillis(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === "object" && "toMillis" in value) {
+    const toMillis = (value as { toMillis?: unknown }).toMillis;
+    if (typeof toMillis === "function") {
+      const millis = Number(toMillis.call(value));
+      return Number.isFinite(millis) ? millis : null;
+    }
+  }
+  return null;
+}
+
+function isGradingLeaseExpired(
+  attempt: WrittenAttemptDocument,
+  nowMs: number | undefined,
+  leaseTimeoutMs: number
+): boolean {
+  if (nowMs === undefined || !Number.isFinite(nowMs)) return false;
+  const leaseStartMs =
+    toTimestampMillis(attempt.retryStartedAt) ??
+    toTimestampMillis(attempt.reservedAt) ??
+    toTimestampMillis(attempt.updatedAt);
+  if (leaseStartMs === null) return false;
+  return nowMs - leaseStartMs >= leaseTimeoutMs;
+}
 
 function nonNegativeInteger(value: unknown): number {
   const number = Number(value);
@@ -84,14 +125,19 @@ function metadataFromExisting(
 
 export function decideWrittenAttemptReservation(params: {
   existingAttempt?: WrittenAttemptDocument | null;
+  lastAttempt?: WrittenAttemptDocument | null;
+  lastAttemptId?: string | null;
   usedAttempts: unknown;
   limit: unknown;
   fallbackGroupId: string;
   previousAttemptId?: string | null;
+  nowMs?: number;
+  leaseTimeoutMs?: number;
 }): WrittenAttemptReservationDecision {
   const limit = normalizedLimit(params.limit);
   const usedAttempts = nonNegativeInteger(params.usedAttempts);
   const existing = params.existingAttempt || null;
+  const leaseTimeoutMs = params.leaseTimeoutMs ?? DEFAULT_WRITTEN_GRADING_LEASE_MS;
 
   if (existing) {
     const status = existing.status || (existing.grading ? "graded" : null);
@@ -102,13 +148,43 @@ export function decideWrittenAttemptReservation(params: {
         metadata: metadataFromExisting(existing, usedAttempts, limit, params.fallbackGroupId),
       };
     }
-    if (status === "grading_failed") {
+    if (
+      status === "grading_failed" ||
+      (status === "grading" && isGradingLeaseExpired(existing, params.nowMs, leaseTimeoutMs))
+    ) {
       return {
         kind: "retry",
         metadata: metadataFromExisting(existing, usedAttempts, limit, params.fallbackGroupId),
       };
     }
     return { kind: "in_progress" };
+  }
+
+  const lastAttempt = params.lastAttempt || null;
+  const lastAttemptId = optionalId(params.lastAttemptId ?? params.previousAttemptId);
+  if (lastAttempt && lastAttemptId && usedAttempts > 0) {
+    const lastStatus = lastAttempt.status || (lastAttempt.grading ? "graded" : null);
+    const canReclaimLastSlot =
+      lastStatus === "grading_failed" ||
+      (lastStatus === "grading" && isGradingLeaseExpired(lastAttempt, params.nowMs, leaseTimeoutMs));
+    if (canReclaimLastSlot) {
+      const reclaimedOrdinal = Math.min(
+        limit,
+        positiveInteger(lastAttempt.attemptOrdinal) || usedAttempts
+      );
+      return {
+        kind: "reclaim_failed_slot",
+        supersedeAttemptId: lastAttemptId,
+        metadata: {
+          attemptOrdinal: reclaimedOrdinal,
+          attemptLimit: limit,
+          attemptGroupId: optionalId(lastAttempt.attemptGroupId) || params.fallbackGroupId,
+          previousAttemptId: optionalId(lastAttempt.previousAttemptId),
+          isFinalAllowedAttempt: reclaimedOrdinal >= limit,
+          remainingAttempts: Math.max(0, limit - reclaimedOrdinal),
+        },
+      };
+    }
   }
 
   if (usedAttempts >= limit) {
@@ -133,6 +209,7 @@ export function decideWrittenAttemptFinalization(params: {
   attempt: WrittenAttemptDocument;
   reservation: WrittenAttemptMetadata;
   limit: unknown;
+  expectedClaimId?: string | null;
 }): WrittenAttemptFinalizationDecision {
   const { attempt, reservation } = params;
   const limit = normalizedLimit(params.limit);
@@ -142,6 +219,14 @@ export function decideWrittenAttemptFinalization(params: {
   }
   if (attempt.status !== "grading" && attempt.status !== "grading_failed") {
     return { kind: "invalid_status" };
+  }
+  if (
+    params.expectedClaimId &&
+    typeof attempt.gradingClaimId === "string" &&
+    attempt.gradingClaimId.length > 0 &&
+    attempt.gradingClaimId !== params.expectedClaimId
+  ) {
+    return { kind: "stale_claim" };
   }
 
   const attemptOrdinal = positiveInteger(attempt.attemptOrdinal) || reservation.attemptOrdinal;

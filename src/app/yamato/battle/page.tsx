@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
@@ -10,14 +10,12 @@ import {
   BATTLE_XP_PER_RANK,
   getBattleRank,
   getNextBattleRank,
-  KANJI_BATTLE_ACCESS_PASSWORD,
-  KANJI_BATTLE_ACCESS_STORAGE_KEY,
   kanjiBattleCall,
   kanjiBattleError,
   KanjiRoomListing,
 } from '@/lib/kanjiBattle';
 import { useBattleClock } from '@/hooks/useBattleClock';
-import { ArrowLeft, ArrowRight, ChevronRight, Lock, Medal, RotateCcw, ScrollText, Sparkles, Swords, Trophy, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, Medal, RotateCcw, ScrollText, Sparkles, Swords, Trophy, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, getRealtimeDb } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
@@ -54,9 +52,6 @@ interface BattleRankingEntry {
 export default function KanjiBattlePage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [hasBattleAccess, setHasBattleAccess] = useState(true);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [battleProfile, setBattleProfile] = useState<BattleProfile>({ wins: 0, xp: 0 });
   const [userData, setUserData] = useState<Record<string, unknown> | null>(null);
   const [seasonArchives, setSeasonArchives] = useState<KanjiSeasonArchive[]>([]);
@@ -103,15 +98,6 @@ export default function KanjiBattlePage() {
   const isJoiningRoomRef = useRef(false);
 
   useEffect(() => {
-    setHasBattleAccess(true);
-  }, []);
-
-  useEffect(() => {
-    if (!hasBattleAccess) {
-      setLoading(false);
-      return;
-    }
-
     async function fetchBattleUnits() {
       setLoading(true);
       setError(null);
@@ -130,8 +116,14 @@ export default function KanjiBattlePage() {
         setUnits(battleUnits);
         let questionCount = 0;
         for (const unit of battleUnits) {
-          if (Array.isArray(unit.questions) && unit.questions.length > 0) {
-            questionCount += unit.questions.length;
+          const knownCount =
+            typeof unit.totalQuestions === 'number' && unit.totalQuestions > 0
+              ? unit.totalQuestions
+              : Array.isArray(unit.questions)
+                ? unit.questions.length
+                : 0;
+          if (knownCount > 0) {
+            questionCount += knownCount;
           } else {
             const questions = await getDocs(query(collection(db, 'units', unit.id, 'questions'), limit(10 - questionCount)));
             questionCount += questions.size;
@@ -150,10 +142,10 @@ export default function KanjiBattlePage() {
     }
 
     fetchBattleUnits();
-  }, [hasBattleAccess]);
+  }, []);
 
   useEffect(() => {
-    if (!hasBattleAccess || !user) return;
+    if (!user) return;
 
     async function fetchBattleProfile() {
       try {
@@ -171,10 +163,9 @@ export default function KanjiBattlePage() {
     }
 
     fetchBattleProfile();
-  }, [hasBattleAccess, user]);
+  }, [user]);
 
   useEffect(() => {
-    if (!hasBattleAccess) return;
     async function fetchSeasonArchive() {
       try {
         const snapshots = await Promise.all(KANJI_SEASONS.map((season) => getDoc(doc(db, 'leaderboards', season.archiveDocumentId))));
@@ -193,7 +184,7 @@ export default function KanjiBattlePage() {
       }
     }
     fetchSeasonArchive();
-  }, [hasBattleAccess]);
+  }, []);
 
   const selectedArchive = seasonArchives.find((archive) => archive.seasonId === selectedArchiveId) || seasonArchives[0];
 
@@ -224,17 +215,6 @@ export default function KanjiBattlePage() {
   const xpInRank = Math.max(0, battleProfile.xp - currentRank.minXp);
   const xpToNextRank = nextRank ? Math.max(0, nextRank.minXp - battleProfile.xp) : 0;
   const rankProgressPercent = nextRank ? Math.min(100, Math.max(0, (xpInRank / rankSpanXp) * 100)) : 100;
-
-  const unlockBattleMode = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (passwordInput === KANJI_BATTLE_ACCESS_PASSWORD) {
-      sessionStorage.setItem(KANJI_BATTLE_ACCESS_STORAGE_KEY, 'true');
-      setHasBattleAccess(true);
-      setPasswordError(null);
-      return;
-    }
-    setPasswordError('パスワードが違います。');
-  };
 
   const createRoom = async (unit: BattleUnit) => {
     if (!user || isCreatingRoomRef.current) return;
@@ -400,46 +380,6 @@ export default function KanjiBattlePage() {
       </CardContent>
     </Card>
   );
-
-  if (!hasBattleAccess) {
-    return (
-      <div className="min-h-screen bg-[#F8FAEB] p-4 md:p-8">
-        <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center gap-5">
-          <div className="rounded-2xl border border-amber-100 bg-white p-6 shadow-sm">
-            <div className="mb-5 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                <Lock className="h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-xl font-black text-gray-900">漢字対戦モード</h1>
-                <p className="text-sm font-semibold text-muted-foreground">対戦モードのパスワードを入力してください。</p>
-              </div>
-            </div>
-            <form onSubmit={unlockBattleMode} className="space-y-3">
-              <input
-                value={passwordInput}
-                onChange={(event) => setPasswordInput(event.target.value)}
-                type="password"
-                placeholder="パスワード"
-                className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-base font-bold outline-none focus:border-amber-400"
-              />
-              {passwordError && (
-                <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-bold text-red-700">
-                  {passwordError}
-                </div>
-              )}
-              <Button type="submit" className="h-12 w-full bg-amber-500 font-bold text-white hover:bg-amber-600">
-                入室する
-              </Button>
-              <Button type="button" variant="ghost" onClick={() => router.push('/yamato')} className="h-10 w-full text-muted-foreground">
-                戻る
-              </Button>
-            </form>
-          </div>
-        </main>
-      </div>
-    );
-  }
 
   return (
     <div className={styles.home}>

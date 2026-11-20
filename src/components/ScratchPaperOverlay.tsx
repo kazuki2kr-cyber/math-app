@@ -175,8 +175,10 @@ export const ScratchPaperOverlay = forwardRef<HandwritingCanvasRef, ScratchPaper
         return;
       }
       const nextPages = normalizedPages.filter((_, index) => index !== safeActivePage);
+      const nextActivePage = Math.min(safeActivePage, nextPages.length - 1);
       updatePages(nextPages);
-      setActivePage(Math.min(safeActivePage, nextPages.length - 1));
+      setActivePage(nextActivePage);
+      canvasRef.current?.setStrokes(nextPages[nextActivePage] ?? []);
       setActiveTool('pen');
     };
 

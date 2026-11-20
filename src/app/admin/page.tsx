@@ -3,12 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp, increment, where } from 'firebase/firestore';
+import { writeBatch, doc, collection, getDocs, getDoc, deleteDoc, deleteField, updateDoc, setDoc, query, orderBy, limit, collectionGroup, startAfter, serverTimestamp, increment, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FileText, Database, UserCheck, Shield, Zap, BarChart, Users, MessageSquare, Bell } from 'lucide-react';
 import { parseOptions } from '@/lib/utils';
 import { getImportSubjectMetadata, getImportedUnitId } from '@/lib/mathSubjects';
-import { calculateLevelAndProgress, getTitleForLevel } from '@/lib/xp';
 import AnalyticsTab from './components/AnalyticsTab';
 import ImportTab from './components/ImportTab';
 import UnitsTab from './components/UnitsTab';
@@ -22,8 +21,6 @@ import WrittenAnalyticsTab from './components/WrittenAnalyticsTab';
 import NotificationsTab from './components/NotificationsTab';
 import 'katex/dist/katex.min.css';
 
-const ANALYTICS_EVENT_BATCH_SIZE = 200;
-
 function getAttemptDocId(attempt: any): string | null {
   if (attempt?.docId) return String(attempt.docId);
   if (attempt?.attemptId) return String(attempt.attemptId);
@@ -34,44 +31,15 @@ function getAttemptDocId(attempt: any): string | null {
   return null;
 }
 
-function safeAnalyticsDocPart(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'unknown';
-}
-
-function buildTokyoLogicalDate(date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-}
-
-function buildAttemptDeletedAnalyticsEvent(attempt: any, actor: string, reason: string) {
-  const attemptId = getAttemptDocId(attempt);
-  if (!attemptId) return null;
-
-  return {
-    eventType: 'ATTEMPT_DELETED',
-    eventVersion: 1,
-    occurredAt: serverTimestamp(),
-    logicalDate: buildTokyoLogicalDate(),
-    attemptId,
-    uid: attempt?.uid || null,
-    unitId: attempt?.unitId || null,
-    source: 'admin',
-    reason,
-    actor,
-  };
-}
-
-function queueAttemptDeletedAnalyticsEvent(batch: ReturnType<typeof writeBatch>, attempt: any, actor: string, reason: string) {
-  const event = buildAttemptDeletedAnalyticsEvent(attempt, actor, reason);
-  if (!event) return false;
-
-  const docId = `delete_${safeAnalyticsDocPart(event.attemptId)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  batch.set(doc(db, 'analytics_events', docId), event);
-  return true;
+function getAttemptUid(attempt: any): string | null {
+  if (attempt?.uid) return String(attempt.uid);
+  if (typeof attempt?.path === 'string') {
+    const segments = attempt.path.split('/');
+    if (segments.length >= 2 && segments[0] === 'users') {
+      return segments[1] || null;
+    }
+  }
+  return null;
 }
 
 export default function AdminPage() {
@@ -288,9 +256,19 @@ export default function AdminPage() {
       }
 
       const arr = await Promise.all(unitsArray.map(async unit => {
-        // 各単元の問題をサブコレクションから取得
-        const qSnap = await getDocs(collection(db, 'units', unit.id, 'questions'));
-        const questions = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const [qSnap, gcSnap] = await Promise.all([
+          getDocs(collection(db, 'units', unit.id, 'questions')),
+          unit.drillType === 'written'
+            ? getDocs(collection(db, 'units', unit.id, 'grading_configs'))
+            : Promise.resolve(null),
+        ]);
+        const gcMap = new Map<string, Record<string, any>>();
+        gcSnap?.docs.forEach(gcDoc => gcMap.set(gcDoc.id, gcDoc.data()));
+        const questions = qSnap.docs.map(qDoc => ({
+          id: qDoc.id,
+          ...qDoc.data(),
+          ...(gcMap.get(qDoc.id) || {}),
+        }));
         return {
           ...unit,
           questions,
@@ -458,17 +436,28 @@ export default function AdminPage() {
   };
 
   const handleUpdateXp = async (uid: string, newXpStr: string) => {
-    const newXp = parseInt(newXpStr);
+    const newXp = parseInt(newXpStr, 10);
     if (isNaN(newXp) || newXp < 0) {
       setMessage('エラー: XPは0以上の数値を入力してください。');
       return;
     }
     setLoading(true);
     try {
-      await setDoc(doc(db, 'users', uid), { xp: newXp }, { merge: true });
-      setUsers(users.map(u => u.docId === uid ? { ...u, xp: newXp } : u));
+      const updateXpFn = httpsCallable<
+        { uid: string; xp: number },
+        { uid: string; xp: number; level: number; title: string; progressPercent: number }
+      >(getFunctions(undefined, 'us-central1'), 'adminUpdateUserXp');
+      const response = await updateXpFn({ uid, xp: newXp });
+      const updated = response.data;
+      setUsers(users.map(u => u.docId === uid ? {
+        ...u,
+        xp: updated.xp,
+        level: updated.level,
+        title: updated.title,
+        progressPercent: updated.progressPercent,
+      } : u));
       setEditingXp(prev => { const n = { ...prev }; delete n[uid]; return n; });
-      setMessage(`XPを${newXp}に更新しました。`);
+      setMessage(`XPを${updated.xp}（Lv.${updated.level}）に更新し、ランキングに同期しました。`);
     } catch (e) {
       console.error(e);
       setMessage('XP更新エラーが発生しました。');
@@ -480,6 +469,16 @@ export default function AdminPage() {
     if (!window.confirm(`単元「${unitId}」を削除しますか？ 復元できません。`)) return;
     setLoading(true);
     try {
+      const [qSnap, gcSnap] = await Promise.all([
+        getDocs(collection(db, 'units', unitId, 'questions')),
+        getDocs(collection(db, 'units', unitId, 'grading_configs')),
+      ]);
+      const refsToDelete = [...qSnap.docs.map(d => d.ref), ...gcSnap.docs.map(d => d.ref)];
+      for (let i = 0; i < refsToDelete.length; i += 400) {
+        const batch = writeBatch(db);
+        refsToDelete.slice(i, i + 400).forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
       await deleteDoc(doc(db, 'units', unitId));
       await setDoc(doc(db, 'config', 'unit_catalog'), {
         revision: increment(1),
@@ -506,6 +505,7 @@ export default function AdminPage() {
       const newActiveTotal = Math.max(0, currentActiveTotal - (deletedQuestion?.active === false ? 0 : 1));
       const batch = writeBatch(db);
       batch.delete(doc(db, 'units', unitId, 'questions', qId));
+      batch.delete(doc(db, 'units', unitId, 'grading_configs', qId));
       batch.update(unitRef, {
         totalQuestions: newTotal,
         activeQuestionCount: newActiveTotal,
@@ -627,58 +627,35 @@ export default function AdminPage() {
   };
 
   const handleDeleteScore = async (s: any) => {
-    if (!window.confirm('この得点データ(Attempt)を削除しますか？\n(獲得XPも差し引かれ、レベルが再計算される場合があります)')) return;
+    if (!window.confirm('この得点データ(Attempt)を削除しますか？\n(獲得XPも差し引かれ、レベルとランキングが再計算されます)')) return;
+    const uid = getAttemptUid(s);
+    const attemptId = getAttemptDocId(s);
+    if (!uid || !attemptId) {
+      setMessage('削除エラー: 対象の識別子が不足しています。');
+      return;
+    }
+
     setLoading(true);
     try {
-      // 1. XPの差し戻し
-      if (s.uid && s.xpGain > 0) {
-        const userRef = doc(db, 'users', s.uid);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const uData = userSnap.data();
-          const oldXp = uData.xp || 0;
-          const newXp = Math.max(0, oldXp - s.xpGain);
-          
-          const newLvData = calculateLevelAndProgress(newXp);
-          await updateDoc(userRef, {
-            xp: newXp,
-            level: newLvData.level,
-            title: getTitleForLevel(newLvData.level),
-            progressPercent: newLvData.progressPercent,
-            currentLevelXp: newLvData.currentLevelXp,
-            nextLevelXp: newLvData.nextLevelXp,
-            updatedAt: new Date().toISOString()
-          });
-          
-          // ローカルのユーザーリストも更新
-          setUsers(users.map(u => u.docId === s.uid ? { 
-            ...u, 
-            xp: newXp,
-            level: newLvData.level
-          } : u));
-        }
-      }
-
-      // 2. ドキュメントの削除
-      const deleteBatch = writeBatch(db);
-      let queuedDelete = false;
-      if (s.path) {
-        deleteBatch.delete(doc(db, s.path));
-        queuedDelete = true;
-      } else if (s.uid && s.docId) {
-        deleteBatch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
-        queuedDelete = true;
-      }
-      if (queuedDelete) {
-        queueAttemptDeletedAnalyticsEvent(deleteBatch, s, user?.uid || user?.email || 'admin', 'single_attempt_delete');
-        await deleteBatch.commit();
+      const deleteAttemptsFn = httpsCallable<
+        { items: Array<{ uid: string; attemptId: string }>; reason: string },
+        { deletedCount: number; updatedUsers: Array<{ uid: string; xp: number; level: number; title: string }> }
+      >(getFunctions(undefined, 'us-central1'), 'adminDeleteAttempts');
+      const response = await deleteAttemptsFn({
+        items: [{ uid, attemptId }],
+        reason: 'single_attempt_delete',
+      });
+      const updatedMap = new Map(response.data.updatedUsers.map(u => [u.uid, u]));
+      if (updatedMap.size > 0) {
+        setUsers(prev => prev.map(u => {
+          const updated = updatedMap.get(u.docId);
+          return updated ? { ...u, xp: updated.xp, level: updated.level, title: updated.title } : u;
+        }));
       }
 
       setScores(scores.filter(score => score.docId !== s.docId));
-      // 不正疑惑リストからも消す
       setSuspiciousActivities(prev => prev.filter(sa => sa.id !== s.id && sa.docId !== s.docId));
-      
-      setMessage('得点データを削除し、XPを差し戻しました。');
+      setMessage('得点データを削除し、XPとランキングを同期しました。');
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
@@ -803,32 +780,42 @@ export default function AdminPage() {
 
   const handleBatchDeleteScores = async () => {
     if (selectedScoreIds.size === 0) return;
-    if (!window.confirm(`選択した ${selectedScoreIds.size} 件のデータを一括削除しますか？\n（統計カウンターも連動して更新されます）`)) return;
+    if (!window.confirm(`選択した ${selectedScoreIds.size} 件のデータを一括削除しますか？\n（獲得XPと統計も連動して更新されます）`)) return;
 
     setLoading(true);
     try {
       const selectedItems = scores.filter(s => selectedScoreIds.has(s.docId));
+      const payloadItems = selectedItems
+        .map(s => ({ uid: getAttemptUid(s), attemptId: getAttemptDocId(s) }))
+        .filter((item): item is { uid: string; attemptId: string } => Boolean(item.uid && item.attemptId));
+
+      const deleteAttemptsFn = httpsCallable<
+        { items: Array<{ uid: string; attemptId: string }>; reason: string },
+        { deletedCount: number; updatedUsers: Array<{ uid: string; xp: number; level: number; title: string }> }
+      >(getFunctions(undefined, 'us-central1'), 'adminDeleteAttempts');
+
       let actuallyDeleted = 0;
-      
-      for (let i = 0; i < selectedItems.length; i += ANALYTICS_EVENT_BATCH_SIZE) {
-        const batch = writeBatch(db);
-        selectedItems.slice(i, i + ANALYTICS_EVENT_BATCH_SIZE).forEach(s => {
-          if (s.path) {
-            batch.delete(doc(db, s.path));
-            queueAttemptDeletedAnalyticsEvent(batch, s, user?.uid || user?.email || 'admin', 'batch_attempt_delete');
-            actuallyDeleted++;
-          } else if (s.uid && s.docId) {
-            batch.delete(doc(db, 'users', s.uid, 'attempts', s.docId));
-            queueAttemptDeletedAnalyticsEvent(batch, s, user?.uid || user?.email || 'admin', 'batch_attempt_delete');
-            actuallyDeleted++;
-          }
+      const latestUserUpdates = new Map<string, { uid: string; xp: number; level: number; title: string }>();
+
+      for (let i = 0; i < payloadItems.length; i += 200) {
+        const response = await deleteAttemptsFn({
+          items: payloadItems.slice(i, i + 200),
+          reason: 'batch_attempt_delete',
         });
-        await batch.commit();
+        actuallyDeleted += response.data.deletedCount;
+        response.data.updatedUsers.forEach(u => latestUserUpdates.set(u.uid, u));
+      }
+
+      if (latestUserUpdates.size > 0) {
+        setUsers(prev => prev.map(u => {
+          const updated = latestUserUpdates.get(u.docId);
+          return updated ? { ...u, xp: updated.xp, level: updated.level, title: updated.title } : u;
+        }));
       }
 
       setScores(scores.filter(s => !selectedScoreIds.has(s.docId)));
       setSelectedScoreIds(new Set());
-      setMessage(`${actuallyDeleted}件の得点データを削除しました。`);
+      setMessage(`${actuallyDeleted}件の得点データを削除し、XPとランキングを同期しました。`);
     } catch (e) {
       console.error(e);
       setMessage('削除エラーが発生しました。');
@@ -845,68 +832,8 @@ export default function AdminPage() {
     setMessage('リセット処理中...');
 
     try {
-      // 1. 全 attempts を削除
-      await setDoc(doc(db, 'analytics_events', `reset_${Date.now()}`), {
-        eventType: 'ALL_DATA_RESET',
-        eventVersion: 1,
-        occurredAt: serverTimestamp(),
-        logicalDate: buildTokyoLogicalDate(),
-        source: 'admin',
-        actor: user?.uid || user?.email || 'admin',
-      });
-
-      const attemptsSnap = await getDocs(collectionGroup(db, 'attempts'));
-      for (let i = 0; i < attemptsSnap.docs.length; i += 400) {
-        const batch = writeBatch(db);
-        attemptsSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-
-      // 2. stats/global をリセット
-      await setDoc(doc(db, 'stats', 'global'), {
-        totalParticipants: 0,
-        updatedAt: new Date().toISOString()
-      });
-
-      // 4. ユーザーデータをリセット（XP、スコア、unitStats）
-      const usersSnap = await getDocs(collection(db, 'users'));
-      for (let i = 0; i < usersSnap.docs.length; i += 400) {
-        const batch = writeBatch(db);
-        usersSnap.docs.slice(i, i + 400).forEach(d => {
-          batch.update(d.ref, {
-            xp: 0,
-            level: 1,
-            title: '算数卒業生',
-            icon: '📐',
-            progressPercent: 0,
-            currentLevelXp: 0,
-            nextLevelXp: 52,
-            totalScore: 0,
-            unitStats: {},
-          });
-        });
-        await batch.commit();
-      }
-
-      // 5. リーダーボードを削除
-      const lbSnap = await getDocs(collection(db, 'leaderboards'));
-      for (let i = 0; i < lbSnap.docs.length; i += 400) {
-        const batch = writeBatch(db);
-        lbSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-
-      // 6. wrong_answers を削除
-      try {
-        const wrongSnap = await getDocs(collectionGroup(db, 'wrong_answers'));
-        for (let i = 0; i < wrongSnap.docs.length; i += 400) {
-          const batch = writeBatch(db);
-          wrongSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
-          await batch.commit();
-        }
-      } catch (e) {
-        console.warn('wrong_answers の削除に失敗しました (非致命的):', e);
-      }
+      const resetAllFn = httpsCallable(getFunctions(undefined, 'us-central1'), 'adminResetAllData');
+      await resetAllFn({});
 
       setGlobalStats({ totalParticipants: 0 });
       setScores([]);
@@ -1060,7 +987,38 @@ export default function AdminPage() {
           Object.values(unitsMap).forEach((u) => {
             writes.push({ ref: doc(db, 'units', u.unitDoc.id), data: u.unitDoc });
             u.questions.forEach(q => {
-              writes.push({ ref: doc(collection(db, 'units', u.unitDoc.id, 'questions'), q.id), data: q });
+              if (q.questionType === 'written') {
+                writes.push({
+                  ref: doc(collection(db, 'units', u.unitDoc.id, 'questions'), q.id),
+                  data: {
+                    id: q.id,
+                    order: q.order,
+                    question_text: q.question_text,
+                    options: q.options,
+                    image_url: q.image_url,
+                    questionType: 'written',
+                    modelAnswer: deleteField(),
+                    model_answer: deleteField(),
+                    gradingRubric: deleteField(),
+                    grading_rubric: deleteField(),
+                    explanation: deleteField(),
+                    iconReward: deleteField(),
+                    answer_index: deleteField(),
+                  },
+                });
+                writes.push({
+                  ref: doc(collection(db, 'units', u.unitDoc.id, 'grading_configs'), q.id),
+                  data: {
+                    modelAnswer: q.modelAnswer,
+                    gradingRubric: q.gradingRubric,
+                    explanation: q.explanation,
+                    iconReward: q.iconReward,
+                    updatedAt: serverTimestamp(),
+                  },
+                });
+              } else {
+                writes.push({ ref: doc(collection(db, 'units', u.unitDoc.id, 'questions'), q.id), data: q });
+              }
             });
           });
 
