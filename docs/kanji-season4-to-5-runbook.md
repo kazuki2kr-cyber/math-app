@@ -1,5 +1,18 @@
 # 漢字 Season 4 終了・Season 5 開始手順
 
+## 実施結果（2026-11-24）
+
+Season 4 の本番アーカイブ、バッジ付与、Season 5 の初期化は完了。`leaderboards/kanjiSeason4.resetCompletedAt`（`2026-11-24T08:16:44.862Z`）を記録済みのため、同じ保存・初期化処理を再実行しない。
+
+- [PR #15](https://github.com/kazuki2kr-cyber/math-app/pull/15) を main に反映し、Quality ワークフロー通過後に Vercel 本番へ反映した（`/images/kanji-season4-badge.png` の配信を確認済み）。一括リセット用 Cloud Function `adminResetAllKanjiData` は既存デプロイ済み版を使用した。
+- 更新直前に本番データをバックアップし、漢字メンテナンス有効・数学メンテナンス無効・募集中の対戦ルーム 0 件を確認した。
+- 40 名の Season 4 実参加者から通常演習・対戦の上位各 10 名を `leaderboards/kanjiSeason4` に保存し、Lv.400 以上の 6 名に Season 4 認証バッジ（`kanjiSeasonBadges.season4`）を付与した。
+- Cloud Function `adminResetAllKanjiData` を実行し、197 名全員の漢字レベルを 1、漢字 XP・スコア・対戦 XP・勝利数を 0、単元成績を削除し、現行の `leaderboards/kanji` と `leaderboards/kanjiBattle` を空（0 件）にした。保存後および初期化後の検証で、未初期化ユーザーと未付与バッジはともに 0 件。
+- Season 1（33 名）・Season 2（20 名）・Season 3（13 名）のアーカイブと既存バッジ数、漢字利用認証（47 名）、数学データ（数学 XP 保有 182 名）、対戦の試合履歴（`kanji_battle_results` 330 件）は更新前後で一致した。
+- 既存の漢字単元 6 件（`3級第6回`〜`3級第11回`）は保持したまま、漢字メンテナンスは有効、数学は通常稼働のままとしている。管理画面から Season 5 用の問題入れ替えを行った後、`docs/kanji-all-random-pool.md` に従って全単元対戦プール（`node scripts/build-kanji-battle-pool.js --apply`）を再作成し、漢字メンテナンスを解除して利用を再開する。
+
+以下は次回の切替に流用するための手順記録。今回の Season 4 処理には再使用しない。
+
 ## 確定した仕様
 
 - Season 4 の認証条件は漢字 Lv.400 以上。認証画像は `public/images/kanji-season4-badge.png`。
