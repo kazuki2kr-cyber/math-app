@@ -637,7 +637,7 @@ export default function KanjiBattlePage() {
                     <Trophy className="h-5 w-5 text-[#efc97c]" /> Season {selectedArchive.seasonNumber} 対戦XP上位
                   </CardTitle>
                   {seasonArchives.length > 1 && (
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex flex-wrap gap-2 pt-2">
                       {seasonArchives.map((archive) => (
                         <Button key={archive.seasonId} size="sm" variant={archive.seasonId === selectedArchive.seasonId ? 'default' : 'outline'} onClick={() => setSelectedArchiveId(archive.seasonId)} className="h-7 text-xs">
                           Season {archive.seasonNumber}

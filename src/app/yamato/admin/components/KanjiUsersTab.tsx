@@ -8,7 +8,7 @@ import { Archive, Ban, Loader2, RotateCcw, Save, ShieldAlert, ShieldCheck, Shiel
 import { db, functions } from '@/lib/firebase';
 import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { CLOSING_KANJI_SEASON, getClosingSeasonBadgeFields, getKanjiSeasonBadges, KanjiSeasonArchive, NEXT_KANJI_SEASON_NUMBER } from '@/lib/kanjiSeasons';
+import { CLOSING_KANJI_SEASON, getClosingSeasonBadgeFields, getKanjiSeasonBadges, getPublicKanjiRankingName, hasActiveKanjiSeasonActivity, KanjiSeasonArchive, NEXT_KANJI_SEASON_NUMBER } from '@/lib/kanjiSeasons';
 
 interface KanjiUsersTabProps {
   users: any[];
@@ -85,11 +85,11 @@ function getKanjiTitle(level: number) {
 }
 
 function buildSeasonArchive(users: any[], battleRankings: any[], archivedAt: string) {
-  const participants = users.filter((user) => user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined || user.kanjiBattleStats !== undefined);
+  const participants = users.filter((user) => hasActiveKanjiSeasonActivity(user));
   const topXpRankings = participants
     .map((user) => ({
       uid: user.docId,
-      name: getUserName(user),
+      name: getPublicKanjiRankingName(user),
       xp: Number(user.kanjiXp || 0),
       level: Number(user.kanjiLevel || 1),
       totalScore: Number(user.kanjiTotalScore || 0),
@@ -107,7 +107,7 @@ function buildSeasonArchive(users: any[], battleRankings: any[], archivedAt: str
     .filter((user) => Number(user.kanjiLevel || 1) >= CLOSING_KANJI_SEASON.certificationLevel)
     .map((user) => ({
       uid: user.docId,
-      name: getUserName(user),
+      name: getPublicKanjiRankingName(user),
       xp: Number(user.kanjiXp || 0),
       level: Number(user.kanjiLevel || 1),
       totalScore: Number(user.kanjiTotalScore || 0),
@@ -460,7 +460,7 @@ export default function KanjiUsersTab({ users, loading, refreshUsers, setMessage
               const kanjiXp = user.kanjiXp || 0;
               const kanjiLevel = user.kanjiLevel || 1;
               const kanjiTotalScore = user.kanjiTotalScore || 0;
-              const hasKanjiData = user.kanjiXp !== undefined || user.kanjiUnitStats !== undefined;
+              const hasKanjiData = hasActiveKanjiSeasonActivity(user);
               const accessStatus = getKanjiAccessStatus(user);
               const AccessIcon = accessStatus.Icon;
               const name = getUserName(user);
