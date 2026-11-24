@@ -396,7 +396,7 @@ export default function KanjiDashboard() {
                       <Trophy className="w-5 h-5 text-amber-600" /> Season {selectedArchive.seasonNumber} 獲得XP上位
                     </CardTitle>
                     {seasonArchives.length > 1 && (
-                      <div className="flex gap-2 pt-2">
+                      <div className="flex flex-wrap gap-2 pt-2">
                         {seasonArchives.map((archive) => (
                           <Button key={archive.seasonId} size="sm" variant={archive.seasonId === selectedArchive.seasonId ? 'default' : 'outline'} onClick={() => setSelectedArchiveId(archive.seasonId)} className="h-7 text-xs">
                             Season {archive.seasonNumber}

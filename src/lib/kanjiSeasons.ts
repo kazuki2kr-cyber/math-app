@@ -31,6 +31,14 @@ export interface KanjiSeasonArchive {
 
 export const KANJI_SEASONS = [
   {
+    id: 'season4',
+    number: 4,
+    title: '漢字 Season 4',
+    certificationLevel: 400,
+    badgeImageUrl: '/images/kanji-season4-badge.png',
+    archiveDocumentId: 'kanjiSeason4',
+  },
+  {
     id: 'season3',
     number: 3,
     title: '漢字 Season 3',
@@ -56,9 +64,49 @@ export const KANJI_SEASONS = [
   },
 ] as const;
 
-// Season 3 is the season to close. Season 4 begins after its archive and reset complete.
+// Season 4 is the season to close. Season 5 begins after its archive and reset complete.
 export const CLOSING_KANJI_SEASON = KANJI_SEASONS[0];
-export const NEXT_KANJI_SEASON_NUMBER = 4;
+export const NEXT_KANJI_SEASON_NUMBER = 5;
+
+export function hasActiveKanjiSeasonActivity(user: any): boolean {
+  if (!user || typeof user !== 'object') return false;
+  if (Number(user.kanjiXp || 0) > 0) return true;
+  if (Number(user.kanjiLevel || 1) > 1) return true;
+  if (Number(user.kanjiTotalScore || 0) > 0) return true;
+  if (
+    user.kanjiUnitStats &&
+    typeof user.kanjiUnitStats === 'object' &&
+    Object.keys(user.kanjiUnitStats).length > 0
+  ) {
+    return true;
+  }
+  if (
+    user.kanjiBattleStats &&
+    typeof user.kanjiBattleStats === 'object' &&
+    (
+      Number(user.kanjiBattleStats.xp || 0) > 0 ||
+      Number(user.kanjiBattleStats.wins || user.kanjiBattleStats.totalWins || 0) > 0 ||
+      Number(user.kanjiBattleStats.totalBattles || 0) > 0
+    )
+  ) {
+    return true;
+  }
+  if (Number(user.kanjiBattleXp || 0) > 0 || Number(user.kanjiBattleWins || 0) > 0) {
+    return true;
+  }
+  return false;
+}
+
+export function getPublicKanjiRankingName(user: any): string {
+  for (const candidate of [user?.displayName, user?.name]) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (trimmed && !trimmed.includes('@')) {
+      return trimmed;
+    }
+  }
+  return '利用者';
+}
 
 export function getClosingSeasonBadgeFields(user: { kanjiLevel?: number; level?: number; kanjiXp?: number; xp?: number }, archivedAt: string): Record<string, KanjiSeasonBadge> {
   const level = Number(user.kanjiLevel ?? user.level ?? 1);
