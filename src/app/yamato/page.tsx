@@ -9,7 +9,7 @@ import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
-import { getKanjiSeasonBadges, KANJI_SEASONS, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
+import { getKanjiSeasonBadges, KANJI_SEASONS, KANJI_TOP10_BADGE_IMAGE_URL, KanjiSeasonArchive } from '@/lib/kanjiSeasons';
 import { ThemeSettingsButton } from '@/components/ThemeSettingsButton';
 
 interface Unit {
@@ -418,8 +418,17 @@ export default function KanjiDashboard() {
                                 <Image src={rankUser.badgeImageUrl || selectedArchive.badgeImageUrl} alt={`Season ${selectedArchive.seasonNumber} 認証`} fill sizes="32px" className="object-contain" />
                               </div>
                             ) : (
-                              <div className="h-8 w-8 flex-shrink-0 rounded-full bg-orange-50 flex items-center justify-center">
-                                <PenTool className="h-4 w-4 text-orange-500" />
+                              <div
+                                className="relative h-8 w-8 flex-shrink-0 overflow-hidden rounded-full bg-slate-50"
+                                title={`Season ${selectedArchive.seasonNumber} Top 10 入賞`}
+                              >
+                                <Image
+                                  src={KANJI_TOP10_BADGE_IMAGE_URL}
+                                  alt={`Season ${selectedArchive.seasonNumber} Top 10 入賞`}
+                                  fill
+                                  sizes="32px"
+                                  className="object-contain"
+                                />
                               </div>
                             )}
                             <div className="min-w-0 flex-1">

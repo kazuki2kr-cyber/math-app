@@ -5,6 +5,7 @@ import {
   getPublicKanjiRankingName,
   hasActiveKanjiSeasonActivity,
   KANJI_SEASONS,
+  KANJI_TOP10_BADGE_IMAGE_URL,
   NEXT_KANJI_SEASON_NUMBER,
 } from '../../src/lib/kanjiSeasons';
 
@@ -17,6 +18,7 @@ describe('Season 4 archive and certification', () => {
     ]);
     expect(CLOSING_KANJI_SEASON.certificationLevel).toBe(400);
     expect(NEXT_KANJI_SEASON_NUMBER).toBe(5);
+    expect(KANJI_TOP10_BADGE_IMAGE_URL).toBe('/images/kanji-top10-badge.png');
   });
 
   test('awards Lv.400 but not Lv.399, including archived user snapshots', () => {
