@@ -67,6 +67,7 @@ export const KANJI_SEASONS = [
 // Season 4 is the season to close. Season 5 begins after its archive and reset complete.
 export const CLOSING_KANJI_SEASON = KANJI_SEASONS[0];
 export const NEXT_KANJI_SEASON_NUMBER = 5;
+export const KANJI_TOP10_BADGE_IMAGE_URL = '/images/kanji-top10-badge.png';
 
 export function hasActiveKanjiSeasonActivity(user: any): boolean {
   if (!user || typeof user !== 'object') return false;
